@@ -1,0 +1,643 @@
+#!/usr/bin/perl
+
+#AUTHOR
+# Marten Boetzer and Walter Pirovano (c) 2010
+# SSAKE-based Scaffolding of Pre-Assembled Contigs after Extension (SSPACE)
+# walter.pirovano@baseclear.com
+
+#NAME
+#   SSPACE Marten Boetzer - Walter Pirovano November 2010
+
+#SYNOPSIS
+#   SSAKE-based Scaffolding of Pre-Assembled Contigs after Extension (SSPACE)
+
+#DOCUMENTATION
+#   README, MANUAL and TUTORIAL distributed with this software @ www.baseclear.com
+#   Boetzer M, Henkel VJ, Jansen HJ, Butler D and Pirovano W. 2010. Scaffolding pre-assembled contigs using SSPACE. Bioinformatics.
+#   http://www.baseclear.com/sequencing/data-analysis/bioinformatics-tools/
+#   We hope this code is useful to you -- Please send comments & suggestions to Walter.Pirovano@baseclear.com
+#   If you use either the SSPACE code or ideas, please cite our work appropriately and accurately
+
+#LICENSE
+#   SSPACE Copyright (c) 2010 BaseClear B.V. The Netherlands. All rights reserved.
+#   SSAKE Copyright (c) 2006-2010 Canada's Michael Smith Genome Science Centre. All rights reserved.
+
+#   This program is free software; you can redistribute it and/or
+#   modify it under the terms of the GNU General Public License
+#   as published by the Free Software Foundation; either version 2
+#   of the License, or (at your option) any later version.
+
+#   This program is distributed in the hope that it will be useful,
+#   but WITHOUT ANY WARRANTY; without even the implied warranty of
+#   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#   GNU General Public License for more details.
+
+#   note: insert size and distance between pairing reads are used interchangeably
+
+#MAJOR CHANGES ON SSAKE V3.4 TO FORM SSPACE
+#   -New scaffolding feature dealing with contigs having multiple alternatives
+#   -Seperate scripts to decrease the memory usage
+#   -Automatic filtering of reads and duplicate mate pairs
+#   -Option for contig extension on unfiltered reads
+#           -Removed tracking of reads during contig extension
+#           -Mapping single reads to extended and non extended contigs
+#   -Single reads mapped more than once to a contig are removed for scaffolding
+#   -A summary file is generated containing detailed information about the scaffolding process
+#   -An evidence file is generated which indicates the contigs present in the scaffolds
+#   -Optional; Scaffolds and their contigs are visualised by generating a .dot file
+
+#CHANGES IN v1-1
+#   -Error on Bowtie-build solved by chmod Bowtie files
+
+  use strict;
+  use Storable;
+  require "getopts.pl";
+  use File::Path;
+  use File::Basename;
+
+  #Specify path to DotLib
+  use FindBin qw($Bin);
+  use lib "$Bin/dotlib/";
+  use DotLib;
+
+  use vars qw($opt_m $opt_o $opt_v $opt_p $opt_k $opt_a $opt_z $opt_s $opt_b $opt_d $opt_n $opt_l $opt_x $opt_u $opt_t);
+  &Getopts('m:o:v:p:k:a:z:s:b:d:n:l:x:u:t:');
+  my ($base_overlap,$min_overlap,$verbose,$MIN_READ_LENGTH,$SEQ_SLIDE,$min_base_ratio,$min_links,$max_link_ratio,$unpaired_file,$max_trim,$base_name, $outdir,$max_count_trim,$min_tig_overlap, $doplot, $extending)= (20, 32, 0, 16, 1, 1, 5, 0.70, "no-u", 0, "standard_output",".", 10, 15, 0, 1);
+
+  my $version = "[SSPACE_v1-1]";
+  my $seplines = ("-" x 60)."\n";
+  my ($MAX, $MAX_TOP, $TRACK_COUNT) = (0, 100, 1);# $MAX_TOP is the very maximum anchoring edge sequence that will be searched
+
+#-------------------------------------------------READ OPTIONS
+
+  if(! ($opt_l)){
+     print "Usage: ".basename($0)." $version\n\n";
+     print "-l  Library file containing two mate pate files with insert size, error and either mate pair or paired end indication.\n";
+     print "-s  Fasta file containing contig sequences used for extension. Inserted pairs are mapped to extended and non-extended contigs (REQUIRED)\n";
+     print "-x  Indicate whether to extend the contigs of -s using paired reads in -l. (-x 1=extension, -x 0=no extension, default -x 1)\n";
+     print "-m  Minimum number of overlapping bases with the seed/contig during overhang consensus build up (default -m $min_overlap)\n";
+     print "-o  Minimum number of reads needed to call a base during an extension (default -o $base_overlap)\n";
+     print "-t  Trim up to -t base(s) on the contig end when all possibilities have been exhausted for an extension (default -t $max_trim, optional)\n";
+     print "-b  Base name for your output files (optional)\n";
+     print "-d  Directory for storing output files (optional)\n";
+     print "-v  Runs in verbose mode (-v 1=yes, -v 0=no, default -v 0, optional)\n";
+     print "============ Options below only considered for scaffolding ============\n";
+     print "-k  Minimum number of links (read pairs) to compute scaffold (default -k $min_links, optional)\n";
+     print "-a  Maximum link ratio between two best contig pairs *higher values lead to least accurate scaffolding* (default -a $max_link_ratio, optional)\n";
+     print "-n  Minimum overlap required between contigs to merge adjacent contigs in a scaffold (default -n $min_tig_overlap, optional)\n";
+     print "-u  Fasta/fastq file containing unpaired sequence reads (optional)\n";
+     print "-p  Make .dot file for visualisation (-p 1=yes, -p 0=no, default -p 0, optional)\n";
+	 exit;
+
+  }
+  die "ERROR: Parameter -s is required. Please insert a contig .fasta file\n" if(!$opt_s);
+
+  my $filecontig = $opt_s if($opt_s);
+  $min_overlap = $opt_m if ($opt_m);
+  $base_overlap = $opt_o if ($opt_o);
+  $max_trim = $opt_t if ($opt_t);
+  $verbose = $opt_v if ($opt_v);
+  $min_links = $opt_k if ($opt_k);
+  $max_link_ratio = $opt_a if ($opt_a);
+  $base_name = $opt_b if($opt_b);
+  $outdir = $opt_d if ($opt_d);
+  $min_tig_overlap = $opt_n if($opt_n);
+  $unpaired_file = $opt_u if($opt_u);
+  $doplot = $opt_p if($opt_p);
+  $extending = $opt_x if($opt_x eq 1);
+  my $libraryfile = $opt_l if ($opt_l);
+
+#-------------------------------------------------CHECKING PARAMETERS
+  die "ERROR: Invalid library file $libraryfile ...Exiting.\n" if(! -e $libraryfile);
+  die "ERROR: Invalid contig file $filecontig ...Exiting.\n" if(! -e $filecontig);
+  die "ERROR: -x must be either 0 or 1. Your inserted -x is $extending...Exiting.\n" if(!($extending == 0 || $extending == 1));
+  die "ERROR: -m must be a number between 15-50. Your inserted -m is $min_overlap ...Exiting.\n" if($min_overlap < 15 || $min_overlap > 50);
+  die "ERROR: -o must be set to 1 or higher. Your inserted -o is $base_overlap ...Exiting.\n" if($base_overlap < 1);
+  die "ERROR: -k must be an integer number. Your inserted -k is $min_links ...Exiting.\n" if(!($min_links * 1 eq $min_links));
+  die "ERROR: -a must be a number between 0.00 and 1.00. Your inserted -a is $max_link_ratio ...Exiting.\n" if($max_link_ratio < 0 ||$max_link_ratio > 1 || !($max_link_ratio * 1 eq $max_link_ratio));
+  die "ERROR: -n must be an integer number. Your inserted -n is $min_tig_overlap ...Exiting.\n" if(!($min_tig_overlap * 1 eq $min_tig_overlap));
+  die "ERROR: Invalid unpaired file $unpaired_file -- fatal\n" if(! -e $unpaired_file && $opt_u);
+  die "ERROR: -p must be either 0 or 1. Your inserted -p is $doplot...Exiting.\n" if(!($doplot == 0 || $doplot == 1));
+#-------------------------------------------------check library file;
+  open(FILELIB, "< $libraryfile");
+  my ($min_allowed, $low_iz, $up_iz, $library, $fileA, $fileB, $insert_size, $insert_stdev, $reverse);
+  my $countline=0;
+  while(<FILELIB>){
+    chomp;
+    $countline++;
+    my @line = split(/\s+/, $_);
+    if($#line >= 0){
+      die "ERROR: Line $countline in your library file ($libraryfile) contains $#line spaces, which should be 5 spaces. Check that no spaces are within the file names.\n" if($#line != 5);
+
+      ($library, $fileA, $fileB, $insert_size, $insert_stdev, $reverse) = split(/\s+/, $_);
+  
+      die "ERROR: Invalid file in library $library: $fileA -- fatal\n" if(! -e $fileA);
+      die "ERROR: Invalid file in library $library: $fileB -- fatal\n" if(! -e $fileB);
+      die "ERROR: Insert size should be higher than or equal to 0. Your library $library has insert size of $insert_size. Exiting.\n" if(!($insert_size>0) || !($insert_size * 1 eq $insert_size));
+      die "ERROR: Insert stdev must be a number > 0.00. Your library $library has insert size of $insert_stdev. Exiting.\n" if($insert_stdev < 0 || !($insert_stdev * 1 eq $insert_stdev));
+      die "ERROR: Reverse must be either 0 or 1. Your library $library has reverse complement of $reverse ...Exiting.\n" if(!($reverse == 0 || $reverse == 1));
+    }
+  }
+  close FILELIB;
+
+#-------------------------------------------------Make folder structure
+  mkpath("$outdir/intermediate_results");
+  mkpath("$outdir/pairinfo");
+  mkpath("$outdir/reads");
+  mkpath("$outdir/bowtieoutput");
+
+  my $unpaired = 0;
+  $unpaired = $unpaired_file if (-e $opt_u && $extending == 1);
+#-------------------------------------------------Print input parameters
+  my $contig = "$outdir/intermediate_results/" . $base_name .  ".extendedcontigs.fasta";
+  $contig = "$outdir/intermediate_results/" . $base_name .  ".formattedcontigs.fasta" if($extending == 0);
+
+  my $log = $outdir."/".$base_name . ".logfile.txt";
+  my $summaryfile = $outdir."/".$base_name.".summaryfile.txt";
+  open (LOG, ">$log") || die "Can't write to $log -- fatal\n";
+
+  open (SUMFILE, ">$summaryfile") || die "Can't open $summaryfile -- fatal\n";
+  close SUMFILE;
+
+  my $init_message =  "Your inserted inputs on $version at ".getDate().":\nRequired inputs: \n\t-l = $libraryfile\n\t-s = $filecontig\n\t-b = $base_name\n\n";
+  $init_message .= "Optional inputs:\n\t-x = $extending\n\t-k = $min_links\n";
+  $init_message .=  "\t-a = $max_link_ratio\n\t-n = $min_tig_overlap\n\t-p = $doplot\n\n";
+
+  $init_message .= "Contig extension inputs:\n\t-o = $base_overlap\n\t-t = $max_trim\n\t-m = $min_overlap\n\n" if($extending == 1);
+
+  &printMessage($init_message);
+  close LOG;
+#-------------------------------------------------READING AND CONVERTING INPUT SEQUENCES
+
+  system("perl $Bin/bin/readLibFiles.pl $libraryfile $base_name $extending $unpaired $outdir");
+
+#-------------------------------------------------FORMATTING OR EXTENDING CONTIGS
+  
+  system("perl $Bin/bin/ExtendOrFormatContigs.pl $contig $base_name $extending $filecontig $MIN_READ_LENGTH $base_overlap $min_overlap $min_base_ratio $max_trim $verbose $Bin $outdir");
+
+#--------------------------------------------------UPDATE SUMMARY FILE
+  open (SUMFILE, ">>$summaryfile") || die "Can't open $summaryfile -- fatal\n";
+  open (LOG, ">>$log") || die "Can't write to $log -- fatal\n";
+  my $sumfile .= "\nSUMMARY: \n".$seplines."\tInserted contig file;\n";
+
+  #write summary of initial contigs
+  $sumfile = &writesummaryfiles($filecontig, "contig", $sumfile);
+  $sumfile .= "\tAfter extension;\n" if($extending == 1);
+
+  #write summary of extended contigs
+  $sumfile = &writesummaryfiles($contig, "contig", $sumfile) if($extending == 1);
+  &FlushFiles();
+   close LOG;
+   close SUMFILE;
+#--------------------------------------------------READ BOWTIE OUTPUT
+  open(FILELIB, "< $libraryfile") || die "Can't open $libraryfile -- fatal\n";
+  my ($lib, $fileA, $fileB, $insert_size, $insert_stdev, $pair, $headscaffolds, $prevlib, $mergedtigs, $evidencefile);
+  while(<FILELIB>){
+    chomp;
+    &FlushFiles();
+
+    ($lib, $fileA, $fileB, $insert_size, $insert_stdev) = split(/\s+/, $_);
+    next if($lib eq $prevlib || $lib eq '');
+    $prevlib = $lib;
+    $min_allowed = -1 * ($insert_stdev * $insert_size);
+
+    open (LOG, ">>$log") || die "Can't write to $log -- fatal\n";
+    &printMessage("\nLIBRARY $lib\n".$seplines);
+    close LOG;
+
+    open (SUMFILE, ">>$summaryfile") || die "Can't open $summaryfile -- fatal\n";
+    print SUMFILE "\n\nLIBRARY $lib STATS:\n".("#" x 80),"\n";
+    close SUMFILE;
+
+    my $scaffold = $outdir."/intermediate_results/" . $base_name . ".$lib.scaffolds";
+    $mergedtigs = $outdir."/intermediate_results/" . $base_name . ".$lib.scaffolds.fasta";
+    my $issues = $outdir."/pairinfo/" . $base_name . ".$lib.pairing_issues";
+    my $distribution = $outdir."/pairinfo/" . $base_name . ".$lib.pairing_distribution.csv";
+
+#-------------------------------------------------MAPPING READ PAIRS USING FILTERED FASTA FILE
+    my $outfile = $outdir."/"."reads/$base_name.$lib.filtered.readpairs.singles.fasta";
+
+    my $up_iz = ($insert_size - $min_allowed);
+    mkpath("$outdir/tmp.$base_name");
+    my $newcontig = processContig($contig, $up_iz);
+    system("perl $Bin/bin/mapWithBowtie.pl $base_name $newcontig $outfile $lib $Bin $outdir");
+#-------------------------------------------------Scaffold the contigs and generate .scaffold file
+    my $bowtiefile = $outdir."/bowtieoutput/" . $base_name . ".$lib.mapped";
+
+    if(-e $bowtiefile){
+      system("perl $Bin/bin/PairingAndScaffolding.pl $contig $base_name $issues $distribution $verbose $lib $insert_size $min_allowed $scaffold $min_links $max_link_ratio $outdir");
+
+      #retrieve the contigs that were stored
+      my $contigstored = "$outdir/tmp.$base_name/contigs.stored";
+      my $contigs = retrieve("$contigstored");
+#-------------------------------------------------Generate .fasta file and .evidence file with scaffolds
+      open (LOG, ">>$log") || die "Can't write to $log -- fatal\n";
+      ($headscaffolds, $evidencefile) = &mergeContigs($scaffold, $contigs, $mergedtigs, 100, $verbose, $min_tig_overlap,$max_count_trim);
+      $contig = $mergedtigs;
+#-------------------------------------------------write summary of scaffolds
+      $sumfile .= "\tAfter scaffolding $lib:\n";
+      $sumfile = &writesummaryfiles($mergedtigs, "scaffold", $sumfile);
+
+#-------------------------------------------------
+      open (SUMFILE, ">>$summaryfile") || die "Can't open $summaryfile -- fatal\n";
+      print SUMFILE ("#" x 80),"\n";
+      close SUMFILE;
+      &printMessage("\n$seplines");
+
+      $contigs = (''); undef $contigs;
+    }else{
+      open (LOG, ">>$log") || die "Can't write to $log -- fatal\n";
+      &printMessage("WARNING: No scaffolding, because no reads found on contigs\n");
+    }
+    my $removedir = "$outdir/tmp.$base_name";
+    rmtree([$removedir, 'blurfl/quux']);  #remove 'tmp' folder
+
+  }#END OF LIBRARY LOOP
+#-------------------------------------------------END OF LIBRARIES. PRINT SUMMARY TO FILE AND END SESSION
+my $finalfile = $outdir."/".$base_name . ".final.scaffolds.fasta";
+my $finalevfile = $outdir."/".$base_name . ".final.evidence";
+
+open (EVID, $evidencefile);
+open (FINALEV, "> $finalevfile");
+while(<EVID>){
+  print FINALEV $_;
+}
+
+open (SCAF, $mergedtigs);
+open (FINAL, "> $finalfile");
+while(<SCAF>){
+  print FINAL $_;
+}
+
+
+#make .dot file for visualisation
+&visualiseScaffolds($outdir."/".$base_name.".visual_scaffolds", $evidencefile) if($doplot);
+
+open (SUMFILE, ">>$summaryfile") || die "Can't open $summaryfile -- fatal\n";
+  &printMessage("\n=>".getDate().": Creating summary file ($summaryfile)\n");
+  print SUMFILE $sumfile.$seplines;
+  &printMessage(("*" x 50)."\n\nProcess run succesfully on ".getDate()."\n\n\n");
+
+  close SCAF;
+  close FINAL;
+  close EVID;
+  close FINALEV;
+  close LOG;
+  close SUMFILE;
+#END OF MAIN PROGRAM
+
+#-----------------
+###FUNCTION TO STORE ONLY THE EDGES OF THE CONTIGS. ONLY THESE EDGES ARE MAPPED, SAVING TIME FOR BUILDING THE INDEX WITH BOWTIE, AND MAPPING THE READS TO THE CONTIGS
+
+sub processContig{
+  my ($contigfile, $max_dist) = @_;
+  
+  my $lower = ($max_dist+200);
+
+  open(IN,$contigfile) || die "can't read $contigfile -- fatal\n";
+  my $contigfilesub = "$outdir/tmp.$base_name/subset_contigs.fasta";
+  open(OUT,">$contigfilesub") || die "can't write to $contigfilesub -- fatal\n";
+  my ($seq, $counter) = ('', 0);
+  while(<IN>){
+    chomp;
+    my $line = $_;
+    $seq.= uc($line) if(eof(IN));
+    if (/\>(\S+)/ || eof(IN)){
+      if($seq ne ''){
+        $counter++;
+        if(length($seq) > (($lower * 2)+100)){
+          my $upper = (length($seq) - ($lower));
+          my $first = substr($seq, 0, $lower);
+          my $second = substr($seq, $upper);
+          my $newseq = $first."NNN".$second;
+          print OUT ">$counter\n$newseq\n";
+        }
+        else{
+          print OUT ">$counter\n$seq\n";
+        }
+      }
+      $seq='';
+    }else{
+      $seq.=uc($line);
+    }
+  }
+  close IN;
+  close OUT;
+  return $contigfilesub;
+}
+
+
+###MAKE A .FASTA FILE OF THE FOUND SCAFFOLDS. EITHER MERGE TWO CONTIGS WHEN A OVERLAP OF -n EXISTS OR PLACE A GAP
+sub mergeContigs{
+
+   my ($scaffold, $contigs, $mergedtigs, $chunk, $verbose,$min_tig_overlap,$max_count_trim) = @_;
+
+   &printMessage("\n=>".getDate().": Merging contigs and creating fasta file of scaffolds ($mergedtigs)\n");
+
+   open(IN,$scaffold) || die "can't read $scaffold -- fatal\n";
+
+   my $evidence_file = $mergedtigs;
+   $evidence_file =~ s/.fasta/.evidence/;
+   open(SCAFS,">$evidence_file") || die "can't write to $evidence_file -- fatal\n";
+   open(OUT,">$mergedtigs") || die "can't write to $mergedtigs -- fatal\n";
+   my $scafhashcount = keys ( %$headscaffolds );
+   my $scaffoldHashStart;
+   my ($tot,$sct,$ct_merge) = (0,0,0);
+   while(<IN>){### each line is a scaffold
+      chomp;
+      my $sc="";;
+      my @a = split(/\,/);
+      my @tig;
+
+      if($a[2]=~/\_/){
+         @tig = split(/\_/,$a[2]);
+      }else{
+         push @tig, $a[2];
+      }
+      CounterPrint(++$sct);
+      #$sct++;
+      my ($ct,$tigsum,$mct) = (0,0,0);
+      my ($prev,$word,$template) = ("NA","NA","NA");
+      my ($seq,$prevseq,$headconcat,$prevEstimatedDistance, $prevLinks) = ("","","","");
+      foreach my $t (@tig){### each contig
+         $ct++;
+
+         if($t=~/([fr])(\d+)z(\d+)(\S+)?/i){
+
+            my $orient = $1;
+            my $tnum=$2;
+            my $head = $orient . $tnum;
+            my $search = "tig" . $tnum;
+            my $other = $4;
+            $tot+= $3;
+            $tigsum +=$3;
+
+            my ($estimatedDistance, $links) = ("", "");
+            $estimatedDistance = $1 if($other=~/m((\-)?\d+)/);
+            $links = $1 if($other=~/k((\-)?\d+)/);
+            print "\tSC $a[0] - TIG $ct.  pattern: $t search: $search totalTigSize: $tot Orientation: $orient Gap/Overlap estimated distance: $estimatedDistance\n" if($verbose);
+
+            my $count_trim = 0;
+
+            $seq = $contigs->{$tnum}{'seq'};
+            $seq = reverseComplement($seq) if($orient eq "r");
+            chomp $seq;
+            my $prev;
+            if($scafhashcount >0){
+              $prev = $headscaffolds->{$tnum}{'head'};
+              $prev =~ s/^\n//;
+              chomp $prev;
+              delete $headscaffolds->{$tnum};
+              chomp $prev;
+              if($orient eq "r"){
+                my @prevarray = split("\n", $prev);
+                if($#prevarray >=0){
+                  my $newprev="";
+                  my ($tnum, $sizetig, $links, $gap, $prevline) = ("","","","","");
+                  for(my $i = $#prevarray; $i >= 0; $i--){
+
+                    my @info = split(/\|/, $prevarray[$i]);
+                    if($#info eq 1){
+                      ($tnum, $sizetig) = split(/\|/, $prevarray[$i]);
+                    }else{
+                      ($tnum, $sizetig, $links, $gap) = split(/\|/, $prevarray[$i]);
+                    }
+                    $tnum =~ tr/fr/rf/;
+                   $newprev .= $prevline."|".$links."|".$gap."\n" if($prevline ne "");
+                   $prevline = $tnum."|".$sizetig;
+                  }
+                  $newprev .= $prevline;
+                  $prev = $newprev;
+                }
+              }
+            }
+            else{
+              $prev = "$orient"."_$search|size".length($seq);
+            }
+              $prev .= "|links$links|gaps$estimatedDistance" if($links ne "");
+
+
+            #print "$prev\n";
+            if($word ne "NA"){
+               #####
+               if(length($seq)<=$chunk){
+                  $template = $seq;
+               }else{
+                  $template = substr($seq,0,$chunk);
+               }
+
+               ##### word search
+               my $dynamic_word = $word;
+	       if($prevEstimatedDistance <= 0){
+                 SCAN:
+                 until($template =~ /$dynamic_word/){
+                   $dynamic_word = substr($dynamic_word,1,length($dynamic_word));
+                   if(length($dynamic_word) < $min_tig_overlap){
+                     $count_trim++;
+                     last SCAN if($count_trim >= $max_count_trim);
+                     $dynamic_word = substr($word,0,length($word)-$count_trim);
+                   }
+                 }
+	       }
+               if($prevEstimatedDistance <= 0  && $seq =~ /^\S{0,$max_count_trim}$dynamic_word(.*)/){### will grab the left-most match which is ok
+                  my $tail = $1;
+                  my $all = "ERROR_";
+                  while($prevseq =~ /^(.*)$dynamic_word/ig){
+                     $all = $1;
+                  }
+                  print "$prevseq **** $all **** WORD:$word *** DWord:$dynamic_word *** COUNTTRIM:$count_trim\n" if($all=~/ERROR/);
+
+                  $prevseq = $all . lc($dynamic_word) . $tail;
+                  my $overlap = length($dynamic_word);
+                  $ct_merge++; 
+                  print "$ct_merge. GROUNDS FOR MERGING ($overlap nt overlap) !!!\n" if($verbose);
+                  $headconcat .= "|merged$overlap"."\n".$prev;
+               }else{
+                  ### ADDED RLW 5.MAR.2010
+                  if($prevEstimatedDistance <= 0){
+                     $prevseq .= "n" . $seq
+                  }else{
+                     $prevseq .= ("N" x $prevEstimatedDistance) . $seq;
+                  }
+                  $headconcat .= "\n".$prev;
+
+               }
+            }else{
+               $prevseq = $seq;
+               $headconcat = "\n".$prev;
+               $mct++;
+            }
+
+            ##### For the next search
+            if(length($seq)<=$chunk){
+               $word = $seq;
+            }else{
+               $word = substr($seq,length($seq)-$chunk/2,$chunk/2); ### this will be the next word to search with
+            }
+            $prevEstimatedDistance = $estimatedDistance;
+            $prevLinks = $links;
+         }#tig regex
+
+      }#each tig
+      my $scsz = length($prevseq);
+      $scaffoldHashStart->{$sct}{'head'} = $headconcat;
+
+      my @line = split(/\n/, $headconcat);
+      print SCAFS ">$a[0].$mct|size$scsz|tigs".($#line)."$headconcat\n\n";
+      print OUT ">$a[0].$mct|size$scsz\n$prevseq\n";
+      $prevseq = '';
+   }
+   close IN;
+   close SCAFS;
+   close OUT;
+   CounterPrint("                ");
+   undef $contigs;
+   &FlushFiles();
+   return ($scaffoldHashStart, $evidence_file);
+}
+###WRITE SUMMARY STATISTICS FOR ALL CONTIGS OR SCAFFOLDS
+sub writesummaryfiles{
+  my ($input_file, $insert, $sumfile) = @_;
+
+  open (INFILE, $input_file) || die "Can't open input file $input_file.\n";
+
+  my ($counter, $sum, $seq, $name, $foundN50, $sumN50) = (0,0, "","", 0, 0);
+  my (@line, @lengths);
+  while (<INFILE>) {
+    s/\r\n/\n/;
+    chomp;
+    $seq.= $_ if(eof(INFILE));
+    if ($_ =~ /^[>]/ || eof(INFILE)) {
+      if($counter > 0){
+         push(@lengths, length($seq));
+         $sum+= length($seq);
+         ($seq) = "";
+      }
+      $counter++;
+    }
+    else {
+       $seq .= $_;
+    }
+  }
+  $counter--;
+  my $half_length = $sum/2;
+  
+  my @lengths2 = reverse sort { $a <=> $b } @lengths;
+  
+  for(my $i = 0; $i <= $#lengths && $foundN50 == 0; $i++)
+  {
+    $sumN50 += @lengths2[$i];
+    if($sumN50 >= $half_length){
+      $foundN50 = @lengths2[$i] if($sumN50 >= $half_length);
+      last;
+    }
+  }
+  $sumfile .= "\t\tTotal number of $insert"."s = $counter\n";
+  $sumfile .= "\t\tSum (bp) = ". $sum. "\n";
+  $sumfile .= "\t\tMax $insert size = ". @lengths2[0]."\n";
+  $sumfile .= "\t\tMin $insert size = ". @lengths2[$#lengths]."\n";
+  $sumfile .= "\t\tAverage $insert size = ".int($sum/$counter)."\n";
+  $sumfile .= "\t\tN50 = ". $foundN50. "\n\n";
+  
+  close (INFILE);
+  close OUTFILE;
+
+  return $sumfile;
+}
+
+
+###FUNCTION TO GENERATE A VISUALISATION OF THE SCAFFOLDS AND THEIR CONTIGS IN .DOT FORMAT
+sub visualiseScaffolds{
+   my ($dotname, $evidence) = @_;
+   my ($filext, $sizecutoff) = (1, 5000000);
+   mkpath('dotfiles');
+   my $filename2 = "dotfiles/$dotname.part".$filext.".dot";
+   &printMessage("\n=>".getDate().": Producing .dot file for visualisation ($filename2)\n");
+
+   open(IN,$evidence) || die "can't read $evidence -- fatal\n";
+   open(DOT, ">$filename2") || die "can't open $filename2 -- fatal\n";
+   printHeader(\*DOT, undef);
+   my ($prevtig, $prevgap, $prevlinks, $prevratio, $scafcount) = ("","","", "",0);
+   while(<IN>){
+     chomp;
+     my $line = $_;
+     my $filesize = -s $filename2;
+
+     if ($line =~ /^[>]/){
+      endCluster(\*DOT) if($scafcount > 0);
+       my $filesize = -s $filename2;
+       if($filesize > $sizecutoff){
+         printFooter(\*DOT);
+         close(DOT);
+         $filext++;
+         $filename2 = "$dotname.part".$filext.".dot";
+         open(DOT, ">$filename2") || die "can't open $filename2 -- fatal\n";
+         printHeader(\*DOT, undef);
+       }
+       $scafcount++;
+       $line =~ tr/[>\|]/ /;
+       startCluster(\*DOT, $scafcount, "$line");
+       ($prevtig, $prevgap, $prevlinks, $prevratio) = ("","","", "");
+     }
+     elsif($line =~ /^[fr]/){
+        my @info = split(/\|/, $line);
+        my ($tnum, $sizetig, $links, $gap);
+        if($#info eq 1){
+          ($tnum, $sizetig) = split(/\|/, $line);
+        }else{
+          ($tnum, $sizetig, $links, $gap) = split(/\|/, $line);
+        }
+        my ($orient, $tig) = split(/_/,$tnum);
+        my $ori=-1;
+        my ($other, $gap2) = split(/gaps/,$gap);
+        my ($other, $links2) = split(/links/,$links);
+        $ori = 1 if($orient eq "f");
+        printNode(\*DOT, $tig, "$tig ($sizetig)", $ori);
+        printEdge(\*DOT, $prevtig, $tig, "gap = $prevgap links = $prevlinks", undef) if($prevtig ne "");
+
+        $prevtig = $tig;
+        $prevgap = $gap2;
+        $prevlinks = $links2;
+     }
+   }
+   endCluster(\*DOT) if($scafcount > 0);
+   printFooter(\*DOT);
+   close(DOT);
+   close IN;
+}
+
+
+###FUNCTION TO REVERSE COMPLEMENT A SEQUENCE
+sub reverseComplement{
+   $_ = shift;
+   tr/ATGC/TACG/;
+   return (reverse());
+}
+
+###FUNCTION TO PRINT MESSAGES TO THE SCREEN AND TO THE LOG FILE
+sub printMessage{
+  my $message = shift;
+  print $message;
+  print LOG $message;
+}
+
+###FUNCTION TO GET THE CURRENT DATE
+sub getDate{
+  my $date = scalar(localtime);
+  return $date;
+}
+
+###PRINTS A COUNTER ON THE SCREEN AND OVERWRITES PREVIOUS LINE
+sub CounterPrint{
+  my $countingMessager = shift;
+  print "\r$countingMessager";
+  $|++;
+}
+
+###FLUSHES THE SUMMARY AND LOG FILE
+sub FlushFiles{
+  select((select(SUMFILE), $| = 1)[0]);
+  select((select(LOG), $| = 1)[0]);
+  $|++;
+}
+#########END MAIN SCRIPT
