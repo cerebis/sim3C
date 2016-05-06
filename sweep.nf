@@ -1,4 +1,5 @@
-sweep_seperator = '%'
+class Globals {    static String sweep_separator = '%'}
+//sweep_separator = '%'
 alpha_BL = [1]
 xfold = [1]
 nhic = [10000]
@@ -42,6 +43,7 @@ class Helper {
     }
 
     static String safeString(val) {
+        def s
         if (val instanceof Path) {
             s = val.name
         }
@@ -52,17 +54,17 @@ class Helper {
     }
 
     static String[] splitSampleName(Path path) {
-        m = (path.name =~ /^(.*)_?([rR][0-9]+).*$/)
+        def m = (path.name =~ /^(.*)_?([rR][0-9]+).*$/)
         return m[0][1..2]
     }
 
     static String removeLevels(Path path, int n) {
-        name = path.toAbsolutePath().toString()
-        return name.split(sweep_seperator)[0..-(n+1)].join(sweep_seperator)
+        def name = path.toAbsolutePath().toString()
+        return name.split(Globals.sweep_separator)[0..-(n+1)].join(Globals.sweep_separator)
     }
 
     static String removeLevels(String name, int n) {
-        return name.split(sweep_seperator)[0..-(n+1)].join(sweep_seperator)
+        return name.split(Globals.sweep_separator)[0..-(n+1)].join(Globals.sweep_separator)
     }
 }
 
@@ -98,7 +100,7 @@ sweep = Channel
         .from(ancestor.values())
         .spread(alpha_BL)
         .spread(trees.values())
-        .map { it += it.collect { Helper.safeString(it) }.join(sweep_seperator) }
+        .map { it += it.collect { Helper.safeString(it) }.join(Globals.sweep_separator) }
 
 process Evolve {
     cache 'deep'
@@ -126,11 +128,11 @@ process Evolve {
 
 wgs_sweep = wgs_sweep
         .spread(xfold)
-        .map{ it += tuple(it[0].name[0..-8], it[1].name, it[2]).join(sweep_seperator) }
+        .map{ it += tuple(it[0].name[0..-8], it[1].name, it[2]).join(Globals.sweep_separator) }
 
 hic_sweep = hic_sweep
         .spread(nhic)
-        .map{ it += tuple(it[0].name[0..-8], it[1].name, it[2]).join(sweep_seperator) }
+        .map{ it += tuple(it[0].name[0..-8], it[1].name, it[2]).join(Globals.sweep_separator) }
 
 process WGS_Reads {
     cache 'deep'
@@ -311,7 +313,26 @@ process InferReadDepth {
     file("${oname}.wgs2ctg.cov") into wgs2ctg_coverage
 
     """
-    calc_coverage.sh "${oname}.wgs2ctg.bam" > "${oname}.wgs2ctg.cov"
+    bedtools genomecov -ibam wgs2ctg.bam | \
+    awk '
+    BEGIN{n=0} 
+    {
+        # ignore whole genome records
+        if (\$1 != "genome") {
+            # store names as they appear in repository
+            # we use this to preserve file order 
+            if (!(\$1 in seq_cov)) {
+                name_repo[n++]=\$1
+            }
+            # sum uses relative weights from histogram
+            seq_cov[\$1]+=\$2*\$3/\$4
+        }
+    }
+    END{
+        for (i=0; i<n; i++) {
+            print i+1, name_repo[i], seq_cov[name_repo[i]]
+        }
+    }' > "${oname}.wgs2ctg.cov"
     """
 
 }
