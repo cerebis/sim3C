@@ -1,0 +1,5 @@
+#the error rate profile of under-call and over-call of a homopolyer run
+#call_error_type	error_rate_len_1_homopolyer error_rate_len_2_homopolyer	error_rate_len_3_homopolyer ...
+UNDERCALL	0.0000000000	0.001096668	0.004562394	0.01875503	0.05466385	0.14088050	0.26817640	0.44392523	0.54782609	0.69696970
+OVERCALL	0.0005165388	0.000858758	0.003219707	0.01025744	0.01770155	0.01677149	0.02264601	0.01401869	0.02608696	0.03030303
+*this is the end of the profile
