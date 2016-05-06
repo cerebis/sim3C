@@ -245,7 +245,7 @@ process WGSMap {
     set oname, file('r1.fq'), file('r2.fq'), file('contigs.fa') from wgsmap_sweep
 
     output:
-    set file("${oname}.wgs2ctg.bam"), file("${oname}.wgs2ctg.bam.bai"), oname into wgs2ctg_mapping
+    set file("${oname}.wgs2ctg.bam"), oname into wgs2ctg_mapping
 
     """
     bwa index contigs.fa
@@ -262,7 +262,7 @@ process InferReadDepth {
     publishDir out_path, mode: 'copy', overwrite: 'false'
 
     input:
-    set file("wgs2ctg.bam"), file('wgs2ctg.bam.bai'), oname from wgs2ctg_mapping
+    set file("wgs2ctg.bam"), oname from wgs2ctg_mapping
 
     output:
     file("${oname}.wgs2ctg.cov") into wgs2ctg_coverage
