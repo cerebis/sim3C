@@ -245,7 +245,7 @@ process WGSMap {
     set oname, file('r1.fq'), file('r2.fq'), file('contigs.fa') from wgsmap_sweep
 
     output:
-    set file("${oname}.wgs2ctg.bam"), file('hic2ctg.bam.bai'), oname into wgs2ctg_mapping
+    set file("${oname}.wgs2ctg.bam"), file("${oname}.wgs2ctg.bam.bai"), oname into wgs2ctg_mapping
 
     """
     bwa index contigs.fa
