@@ -1,4 +1,4 @@
-sweep_sep = '%'
+sweep_seperator = '%'
 alpha_BL = [1]
 xfold = [1]
 nhic = [10000]
@@ -6,7 +6,6 @@ trees = file('test/trees/*nwk').collectEntries{ [it.name, it] }
 tables = file('test/tables/*table').collectEntries{ [it.name, it] }
 ancestor = file('test/NC*raw').collectEntries{ [it.name, it] }
 out_path = 'out'
-
 
 seq_len = 3000000
 sg_scale = 1e-4
@@ -21,33 +20,75 @@ hic_read_len = 150
  * Helper methods
  */
 
-String dropSuffix(str) {
-    return str.lastIndexOf('.').with {it != -1 ? str[0..<it] : str}
-}
+import groovyx.gpars.dataflow.DataflowQueue
 
-String safeString(val) {
-    String s = ""
-    if (val instanceof Path) {
-        s = val.name //dropSuffix(val.name)
+class Helper {
+    static def separators = /[ ,\t]/
+
+    static int[] stringToInts(String str) {
+        return str.split(separators).collect { elem -> elem as int }
     }
-    else {
-        s = val.toString()
+
+    static float[] stringToFloats(String str) {
+        return str.split(separators).collect { elem -> elem as float }
     }
-    return s.replaceAll(/[\\\/]/, "_")
+
+    static String[] stringToList(String str) {
+        return str.split(Helper.separators)
+    }
+
+    static String dropSuffix(str) {
+        return str.lastIndexOf('.').with {it != -1 ? str[0..<it] : str}
+    }
+
+    static String safeString(val) {
+        if (val instanceof Path) {
+            s = val.name
+        }
+        else {
+            s = val.toString()
+        }
+        return s.replaceAll(/[\\\/]/, "_")
+    }
+
+    static String[] splitSampleName(Path path) {
+        m = (path.name =~ /^(.*)_?([rR][0-9]+).*$/)
+        return m[0][1..2]
+    }
+
+    static String removeLevels(Path path, int n) {
+        name = path.toAbsolutePath().toString()
+        return name.split(sweep_seperator)[0..-(n+1)].join(sweep_seperator)
+    }
+
+    static String removeLevels(String name, int n) {
+        return name.split(sweep_seperator)[0..-(n+1)].join(sweep_seperator)
+    }
 }
 
-String[] splitSampleName(Path path) {
-    m = (path.name =~ /^(.*)_?([rR][0-9]+).*$/)
-    return m[0][1..2]
-}
-String removeLevels(Path path, int n) {
-    name = path.toAbsolutePath().toString()
-    return name.split('%')[0..-(n+1)].join('%')
+class ChannelDuplicator {
+    DataflowQueue orig
+
+    ChannelDuplicator(DataflowQueue orig) {
+        this.orig = orig
+    }
+
+    DataflowQueue dupe() {
+        def copied
+        (copied, orig) = this.orig.into(2)
+        return copied
+    }
+
+    static ChannelDuplicator createFrom(Object[] o) {
+        return new ChannelDuplicator(Channel.from(o))
+    }
+
+    static ChannelDuplicator createFrom(DataflowQueue q) {
+        return new ChannelDuplicator(q)
+    }
 }
 
-String removeLevels(String name, int n) {
-    return name.split('%')[0..-(n+1)].join('%')
-}
+
 
 /**
  * Generate simulated communities
@@ -57,7 +98,7 @@ sweep = Channel
         .from(ancestor.values())
         .spread(alpha_BL)
         .spread(trees.values())
-        .map { it += it.collect { safeString(it) }.join(sweep_sep) }
+        .map { it += it.collect { Helper.safeString(it) }.join(sweep_seperator) }
 
 process Evolve {
     cache 'deep'
@@ -85,11 +126,11 @@ process Evolve {
 
 wgs_sweep = wgs_sweep
         .spread(xfold)
-        .map{ it += tuple(it[0].name[0..-8], it[1].name, it[2]).join(sweep_sep) }
+        .map{ it += tuple(it[0].name[0..-8], it[1].name, it[2]).join(sweep_seperator) }
 
 hic_sweep = hic_sweep
         .spread(nhic)
-        .map{ it += tuple(it[0].name[0..-8], it[1].name, it[2]).join(sweep_sep) }
+        .map{ it += tuple(it[0].name[0..-8], it[1].name, it[2]).join(sweep_seperator) }
 
 process WGS_Reads {
     cache 'deep'
@@ -152,7 +193,7 @@ process Assemble {
  */
 
 (a, wgs_contigs) = wgs_contigs.into(2)
-a = a.map { f -> [removeLevels(f.name,2), f, f.name[0..-15]] }
+a = a.map { f -> [Helper.removeLevels(f.name,2), f, f.name[0..-15]] }
 b = tr_sweep.map { t -> [t[0].name[0..-8], t[0]] }
 tr_sweep = b.phase(a){ t -> t[0] }.map { t -> [*t[0], *t[1][1..2]] }
 
@@ -182,8 +223,8 @@ process Truth {
  */
 
 (a, wgs_contigs) = wgs_contigs.into(2)
-a = a.map { f -> [removeLevels(f.name,1), f] }
-b = hic_reads.map { f -> [removeLevels(f.name, 1), f, f.name[0..-8]] }
+a = a.map { f -> [Helper.removeLevels(f.name,1), f] }
+b = hic_reads.map { f -> [Helper.removeLevels(f.name, 1), f, f.name[0..-8]] }
 hicmap_sweep = b.phase(a){ t -> t[0] }.map { t -> [t[0][1], t[1][1], t[0][2]] }
 
 process HiCMap {
@@ -257,12 +298,14 @@ process WGSMap {
  * Infer per-contig coverage from wgs mapping
  */
 
+(cov_sweep, wgs2ctg_mapping) = wgs2ctg_mapping.into(2)
+
 process InferReadDepth {
     cache 'deep'
     publishDir out_path, mode: 'copy', overwrite: 'false'
 
     input:
-    set file("wgs2ctg.bam"), oname from wgs2ctg_mapping
+    set file("wgs2ctg.bam"), oname from cov_sweep
 
     output:
     file("${oname}.wgs2ctg.cov") into wgs2ctg_coverage
