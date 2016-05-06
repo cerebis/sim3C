@@ -2,10 +2,10 @@ sweep_sep = '%'
 alpha_BL = [1]
 xfold = [1]
 nhic = [10000]
-trees = file('nf/ref_data/trees/*nwk').collectEntries{ [it.name, it] }
-tables = file('nf/ref_data/tables/*table').collectEntries{ [it.name, it] }
-ancestor = file('nf/ref_data/NC*raw').collectEntries{ [it.name, it] }
-out_path = 'junk-out'
+trees = file('test/trees/*nwk').collectEntries{ [it.name, it] }
+tables = file('test/tables/*table').collectEntries{ [it.name, it] }
+ancestor = file('test/NC*raw').collectEntries{ [it.name, it] }
+out_path = 'out'
 
 
 seq_len = 3000000
