@@ -1,11 +1,11 @@
 sweep_sep = '%'
-alpha_BL = [1, 0.5]
-xfold = [1, 5]
-nhic = [5000, 10000]
-trees = file('nf/ref_data/trees/*nwk').collectEntries{ [it.name, it] }
-tables = file('nf/ref_data/tables/*table').collectEntries{ [it.name, it] }
-ancestor = file('nf/ref_data/NC*raw').collectEntries{ [it.name, it] }
-out_path = 'junk-out'
+alpha_BL = [1]
+xfold = [1]
+nhic = [10000]
+trees = file('test/trees/*nwk').collectEntries{ [it.name, it] }
+tables = file('test/tables/*table').collectEntries{ [it.name, it] }
+ancestor = file('test/NC*raw').collectEntries{ [it.name, it] }
+out_path = 'out'
 
 
 seq_len = 3000000
@@ -17,6 +17,9 @@ wgs_ins_std = 100
 hic_inter_prob = 0.9
 hic_read_len = 150
 
+/**
+ * Helper methods
+ */
 
 String dropSuffix(str) {
     return str.lastIndexOf('.').with {it != -1 ? str[0..<it] : str}
@@ -24,7 +27,7 @@ String dropSuffix(str) {
 
 String safeString(val) {
     String s = ""
-    if (val instanceof java.nio.file.Path) {
+    if (val instanceof Path) {
         s = val.name //dropSuffix(val.name)
     }
     else {
@@ -45,13 +48,10 @@ String removeLevels(Path path, int n) {
 String removeLevels(String name, int n) {
     return name.split('%')[0..-(n+1)].join('%')
 }
-// Copy result to hierarchy
-/*descendents.subscribe{
-    of = file("$out_path/${it[1]}")
-    println of
-    of.mkdirs()
-    it[0].mklink("$of/community.fa")
-}*/
+
+/**
+ * Generate simulated communities
+ */
 
 sweep = Channel
         .from(ancestor.values())
@@ -75,6 +75,11 @@ process Evolve {
     simujobrun.pl ancestral.fa $seed
     """
 }
+
+/**
+ * Generate WGS read-pairs
+ */
+
 (a, descendents) = descendents.into(2)
 (wgs_sweep, hic_sweep, tr_sweep) = a.spread(tables.values()).into(3)
 
@@ -101,6 +106,10 @@ process WGS_Reads {
     """
 }
 
+/**
+ * Generate 3C/HiC read-pairs
+ */
+
 process HIC_Reads {
     cache 'deep'
     publishDir out_path, mode: 'copy', overwrite: 'false'
@@ -116,8 +125,11 @@ process HIC_Reads {
     """
 }
 
-(asm_sweep, wgs_reads) = wgs_reads.map { reads, oname -> [*reads, oname] }.into(2)
+/**
+ * Assemble WGS read-pairs
+ */
 
+(asm_sweep, wgs_reads) = wgs_reads.map { reads, oname -> [*reads, oname] }.into(2)
 
 process Assemble {
     cpus 1
@@ -135,10 +147,15 @@ process Assemble {
     """
 }
 
+/**
+ * Generate contig->descendent gold standard mapping
+ */
+
 (a, wgs_contigs) = wgs_contigs.into(2)
 a = a.map { f -> [removeLevels(f.name,2), f, f.name[0..-15]] }
 b = tr_sweep.map { t -> [t[0].name[0..-8], t[0]] }
 tr_sweep = b.phase(a){ t -> t[0] }.map { t -> [*t[0], *t[1][1..2]] }
+
 process Truth {
     cache 'deep'
     publishDir out_path, mode: 'copy', overwrite: 'false'
@@ -160,10 +177,15 @@ process Truth {
     """
 }
 
+/**
+ * Map 3C/HiC read-pairs to assembly contigs
+ */
+
 (a, wgs_contigs) = wgs_contigs.into(2)
 a = a.map { f -> [removeLevels(f.name,1), f] }
 b = hic_reads.map { f -> [removeLevels(f.name, 1), f, f.name[0..-8]] }
 hicmap_sweep = b.phase(a){ t -> t[0] }.map { t -> [t[0][1], t[1][1], t[0][2]] }
+
 process HiCMap {
     cache 'deep'
     publishDir out_path, mode: 'copy', overwrite: 'false'
@@ -184,6 +206,10 @@ process HiCMap {
     """
 }
 
+/**
+ * Generate contig graphs from HiC mappings
+ */
+
 (a, hic2ctg_mapping) = hic2ctg_mapping.into(2)
 graph_sweep = a.map {t -> [t[0], t[1], t[0].name[0..-13] ] }
 
@@ -202,11 +228,14 @@ process Graph {
     """
 }
 
+/**
+ * Map WGS reads to contigs to infer read-depth
+ */
+
 (a, wgs_contigs) = wgs_contigs.into(2)
 a = a.map { f -> [f.name[0..-15], f] }
 (b, wgs_reads) = wgs_reads.into(2)
 wgsmap_sweep = b.map { t -> [t[2], t[0], t[1]] }.phase(a){ t -> t[0] }.map { t -> [*(t[0]), t[1][1]] }
-
 
 process WGSMap {
     cache 'deep'
@@ -216,11 +245,30 @@ process WGSMap {
     set oname, file('r1.fq'), file('r2.fq'), file('contigs.fa') from wgsmap_sweep
 
     output:
-    set file("${oname}.wgs2ctg.bam"), file("${oname}.wgs2ctg.cov") into wgs2ctg_mapping
+    set file("${oname}.wgs2ctg.bam"), oname into wgs2ctg_mapping
 
     """
     bwa index contigs.fa
     bwa mem -t 1 contigs.fa r1.fq r2.fq | samtools view -bS - | samtools sort - "${oname}.wgs2ctg"
+    """
+}
+
+/**
+ * Infer per-contig coverage from wgs mapping
+ */
+
+process InferReadDepth {
+    cache 'deep'
+    publishDir out_path, mode: 'copy', overwrite: 'false'
+
+    input:
+    set file("wgs2ctg.bam"), oname from wgs2ctg_mapping
+
+    output:
+    file("${oname}.wgs2ctg.cov") into wgs2ctg_coverage
+
+    """
     calc_coverage.sh "${oname}.wgs2ctg.bam" > "${oname}.wgs2ctg.cov"
     """
+
 }
