@@ -1,4 +1,7 @@
-class Globals {    static String sweep_separator = '%'}
+class Globals {
+    static String sweep_separator = '%'
+}
+
 //sweep_separator = '%'
 alpha_BL = [1]
 xfold = [1]
@@ -75,9 +78,9 @@ class ChannelDuplicator {
         this.orig = orig
     }
 
-    DataflowQueue dupe() {
-        def copied
-        (copied, orig) = this.orig.into(2)
+    DataflowQueue onCopy() {
+        (copied, keep) = this.orig.into(2)
+        this.orig = keep
         return copied
     }
 
@@ -96,7 +99,7 @@ class ChannelDuplicator {
  * Generate simulated communities
  */
 
-sweep = Channel
+evo_sweep = Channel
         .from(ancestor.values())
         .spread(alpha_BL)
         .spread(trees.values())
@@ -107,7 +110,7 @@ process Evolve {
     publishDir out_path, mode: 'copy', overwrite: 'false'
 
     input:
-    set file('ancestral.fa'), alpha, file('input_tree'), oname from sweep
+    set file('ancestral.fa'), alpha, file('input_tree'), oname from evo_sweep
 
     output:
     set file("${oname}.evo.fa") into descendents
@@ -122,9 +125,9 @@ process Evolve {
 /**
  * Generate WGS read-pairs
  */
-
-(a, descendents) = descendents.into(2)
-(wgs_sweep, hic_sweep, tr_sweep) = a.spread(tables.values()).into(3)
+descendents = ChannelDuplicator.createFrom(descendents)
+//(a, descendents) = descendents.into(2)
+(wgs_sweep, hic_sweep, tr_sweep) = descendents.onCopy().spread(tables.values()).into(3)
 
 wgs_sweep = wgs_sweep
         .spread(xfold)
@@ -297,7 +300,7 @@ process WGSMap {
 }
 
 /**
- * Infer per-contig coverage from wgs mapping
+ * Infer contig coverage from wgs mapping
  */
 
 (cov_sweep, wgs2ctg_mapping) = wgs2ctg_mapping.into(2)
@@ -315,12 +318,12 @@ process InferReadDepth {
     """
     bedtools genomecov -ibam wgs2ctg.bam | \
     awk '
-    BEGIN{n=0} 
+    BEGIN{n=0}
     {
         # ignore whole genome records
         if (\$1 != "genome") {
             # store names as they appear in repository
-            # we use this to preserve file order 
+            # we use this to preserve file order
             if (!(\$1 in seq_cov)) {
                 name_repo[n++]=\$1
             }
@@ -334,5 +337,4 @@ process InferReadDepth {
         }
     }' > "${oname}.wgs2ctg.cov"
     """
-
 }
