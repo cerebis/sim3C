@@ -2,23 +2,15 @@ class Globals {
     static String sweep_separator = '%'
 }
 
-//sweep_separator = '%'
-alpha_BL = [1]
-xfold = [1]
-nhic = [10000]
-trees = file('test/trees/*nwk').collectEntries{ [it.name, it] }
-tables = file('test/tables/*table').collectEntries{ [it.name, it] }
-ancestor = file('test/NC*raw').collectEntries{ [it.name, it] }
-out_path = 'out'
+trees = file(evolve.trees).collectEntries{ [it.name, it] }
+tables = file(evolve.tables).collectEntries{ [it.name, it] }
+ancestor = file(evolve.ancestor).collectEntries{ [it.name, it] }
+donor = file(evolve.donor).collectEntries{ [it.name, it] }
 
-seq_len = 3000000
-sg_scale = 1e-4
-seed = 1234
-wgs_read_len = 150
-wgs_ins_len = 450
-wgs_ins_std = 100
-hic_inter_prob = 0.9
-hic_read_len = 150
+alpha_BL = Helper.stringToFloats(evolve.alpha)
+xfold = Helper.stringToInts(wgs.xfold)
+nhic = Helper.stringToInts(hic.pairs)
+
 
 /**
  * Helper methods
@@ -101,24 +93,26 @@ class ChannelDuplicator {
 
 evo_sweep = Channel
         .from(ancestor.values())
+        .spread(donor.values())
         .spread(alpha_BL)
         .spread(trees.values())
         .map { it += it.collect { Helper.safeString(it) }.join(Globals.sweep_separator) }
 
 process Evolve {
     cache 'deep'
-    publishDir out_path, mode: 'copy', overwrite: 'false'
+    publishDir params.output, mode: 'copy', overwrite: 'false'
 
     input:
-    set file('ancestral.fa'), alpha, file('input_tree'), oname from evo_sweep
+    set file('ancestral.raw'), file('donor.faw'), alpha, file('input_tree'), oname from evo_sweep
 
     output:
     set file("${oname}.evo.fa") into descendents
 
     """
-    prepParams.py --tree input_tree --seq ancestral.fa --seq-len $seq_len --tree-scale $alpha \
-        --sg-scale $sg_scale --out-name "${oname}.evo.fa"
-    simujobrun.pl ancestral.fa $seed
+    scale_tree.py -a ${alpha} input_tree scaled_tree
+    sgEvolver --indel-freq=${indel_freq} --small-ht-freq=${small_ht_freq} --large-ht-freq=${large_ht_freq} \
+         --inversion-freq=${inversion_freq} --random-seed=${params.seed} scaled_tree \
+         ancestral.raw donor.raw ${oname}.evo.aln ${oname}.evo.fa
     """
 }
 
@@ -134,7 +128,7 @@ wgs_sweep = descendents.onCopy()
 
 process WGS_Reads {
     cache 'deep'
-    publishDir out_path, mode: 'copy', overwrite: 'false'
+    publishDir params.output, mode: 'copy', overwrite: 'false'
 
     input:
     set file('descendent.fa'), file('profile'), xf, oname from wgs_sweep
@@ -143,7 +137,8 @@ process WGS_Reads {
     set file("${oname}.wgs*.fq"), oname into wgs_reads
 
     """
-    metaART.py -t $profile -M $xf -S $seed -s $wgs_ins_std -m $wgs_ins_len -l $wgs_read_len -n "${oname}.wgs" descendent.fa .
+    metaART.py -t $profile -M $xf -S ${params.seed} -s ${wgs.ins_std} \
+            -m ${wgs.ins_len} -l ${wgs.read_len} -n "${oname}.wgs" descendent.fa .
     """
 }
 
@@ -158,7 +153,7 @@ hic_sweep = descendents.onCopy()
 
 process HIC_Reads {
     cache 'deep'
-    publishDir out_path, mode: 'copy', overwrite: 'false'
+    publishDir params.output, mode: 'copy', overwrite: 'false'
 
     input:
     set file('descendent.fa'), file('profile'), nh, oname from hic_sweep
@@ -167,7 +162,8 @@ process HIC_Reads {
     set file("${oname}.hic.fa") into hic_reads
 
     """
-    simForward.py -r $seed -n $nh -l $hic_read_len -p $hic_inter_prob -t $profile -s descendent.fa -o "${oname}.hic.fa"
+    simForward.py -r ${params.seed} -n $nh -l ${hic.read_len} -p ${hic.inter_prob} \
+           -t $profile -s descendent.fa -o "${oname}.hic.fa"
     """
 }
 
@@ -182,7 +178,7 @@ asm_sweep = wgs_reads.onCopy()
 process Assemble {
     cpus 1
     cache 'deep'
-    publishDir out_path, mode: 'copy', overwrite: 'false'
+    publishDir params.output, mode: 'copy', overwrite: 'false'
 
     input:
     set file('wgs_R1.fq'), file ('wgs_R2.fq'), oname from asm_sweep
@@ -209,7 +205,7 @@ tr_sweep = descendents.onCopy()
 
 process Truth {
     cache 'deep'
-    publishDir out_path, mode: 'copy', overwrite: 'false'
+    publishDir params.output, mode: 'copy', overwrite: 'false'
 
     input:
     set key, file('ref.fa'), file('contigs.fa'), oname from tr_sweep
@@ -241,7 +237,7 @@ hicmap_sweep = hic_reads
 
 process HiCMap {
     cache 'deep'
-    publishDir out_path, mode: 'copy', overwrite: 'false'
+    publishDir params.output, mode: 'copy', overwrite: 'false'
 
     input:
     set file('hic.fa'), file('contigs.fa'), oname from hicmap_sweep
@@ -270,7 +266,7 @@ graph_sweep = hic2ctg_mapping.onCopy()
 
 process Graph {
     cache 'deep'
-    publishDir out_path, mode: 'copy', overwrite: 'false'
+    publishDir params.output, mode: 'copy', overwrite: 'false'
 
     input:
     set file('hic2ctg.bam'), file('hic2ctg.bam.bai'), oname from graph_sweep
@@ -296,7 +292,7 @@ wgsmap_sweep = wgs_reads.onCopy()
 
 process WGSMap {
     cache 'deep'
-    publishDir out_path, mode: 'copy', overwrite: 'false'
+    publishDir params.output, mode: 'copy', overwrite: 'false'
 
     input:
     set oname, file('r1.fq'), file('r2.fq'), file('contigs.fa') from wgsmap_sweep
@@ -320,7 +316,7 @@ cov_sweep = wgs2ctg_mapping.onCopy()
 
 process InferReadDepth {
     cache 'deep'
-    publishDir out_path, mode: 'copy', overwrite: 'false'
+    publishDir params.output, mode: 'copy', overwrite: 'false'
 
     input:
     set file("wgs2ctg.bam"), oname from cov_sweep
