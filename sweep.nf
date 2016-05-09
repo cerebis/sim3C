@@ -2,14 +2,14 @@ class Globals {
     static String sweep_separator = '%'
 }
 
-trees = file(evolve.trees).collectEntries{ [it.name, it] }
-tables = file(evolve.tables).collectEntries{ [it.name, it] }
-ancestor = file(evolve.ancestor).collectEntries{ [it.name, it] }
-donor = file(evolve.donor).collectEntries{ [it.name, it] }
+trees = file(params.trees).collectEntries{ [it.name, it] }
+tables = file(params.tables).collectEntries{ [it.name, it] }
+ancestor = file(params.ancestor)
+donor = file(params.donor)
 
-alpha_BL = Helper.stringToFloats(evolve.alpha)
-xfold = Helper.stringToInts(wgs.xfold)
-nhic = Helper.stringToInts(hic.pairs)
+alpha_BL = Helper.stringToList(params.alpha)
+xfold = Helper.stringToList(params.xfold)
+nhic = Helper.stringToList(params.hic_pairs)
 
 
 /**
@@ -92,8 +92,8 @@ class ChannelDuplicator {
  */
 
 evo_sweep = Channel
-        .from(ancestor.values())
-        .spread(donor.values())
+        .from([ancestor])
+        .spread([donor])
         .spread(alpha_BL)
         .spread(trees.values())
         .map { it += it.collect { Helper.safeString(it) }.join(Globals.sweep_separator) }
@@ -103,16 +103,16 @@ process Evolve {
     publishDir params.output, mode: 'copy', overwrite: 'false'
 
     input:
-    set file('ancestral.raw'), file('donor.faw'), alpha, file('input_tree'), oname from evo_sweep
+    set file('ancestral.raw'), file('donor.raw'), alpha, file('input_tree'), oname from evo_sweep
 
     output:
     set file("${oname}.evo.fa") into descendents
 
     """
     scale_tree.py -a ${alpha} input_tree scaled_tree
-    sgEvolver --indel-freq=${indel_freq} --small-ht-freq=${small_ht_freq} --large-ht-freq=${large_ht_freq} \
-         --inversion-freq=${inversion_freq} --random-seed=${params.seed} scaled_tree \
-         ancestral.raw donor.raw ${oname}.evo.aln ${oname}.evo.fa
+    sgEvolver --indel-freq=${params.indel_freq} --small-ht-freq=${params.small_ht_freq} --large-ht-freq=${params.large_ht_freq} \
+         --inversion-freq=${params.inversion_freq} --random-seed=${params.seed} scaled_tree \
+         ancestral.raw donor.raw "${oname}.evo.aln" "${oname}.evo.fa"
     """
 }
 
@@ -137,8 +137,8 @@ process WGS_Reads {
     set file("${oname}.wgs*.fq"), oname into wgs_reads
 
     """
-    metaART.py -t $profile -M $xf -S ${params.seed} -s ${wgs.ins_std} \
-            -m ${wgs.ins_len} -l ${wgs.read_len} -n "${oname}.wgs" descendent.fa .
+    metaART.py -t $profile -M $xf -S ${params.seed} -s ${params.wgs_ins_std} \
+            -m ${params.wgs_ins_len} -l ${params.wgs_read_len} -n "${oname}.wgs" descendent.fa .
     """
 }
 
@@ -162,7 +162,7 @@ process HIC_Reads {
     set file("${oname}.hic.fa") into hic_reads
 
     """
-    simForward.py -r ${params.seed} -n $nh -l ${hic.read_len} -p ${hic.inter_prob} \
+    simForward.py -r ${params.seed} -n $nh -l ${params.hic_read_len} -p ${params.hic_inter_prob} \
            -t $profile -s descendent.fa -o "${oname}.hic.fa"
     """
 }
