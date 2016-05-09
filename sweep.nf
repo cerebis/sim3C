@@ -113,6 +113,7 @@ process Evolve {
     sgEvolver --indel-freq=${params.indel_freq} --small-ht-freq=${params.small_ht_freq} --large-ht-freq=${params.large_ht_freq} \
          --inversion-freq=${params.inversion_freq} --random-seed=${params.seed} scaled_tree \
          ancestral.raw donor.raw "${oname}.evo.aln" "${oname}.evo.fa"
+    strip_semis.sh "${oname}.evo.fa"
     """
 }
 
