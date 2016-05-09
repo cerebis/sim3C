@@ -1626,7 +1626,7 @@ Check for characters that are not shell-safe
 =cut
 sub validate_filename {
 	my $fname = shift;
-	return $fname !~ /[\ \"\'\&\:\%\?\*\$\<\>]/;
+	return $fname !~ /[\ \"\'\&\:\?\*\$\<\>]/;
 }
 
 sub validate_sequence_file{
