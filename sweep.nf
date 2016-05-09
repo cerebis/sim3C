@@ -79,6 +79,7 @@ class ChannelDuplicator {
     }
 
     DataflowQueue onCopy() {
+	def copied, keep
         (copied, keep) = this.orig.into(2)
         this.orig = keep
         return copied
