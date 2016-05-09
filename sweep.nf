@@ -95,7 +95,6 @@ class ChannelDuplicator {
 }
 
 
-
 /**
  * Generate simulated communities
  */
@@ -127,7 +126,6 @@ process Evolve {
  * Generate WGS read-pairs
  */
 descendents = ChannelDuplicator.createFrom(descendents)
-//(a, descendents) = descendents.into(2)
 (wgs_sweep, hic_sweep, tr_sweep) = descendents.onCopy().spread(tables.values()).into(3)
 
 wgs_sweep = wgs_sweep
@@ -176,7 +174,12 @@ process HIC_Reads {
  * Assemble WGS read-pairs
  */
 
-(asm_sweep, wgs_reads) = wgs_reads.map { reads, oname -> [*reads, oname] }.into(2)
+wgs_reads = ChannelDuplicator.createFrom(
+        /* flatten nested reads list */
+        wgs_reads.map { reads, oname -> [*reads, oname] } )
+
+// create a copy for consumption
+asm_sweep = wgs_reads.onCopy()
 
 process Assemble {
     cpus 1
@@ -281,7 +284,7 @@ process Graph {
 
 (a, wgs_contigs) = wgs_contigs.into(2)
 a = a.map { f -> [f.name[0..-15], f] }
-(b, wgs_reads) = wgs_reads.into(2)
+b = wgs_reads.onCopy()
 wgsmap_sweep = b.map { t -> [t[2], t[0], t[1]] }.phase(a){ t -> t[0] }.map { t -> [*(t[0]), t[1][1]] }
 
 process WGSMap {
