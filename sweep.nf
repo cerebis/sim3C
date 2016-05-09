@@ -126,14 +126,10 @@ process Evolve {
  * Generate WGS read-pairs
  */
 descendents = ChannelDuplicator.createFrom(descendents)
-(wgs_sweep, hic_sweep, tr_sweep) = descendents.onCopy().spread(tables.values()).into(3)
 
-wgs_sweep = wgs_sweep
+wgs_sweep = descendents.onCopy()
+        .spread(tables.values())
         .spread(xfold)
-        .map{ it += tuple(it[0].name[0..-8], it[1].name, it[2]).join(Globals.sweep_separator) }
-
-hic_sweep = hic_sweep
-        .spread(nhic)
         .map{ it += tuple(it[0].name[0..-8], it[1].name, it[2]).join(Globals.sweep_separator) }
 
 process WGS_Reads {
@@ -155,6 +151,11 @@ process WGS_Reads {
  * Generate 3C/HiC read-pairs
  */
 
+hic_sweep = descendents.onCopy()
+        .spread(tables.values())
+        .spread(nhic)
+        .map{ it += tuple(it[0].name[0..-8], it[1].name, it[2]).join(Globals.sweep_separator) }
+
 process HIC_Reads {
     cache 'deep'
     publishDir out_path, mode: 'copy', overwrite: 'false'
@@ -174,11 +175,8 @@ process HIC_Reads {
  * Assemble WGS read-pairs
  */
 
-wgs_reads = ChannelDuplicator.createFrom(
-        /* flatten nested reads list */
-        wgs_reads.map { reads, oname -> [*reads, oname] } )
+wgs_reads = ChannelDuplicator.createFrom( wgs_reads.map { reads, oname -> [*reads, oname] } )
 
-// create a copy for consumption
 asm_sweep = wgs_reads.onCopy()
 
 process Assemble {
@@ -201,10 +199,13 @@ process Assemble {
  * Generate contig->descendent gold standard mapping
  */
 
-(a, wgs_contigs) = wgs_contigs.into(2)
-a = a.map { f -> [Helper.removeLevels(f.name,2), f, f.name[0..-15]] }
-b = tr_sweep.map { t -> [t[0].name[0..-8], t[0]] }
-tr_sweep = b.phase(a){ t -> t[0] }.map { t -> [*t[0], *t[1][1..2]] }
+wgs_contigs = ChannelDuplicator.createFrom(wgs_contigs)
+
+a = wgs_contigs.onCopy().map { f -> [Helper.removeLevels(f.name,2), f, f.name[0..-15]] }
+tr_sweep = descendents.onCopy()
+        .spread(tables.values())
+        .map { t -> [t[0].name[0..-8], t[0]] }
+        .phase(a){ t -> t[0] }.map { t -> [*t[0], *t[1][1..2]] }
 
 process Truth {
     cache 'deep'
@@ -231,10 +232,12 @@ process Truth {
  * Map 3C/HiC read-pairs to assembly contigs
  */
 
-(a, wgs_contigs) = wgs_contigs.into(2)
-a = a.map { f -> [Helper.removeLevels(f.name,1), f] }
-b = hic_reads.map { f -> [Helper.removeLevels(f.name, 1), f, f.name[0..-8]] }
-hicmap_sweep = b.phase(a){ t -> t[0] }.map { t -> [t[0][1], t[1][1], t[0][2]] }
+a = wgs_contigs.onCopy()
+        .map { f -> [Helper.removeLevels(f.name,1), f] }
+
+hicmap_sweep = hic_reads
+        .map { f -> [Helper.removeLevels(f.name, 1), f, f.name[0..-8]] }
+        .phase(a){ t -> t[0] }.map { t -> [t[0][1], t[1][1], t[0][2]] }
 
 process HiCMap {
     cache 'deep'
@@ -260,8 +263,10 @@ process HiCMap {
  * Generate contig graphs from HiC mappings
  */
 
-(a, hic2ctg_mapping) = hic2ctg_mapping.into(2)
-graph_sweep = a.map {t -> [t[0], t[1], t[0].name[0..-13] ] }
+hic2ctg_mapping = ChannelDuplicator.createFrom(hic2ctg_mapping)
+
+graph_sweep = hic2ctg_mapping.onCopy()
+        .map {t -> [t[0], t[1], t[0].name[0..-13] ] }
 
 process Graph {
     cache 'deep'
@@ -282,10 +287,12 @@ process Graph {
  * Map WGS reads to contigs to infer read-depth
  */
 
-(a, wgs_contigs) = wgs_contigs.into(2)
-a = a.map { f -> [f.name[0..-15], f] }
-b = wgs_reads.onCopy()
-wgsmap_sweep = b.map { t -> [t[2], t[0], t[1]] }.phase(a){ t -> t[0] }.map { t -> [*(t[0]), t[1][1]] }
+a = wgs_contigs.onCopy()
+        .map { f -> [f.name[0..-15], f] }
+
+wgsmap_sweep = wgs_reads.onCopy()
+        .map { t -> [t[2], t[0], t[1]] }
+        .phase(a){ t -> t[0] }.map { t -> [*(t[0]), t[1][1]] }
 
 process WGSMap {
     cache 'deep'
@@ -307,7 +314,9 @@ process WGSMap {
  * Infer contig coverage from wgs mapping
  */
 
-(cov_sweep, wgs2ctg_mapping) = wgs2ctg_mapping.into(2)
+wgs2ctg_mapping = ChannelDuplicator.createFrom(wgs2ctg_mapping)
+
+cov_sweep = wgs2ctg_mapping.onCopy()
 
 process InferReadDepth {
     cache 'deep'
