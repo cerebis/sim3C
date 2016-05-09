@@ -62,10 +62,10 @@ if __name__ == '__main__':
                 coverage = float(profile[seq_id] * args.max_coverage)
                 print 'Requesting {0} coverage for {1}'.format(coverage, seq_id)
 
+                ref_seq = seq_index[seq_id]
+
                 if args.filter_names:
-                    ref_seq = seq_index[seq_id.translate(None, ';')]
-                else:
-                    ref_seq = seq_index[seq_id]
+                    ref_seq.seq_id = ref_seq.seq_id.translate(None, ';')
 
                 ref_len = len(ref_seq)
                 SeqIO.write([ref_seq], seq_tmp, 'fasta')
