@@ -545,7 +545,7 @@ def make_unconstrained_part_a():
     """
     repl = comm.get_replicon_by_index(comm.pick_replicon())
     pos = repl.random_cut_site(CUTTER_NAME)
-    frag_len = int(numpy.random.normal(SHEARING_MEAN, SHEARING_SD) / 2)
+    frag_len = int(RANDOM_STATE.normal(SHEARING_MEAN, SHEARING_SD) / 2)
     seq = repl.subseq(pos, frag_len)
     return Part(seq, pos, pos + frag_len, True, repl)
 
@@ -559,7 +559,7 @@ def make_unconstrained_part_b(first_part):
     """
     diff_repl = first_part.replicon.parent_cell.pick_inter_rep(first_part.replicon)
     pos = diff_repl.random_cut_site(CUTTER_NAME)
-    frag_len = int(numpy.random.normal(SHEARING_MEAN, SHEARING_SD) / 2)
+    frag_len = int(RANDOM_STATE.normal(SHEARING_MEAN, SHEARING_SD) / 2)
     seq = diff_repl.subseq(pos, frag_len)
     return Part(seq, pos, pos + frag_len, True, diff_repl)
 
@@ -573,7 +573,7 @@ def make_constrained_part_b(first_part):
     """
     loc = first_part.replicon.constrained_upstream_location(first_part.pos1)
     pos = first_part.replicon.nearest_cut_site_by_distance(CUTTER_NAME, loc)
-    frag_len = int(numpy.random.normal(SHEARING_MEAN, SHEARING_SD) / 2)
+    frag_len = int(RANDOM_STATE.normal(SHEARING_MEAN, SHEARING_SD) / 2)
     seq = first_part.replicon.subseq(pos, frag_len)
     return Part(seq, pos, pos+frag_len, True, first_part.replicon)
 
