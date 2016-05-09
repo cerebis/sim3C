@@ -22,15 +22,15 @@ class Helper {
     static def separators = /[ ,\t]/
 
     static int[] stringToInts(String str) {
-        return str.split(separators).collect { elem -> elem as int }
+        return (str.split(separators) - '').collect { elem -> elem as int }
     }
 
     static float[] stringToFloats(String str) {
-        return str.split(separators).collect { elem -> elem as float }
+        return (str.split(separators) - '').collect { elem -> elem as float }
     }
 
     static String[] stringToList(String str) {
-        return str.split(Helper.separators)
+        return str.split(Helper.separators) - ''
     }
 
     static String dropSuffix(str) {
