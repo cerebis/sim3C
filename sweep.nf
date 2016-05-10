@@ -1,5 +1,5 @@
 class Globals {
-    static String sweep_separator = '%'
+    static String separator = '%'
 }
 
 trees = file(params.trees).collectEntries{ [it.name, it] }
@@ -55,11 +55,11 @@ class Helper {
 
     static String removeLevels(Path path, int n) {
         def name = path.toAbsolutePath().toString()
-        return name.split(Globals.sweep_separator)[0..-(n+1)].join(Globals.sweep_separator)
+        return name.split(Globals.separator)[0..-(n+1)].join(Globals.separator)
     }
 
     static String removeLevels(String name, int n) {
-        return name.split(Globals.sweep_separator)[0..-(n+1)].join(Globals.sweep_separator)
+        return name.split(Globals.separator)[0..-(n+1)].join(Globals.separator)
     }
 }
 
@@ -96,7 +96,7 @@ evo_sweep = Channel
         .spread([donor])
         .spread(alpha_BL)
         .spread(trees.values())
-        .map { it += it.collect { Helper.safeString(it) }.join(Globals.sweep_separator) }
+        .map { it += it.collect { Helper.safeString(it) }.join(Globals.separator) }
 
 process Evolve {
     cache 'deep'
@@ -125,7 +125,7 @@ descendents = ChannelDuplicator.createFrom(descendents)
 wgs_sweep = descendents.onCopy()
         .spread(tables.values())
         .spread(xfold)
-        .map{ it += tuple(it[0].name[0..-8], it[1].name, it[2]).join(Globals.sweep_separator) }
+        .map{ it += tuple(it[0].name[0..-8], it[1].name, it[2]).join(Globals.separator) }
 
 process WGS_Reads {
     cache 'deep'
@@ -150,7 +150,7 @@ process WGS_Reads {
 hic_sweep = descendents.onCopy()
         .spread(tables.values())
         .spread(nhic)
-        .map{ it += tuple(it[0].name[0..-8], it[1].name, it[2]).join(Globals.sweep_separator) }
+        .map{ it += tuple(it[0].name[0..-8], it[1].name, it[2]).join(Globals.separator) }
 
 process HIC_Reads {
     cache 'deep'
@@ -229,12 +229,19 @@ process Truth {
  * Map 3C/HiC read-pairs to assembly contigs
  */
 
+def product(A, B) {  A.collectMany{a->B.collect{b->[a, b]}}}
+
 a = wgs_contigs.onCopy()
-        .map { f -> [Helper.removeLevels(f.name,1), f] }
+        .map { f -> [Helper.removeLevels(f.name, 1), f] }
+        .groupTuple()
 
 hicmap_sweep = hic_reads
-        .map { f -> [Helper.removeLevels(f.name, 1), f, f.name[0..-8]] }
-        .phase(a){ t -> t[0] }.map { t -> [t[0][1], t[1][1], t[0][2]] }
+        .map { f -> [Helper.removeLevels(f.name, 1), f] }
+        .groupTuple()
+        .cross(a)
+        .map { t -> [t[0][0], product(t[0][1], t[1][1])] }
+        .flatMap { t -> t[1] } 
+        .map { t -> [*t, (t[1].name[0..-15].split(Globals.separator) + t[0].name[0..-8].split(Globals.separator)[-1]).join(Globals.separator)  ] }
 
 process HiCMap {
     cache 'deep'
@@ -336,8 +343,8 @@ process InferReadDepth {
             # we use this to preserve file order
             if (!(\$1 in seq_cov)) {
                 name_repo[n++]=\$1
-            }
             # sum uses relative weights from histogram
+            }
             seq_cov[\$1]+=\$2*\$3/\$4
         }
     }
@@ -348,3 +355,4 @@ process InferReadDepth {
     }' > "${oname}.wgs2ctg.cov"
     """
 }
+
