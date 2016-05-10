@@ -17,7 +17,7 @@ if __name__ == '__main__':
                         help='Community profile table', metavar='FILE')
     parser.add_argument('-M', '--max-coverage', metavar='INT', type=int, required=True,
                         help='Coverage of must abundant taxon')
-    parser.add_argument('-S', '--seed', metavar='INT', type=int, required=True, help='Random seed')
+    parser.add_argument('-S', '--seed', metavar='INT', type=int, default='1234', required=True, help='Random seed')
     parser.add_argument('-l', '--read-len', metavar='INT', type=int, required=True, help='Read length')
     parser.add_argument('-m', '--insert-len', metavar='INT', type=int, required=True, help='Insert length')
     parser.add_argument('-s', '--insert-sd', metavar='INT', type=int, required=True, help='Insert standard deviation')
@@ -102,3 +102,4 @@ if __name__ == '__main__':
         finally:
             if seq_index:
                 seq_index.close()
+
