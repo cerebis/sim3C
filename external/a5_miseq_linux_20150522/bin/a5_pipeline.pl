@@ -164,7 +164,7 @@ if(@ARGV==3){
 } else { 
 	$OUTBASE = $ARGV[1];
 	my $file = $ARGV[0];
-	my $file_type = `file $file`;
+	my $file_type = `file -L $file`;
 	my $first_line = "";
 	if ($file_type =~ /gzip/){
 		$first_line = `gunzip -c $file | head -n 1`;
@@ -727,7 +727,7 @@ Check if the given file is zipped up. If it is, unzip and return the file it was
 =cut
 sub check_and_unzip {
 	my $file = shift;
-	my $file_type = `file $file`;
+	my $file_type = `file -L $file`;
 	my $ret = $file;
 	validate_sequence_file($file, $message);
 	my $bname = basename($file);
