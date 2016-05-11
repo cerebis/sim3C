@@ -61,6 +61,10 @@ class Helper {
     static String removeLevels(String name, int n) {
         return name.split(Globals.separator)[0..-(n+1)].join(Globals.separator)
     }
+
+    static Object[] product(A, B) {
+        return A.collectMany{a->B.collect{b->[a, b]}}
+    }
 }
 
 class ChannelDuplicator {
@@ -71,7 +75,7 @@ class ChannelDuplicator {
     }
 
     DataflowQueue onCopy() {
-	def copied, keep
+	    def copied, keep
         (copied, keep) = this.orig.into(2)
         this.orig = keep
         return copied
@@ -229,8 +233,6 @@ process Truth {
  * Map 3C/HiC read-pairs to assembly contigs
  */
 
-def product(A, B) {  A.collectMany{a->B.collect{b->[a, b]}}}
-
 a = wgs_contigs.onCopy()
         .map { f -> [Helper.removeLevels(f.name, 1), f] }
         .groupTuple()
@@ -239,7 +241,7 @@ hicmap_sweep = hic_reads
         .map { f -> [Helper.removeLevels(f.name, 1), f] }
         .groupTuple()
         .cross(a)
-        .map { t -> [t[0][0], product(t[0][1], t[1][1])] }
+        .map { t -> [t[0][0], Helper.product(t[0][1], t[1][1])] }
         .flatMap { t -> t[1] } 
         .map { t -> [*t, (t[1].name[0..-15].split(Globals.separator) + t[0].name[0..-8].split(Globals.separator)[-1]).join(Globals.separator)  ] }
 
