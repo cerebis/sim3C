@@ -27,11 +27,11 @@ if StrictVersion(numpy.__version__) < StrictVersion("1.9.0"):
 
 def open_output(fname, compress=None):
     if compress == 'bzip2':
-        fh = bz2.BZ2File(fname + '.bz2', 'w')
+        fh = bz2.BZ2File(fname, 'w')
     elif compress == 'gzip':
         # fix compression level to 6 since this is the norm on Unix. The default
         # of 9 is slow and is still often worse than bzip2.
-        fh = gzip.GzipFile(fname + '.gz', 'w', compresslevel=6)
+        fh = gzip.GzipFile(fname, 'w', compresslevel=6)
     else:
         fh = open(fname, 'w')
     return fh
@@ -602,65 +602,24 @@ parser.add_argument('--alt-naming', default=False, action='store_true',
                     help='Use alternative read names')
 parser.add_argument('--site-dup', default=False, action='store_true',
                     help='Hi-C style ligation junction site duplication')
+parser.add_argument('-f', '--ofmt', dest='output_format', default='fastq', choices=['fasta', 'fastq'],
+                    help='Output format')
+parser.add_argument('-r', '--seed', metavar='INT', type=int, default=int(time.time()),
+                    help="Random seed for initialising number generator")
 
 parser.add_argument('-n', '--num-frag', metavar='INT', type=int, required=True,
                     help='Number of Hi-C fragments to generate reads')
-
 parser.add_argument('-l', '--read-length', metavar='INT', type=int, required=True,
                     help='Length of reads from Hi-C fragments')
 parser.add_argument('-p', '--interrep-prob', dest='inter_prob', metavar='FLOAT', type=float, required=True,
                     help='Probability that a fragment spans two replicons')
 parser.add_argument('-t', '--community-table', dest='comm_table', metavar='FILE', required=True,
                     help='Community profile table')
-parser.add_argument('-s', '--seq', dest='genome_seq', metavar='FILE', required=True,
+parser.add_argument(dest='genome_seq', metavar='FASTA',
                     help='Genome sequences for the community')
-parser.add_argument('-r', '--seed', metavar='INT', type=int, default=int(time.time()),
-                    help="Random seed for initialising number generator")
-parser.add_argument('-o', '--output', dest='output_file', metavar='FILE', required=True,
+parser.add_argument(dest='output_file', metavar='OUTPUT',
                     help='Output Hi-C reads file')
-parser.add_argument('-f', '--ofmt', dest='output_format', default='fastq', choices=['fasta', 'fastq'],
-                    metavar='output_format [fasta, fastq]', help='Output format')
 args = parser.parse_args()
-
-'''parser = OptionParser()
-parser.add_option('--alt-naming', dest='alt_naming', default=False, action='store_true',
-                  help='Use alternative read names')
-parser.add_option('--site-dup', dest='site_dup', default=False, action='store_true',
-                  help='Hi-C style ligation junction site duplication')
-parser.add_option('-n', '--num-frag', dest='num_frag',
-                  help='Number of Hi-C fragments to generate reads', metavar='INT', type='int')
-parser.add_option('-l', '--read-length', dest='read_length',
-                  help='Length of reads from Hi-C fragments', metavar='INT', type='int')
-parser.add_option('-p', '--interrep-prob', dest='inter_prob',
-                  help='Probability that a fragment spans two replicons', metavar='FLOAT', type='float')
-parser.add_option('-t', '--community-table', dest='comm_table',
-                  help='Community profile table', metavar='FILE')
-parser.add_option('-s', '--seq', dest='genome_seq',
-                  help='Genome sequences for the community', metavar='FILE')
-parser.add_option('-r', '--seed', dest='seed',
-                  help="Random seed for initialising number generator", metavar='INT', type='int')
-parser.add_option('-o', '--output', dest='output_file',
-                  help='Output Hi-C reads file', metavar='FILE')
-parser.add_option('-f', '--ofmt', dest='output_format', default='fastq',
-                  help='Output format', choices=['fasta', 'fastq'], metavar='output_format [fasta, fastq]')
-# parser.add_option('--split-reads', dest='split', default=False, action='store_true',
-#                  help='Split output reads into separate R1/R2 files')
-(options, args) = parser.parse_args()'''
-
-'''if args.num_frag is None:
-    parser.error('Number of fragments not specified')
-if args.read_length is None:
-    parser.error('Read length not specified')
-if options.inter_prob is None:
-    parser.error('Inter-replicon probability not specified')
-if options.comm_table is None:
-    parser.error('Community profile table not specified')
-if options.genome_seq is None:
-    parser.error('Genome sequences file not specified')
-if options.seed is None:
-    options.seed = int(time.time())
-if options.output_file is None:
-    parser.error('Output file not specified')'''
 
 #
 # Main routine
