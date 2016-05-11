@@ -2,17 +2,19 @@
 
 from Bio import Alphabet
 from Bio import SeqIO
-from Bio.Seq import Seq
 
 from collections import OrderedDict
-from optparse import OptionParser
+#from optparse import OptionParser
 
 from Bio.Restriction import *
 
+import argparse
 import numpy
 import re
 import time
 import sys
+import gzip
+import bz2
 
 # numpy version 1.8.2 is apparently incompatible
 from distutils.version import StrictVersion
@@ -21,6 +23,18 @@ if StrictVersion(numpy.__version__) < StrictVersion("1.9.0"):
     sys.stderr.write("Error: numpy version 1.9.0 or later required\n")
     sys.stderr.write("If numpy is installed in both your home & system directory, you may need to run with python -S\n")
     sys.exit(-1)
+
+
+def open_output(fname, compress=None):
+    if compress == 'bzip2':
+        fh = bz2.BZ2File(fname + '.bz2', 'w')
+    elif compress == 'gzip':
+        # fix compression level to 6 since this is the norm on Unix. The default
+        # of 9 is slow and is still often worse than bzip2.
+        fh = gzip.GzipFile(fname + '.gz', 'w', compresslevel=6)
+    else:
+        fh = open(fname, 'w')
+    return fh
 
 #
 # Globals
@@ -34,7 +48,7 @@ MIXED_GEOM_PROB = 6.0e-6
 
 # Random State from which to draw numbers
 # this is initialized at start time
-RANDOM_STATE = None
+#RANDOM_STATE = None
 
 # Average & SD size that fragments are sheared (or tagmented) to during adapter ligation
 SHEARING_MEAN = 400
@@ -581,7 +595,34 @@ def make_constrained_part_b(first_part):
 #
 # Commandline interface
 #
-parser = OptionParser()
+parser = argparse.ArgumentParser(description='Simulate HiC read pairs')
+parser.add_argument('-C', '--compress', choices=['gzip', 'bzip2'], default=None,
+                    help='Compress output files')
+parser.add_argument('--alt-naming', default=False, action='store_true',
+                    help='Use alternative read names')
+parser.add_argument('--site-dup', default=False, action='store_true',
+                    help='Hi-C style ligation junction site duplication')
+
+parser.add_argument('-n', '--num-frag', metavar='INT', type=int, required=True,
+                    help='Number of Hi-C fragments to generate reads')
+
+parser.add_argument('-l', '--read-length', metavar='INT', type=int, required=True,
+                    help='Length of reads from Hi-C fragments')
+parser.add_argument('-p', '--interrep-prob', dest='inter_prob', metavar='FLOAT', type=float, required=True,
+                    help='Probability that a fragment spans two replicons')
+parser.add_argument('-t', '--community-table', dest='comm_table', metavar='FILE', required=True,
+                    help='Community profile table')
+parser.add_argument('-s', '--seq', dest='genome_seq', metavar='FILE', required=True,
+                    help='Genome sequences for the community')
+parser.add_argument('-r', '--seed', metavar='INT', type=int, default=int(time.time()),
+                    help="Random seed for initialising number generator")
+parser.add_argument('-o', '--output', dest='output_file', metavar='FILE', required=True,
+                    help='Output Hi-C reads file')
+parser.add_argument('-f', '--ofmt', dest='output_format', default='fastq', choices=['fasta', 'fastq'],
+                    metavar='output_format [fasta, fastq]', help='Output format')
+args = parser.parse_args()
+
+'''parser = OptionParser()
 parser.add_option('--alt-naming', dest='alt_naming', default=False, action='store_true',
                   help='Use alternative read names')
 parser.add_option('--site-dup', dest='site_dup', default=False, action='store_true',
@@ -604,11 +645,11 @@ parser.add_option('-f', '--ofmt', dest='output_format', default='fastq',
                   help='Output format', choices=['fasta', 'fastq'], metavar='output_format [fasta, fastq]')
 # parser.add_option('--split-reads', dest='split', default=False, action='store_true',
 #                  help='Split output reads into separate R1/R2 files')
-(options, args) = parser.parse_args()
+(options, args) = parser.parse_args()'''
 
-if options.num_frag is None:
+'''if args.num_frag is None:
     parser.error('Number of fragments not specified')
-if options.read_length is None:
+if args.read_length is None:
     parser.error('Read length not specified')
 if options.inter_prob is None:
     parser.error('Inter-replicon probability not specified')
@@ -619,18 +660,18 @@ if options.genome_seq is None:
 if options.seed is None:
     options.seed = int(time.time())
 if options.output_file is None:
-    parser.error('Output file not specified')
+    parser.error('Output file not specified')'''
 
 #
 # Main routine
 #
 
 # set state for random number generation
-RANDOM_STATE = numpy.random.RandomState(options.seed)
+RANDOM_STATE = numpy.random.RandomState(args.seed)
 
 # Initialize community object
 print "Initializing community"
-comm = Community(options.inter_prob, options.comm_table, options.genome_seq, [CUTTER_NAME])
+comm = Community(args.inter_prob, args.comm_table, args.genome_seq, [CUTTER_NAME])
 
 # Junction produced in Hi-C prep
 rb = RestrictionBatch([CUTTER_NAME])
@@ -641,7 +682,7 @@ hic_junction = en.site + en.site
 # Control the style of read names employed. We originally appended the direction
 # or read number (R1=fwd, R2=rev) to the id. This is not what is expected in normal
 # situations. Unfortunately, code still depends on this and needs to be fixed first.
-if options.alt_naming:
+if args.alt_naming:
     # direction is just part of the description
     fwd_fmt = 'frg{0} fwd'
     rev_fmt = 'frg{0} rev'
@@ -651,14 +692,14 @@ else:
     rev_fmt = 'frg{0}rev'
 
 # Open output file for writing reads
-with open(options.output_file, 'wb') as h_output:
+with open_output(args.output_file, args.compress) as h_output:
 
     print "Creating reads"
     skip_count = 0
     overlap_count = 0
     frag_count = 0
 
-    while frag_count < options.num_frag:
+    while frag_count < args.num_frag:
         # Fragment creation
 
         # Create PartA
@@ -681,7 +722,7 @@ with open(options.output_file, 'wb') as h_output:
             part_b = make_unconstrained_part_b(part_a)
 
         # Join parts A and B
-        if options.site_dup:
+        if args.site_dup:
             fragment = part_a.seq + hic_junction + part_b.seq
         else:
             # meta3C does not create duplicated sites
@@ -700,15 +741,15 @@ with open(options.output_file, 'wb') as h_output:
             overlap_count += 1
             continue
 
-        read1 = make_read(fragment, True, options.read_length)
+        read1 = make_read(fragment, True, args.read_length)
         read1.id = fwd_fmt.format(frag_count)
         read1.description = '{0} {1}'.format(part_a.seq.id, part_a.seq.description)
 
-        read2 = make_read(fragment, False, options.read_length)
+        read2 = make_read(fragment, False, args.read_length)
         read2.id = rev_fmt.format(frag_count)
         read2.description = '{0} {1}'.format(part_b.seq.id, part_b.seq.description)
 
-        write_reads(h_output, [read1, read2], options.output_format, dummy_q=True)
+        write_reads(h_output, [read1, read2], args.output_format, dummy_q=True)
 
         frag_count += 1
 
