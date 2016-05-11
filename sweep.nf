@@ -104,7 +104,7 @@ evo_sweep = Channel
 
 process Evolve {
     cache 'deep'
-    publishDir params.output, mode: 'copy', overwrite: 'false'
+    publishDir params.output, mode: 'symlink', overwrite: 'false'
 
     input:
     set file('ancestral.raw'), file('donor.raw'), alpha, file('input_tree'), oname from evo_sweep
@@ -133,16 +133,16 @@ wgs_sweep = descendents.onCopy()
 
 process WGS_Reads {
     cache 'deep'
-    publishDir params.output, mode: 'copy', overwrite: 'false'
+    publishDir params.output, mode: 'symlink', overwrite: 'false'
 
     input:
     set file('descendent.fa'), file('profile'), xf, oname from wgs_sweep
 
     output:
-    set file("${oname}.wgs*.fq"), oname into wgs_reads
+    set file("${oname}.wgs*.fq.gz"), oname into wgs_reads
 
     """
-    metaART.py -t $profile -M $xf -S ${params.seed} -s ${params.wgs_ins_std} \
+    metaART.py -C gzip -t $profile -M $xf -S ${params.seed} -s ${params.wgs_ins_std} \
             -m ${params.wgs_ins_len} -l ${params.wgs_read_len} -n "${oname}.wgs" descendent.fa .
     """
 }
@@ -158,17 +158,17 @@ hic_sweep = descendents.onCopy()
 
 process HIC_Reads {
     cache 'deep'
-    publishDir params.output, mode: 'copy', overwrite: 'false'
+    publishDir params.output, mode: 'symlink', overwrite: 'false'
 
     input:
     set file('descendent.fa'), file('profile'), nh, oname from hic_sweep
 
     output:
-    set file("${oname}.hic.fa") into hic_reads
+    set file("${oname}.hic.fa.gz") into hic_reads
 
     """
-    simForward.py -r ${params.seed} -n $nh -l ${params.hic_read_len} -p ${params.hic_inter_prob} \
-           -t $profile -s descendent.fa -o "${oname}.hic.fa"
+    simForward.py -C gzip -r ${params.seed} -n $nh -l ${params.hic_read_len} -p ${params.hic_inter_prob} \
+           -t $profile descendent.fa "${oname}.hic.fa.gz"
     """
 }
 
@@ -183,16 +183,16 @@ asm_sweep = wgs_reads.onCopy()
 process Assemble {
     cpus 1
     cache 'deep'
-    publishDir params.output, mode: 'copy', overwrite: 'false'
+    publishDir params.output, mode: 'symlink', overwrite: 'false'
 
     input:
-    set file('wgs_R1.fq'), file ('wgs_R2.fq'), oname from asm_sweep
+    set file('wgs_R1.fq.gz'), file ('wgs_R2.fq.gz'), oname from asm_sweep
 
     output:
     file("${oname}.contigs.fasta") into wgs_contigs
 
     """
-    a5_pipeline.pl --threads=1 --metagenome wgs_R1.fq wgs_R2.fq ${oname}
+    a5_pipeline.pl --threads=1 --metagenome wgs_R1.fq.gz wgs_R2.fq.gz ${oname}
     """
 }
 
@@ -210,7 +210,7 @@ tr_sweep = descendents.onCopy()
 
 process Truth {
     cache 'deep'
-    publishDir params.output, mode: 'copy', overwrite: 'false'
+    publishDir params.output, mode: 'symlink', overwrite: 'false'
 
     input:
     set key, file('ref.fa'), file('contigs.fa'), oname from tr_sweep
@@ -247,10 +247,10 @@ hicmap_sweep = hic_reads
 
 process HiCMap {
     cache 'deep'
-    publishDir params.output, mode: 'copy', overwrite: 'false'
+    publishDir params.output, mode: 'symlink', overwrite: 'false'
 
     input:
-    set file('hic.fa'), file('contigs.fa'), oname from hicmap_sweep
+    set file('hic.fa.gz'), file('contigs.fa'), oname from hicmap_sweep
 
     output:
     file("${oname}.hic2ctg*") into hic2ctg_mapping
@@ -258,7 +258,7 @@ process HiCMap {
 
     """
     bwa index contigs.fa
-    bwa mem -t 1 contigs.fa hic.fa | samtools view -bS - | samtools sort - "${oname}.hic2ctg"
+    bwa mem -t 1 contigs.fa hic.fa.gz | samtools view -bS - | samtools sort -l 9 - "${oname}.hic2ctg"
     samtools index "${oname}.hic2ctg.bam"
     samtools idxstats "${oname}.hic2ctg.bam" > "${oname}.hic2ctg.idxstats"
     samtools flagstat "${oname}.hic2ctg.bam" > "${oname}.hic2ctg.flagstat"
@@ -276,7 +276,7 @@ graph_sweep = hic2ctg_mapping.onCopy()
 
 process Graph {
     cache 'deep'
-    publishDir params.output, mode: 'copy', overwrite: 'false'
+    publishDir params.output, mode: 'symlink', overwrite: 'false'
 
     input:
     set file('hic2ctg.bam'), file('hic2ctg.bam.bai'), oname from graph_sweep
@@ -302,17 +302,17 @@ wgsmap_sweep = wgs_reads.onCopy()
 
 process WGSMap {
     cache 'deep'
-    publishDir params.output, mode: 'copy', overwrite: 'false'
+    publishDir params.output, mode: 'symlink', overwrite: 'false'
 
     input:
-    set oname, file('r1.fq'), file('r2.fq'), file('contigs.fa') from wgsmap_sweep
+    set oname, file('r1.fq.gz'), file('r2.fq.gz'), file('contigs.fa') from wgsmap_sweep
 
     output:
     set file("${oname}.wgs2ctg.bam"), oname into wgs2ctg_mapping
 
     """
     bwa index contigs.fa
-    bwa mem -t 1 contigs.fa r1.fq r2.fq | samtools view -bS - | samtools sort - "${oname}.wgs2ctg"
+    bwa mem -t 1 contigs.fa r1.fq.gz r2.fq.gz | samtools view -bS - | samtools sort -l 9 - "${oname}.wgs2ctg"
     """
 }
 
@@ -326,7 +326,7 @@ cov_sweep = wgs2ctg_mapping.onCopy()
 
 process InferReadDepth {
     cache 'deep'
-    publishDir params.output, mode: 'copy', overwrite: 'false'
+    publishDir params.output, mode: 'symlink', overwrite: 'false'
 
     input:
     set file("wgs2ctg.bam"), oname from cov_sweep
