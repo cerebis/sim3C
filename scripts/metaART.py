@@ -13,9 +13,9 @@ TMP_OUTPUT = 'reads.tmp.'
 
 def open_output(fname, compress=None):
     if compress == 'bzip2':
-        fh = bz2.BZ2File(fname, 'w')
+        fh = bz2.BZ2File(fname + '.bz2', 'w')
     elif compress == 'gzip':
-        fh = gzip.GzipFile(fname, 'w')
+        fh = gzip.GzipFile(fname + '.gz', 'w')
     else:
         fh = open(fname, 'w')
     return fh
@@ -77,16 +77,22 @@ if __name__ == '__main__':
 
                 ref_len = len(ref_seq)
                 SeqIO.write([ref_seq], seq_tmp, 'fasta')
-                subprocess.call([args.art_path,
-                                 '-p',   # paired-end sequencing
-                                 '-na',  # no alignment file
-                                 '-rs', str(args.seed),
-                                 '-m', str(args.insert_len),
-                                 '-s', str(args.insert_sd),
-                                 '-l', str(args.read_len),
-                                 '-f', str(coverage),
-                                 '-i', seq_tmp,
-                                 '-o', os.path.join(args.output_dir, TMP_OUTPUT)], stdout=args.log, stderr=args.log)
+
+                try:
+                    subprocess.call([args.art_path,
+                                     '-p',   # paired-end sequencing
+                                     '-na',  # no alignment file
+                                     '-rs', str(args.seed),
+                                     '-m', str(args.insert_len),
+                                     '-s', str(args.insert_sd),
+                                     '-l', str(args.read_len),
+                                     '-f', str(coverage),
+                                     '-i', seq_tmp,
+                                     '-o', os.path.join(args.output_dir, TMP_OUTPUT)], stdout=args.log, stderr=args.log)
+                except OSError as ex:
+                    print "There was an error starting the art_illumina subprocess."
+                    print "You may need to add its location to your PATH or specify it at runtime."
+                    raise ex
 
                 # count generated reads
                 r1_n = 0
