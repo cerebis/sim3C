@@ -15,7 +15,9 @@ def open_output(fname, compress=None):
     if compress == 'bzip2':
         fh = bz2.BZ2File(fname + '.bz2', 'w')
     elif compress == 'gzip':
-        fh = gzip.GzipFile(fname + '.gz', 'w')
+        # fix compression level to 6 since this is the norm on Unix. The default
+        # of 9 is slow and is still often worse than bzip2.
+        fh = gzip.GzipFile(fname + '.gz', 'w', compresslevel=6)
     else:
         fh = open(fname, 'w')
     return fh
