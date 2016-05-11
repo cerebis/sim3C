@@ -5,13 +5,26 @@ import argparse
 import os
 import subprocess
 import sys
+import gzip
+import bz2
 
 TMP_INPUT = 'seq.tmp'
 TMP_OUTPUT = 'reads.tmp.'
 
+def open_output(fname, compress=None):
+    if compress == 'bzip2':
+        fh = bz2.BZ2File(fname, 'w')
+    elif compress == 'gzip':
+        fh = gzip.GzipFile(fname, 'w')
+    else:
+        fh = open(fname, 'w')
+    return fh
+
+
 if __name__ == '__main__':
 
     parser = argparse.ArgumentParser(description='Simulate a metagenomic data set from an abundance profile')
+    parser.add_argument('-C', '--compress', choices=['gzip', 'bzip2'], default=None, help='Compress output files')
     parser.add_argument('-n', '--output-name', metavar='PATH', help='Output file base name', required=True)
     parser.add_argument('-t', '--community-table', dest='comm_table', required=True,
                         help='Community profile table', metavar='FILE')
@@ -53,7 +66,7 @@ if __name__ == '__main__':
     r1_tmp = os.path.join(args.output_dir, '{0}1.fq'.format(TMP_OUTPUT)) 
     r2_tmp = os.path.join(args.output_dir, '{0}2.fq'.format(TMP_OUTPUT))
 
-    with open(r1_final, 'w') as output_R1, open(r2_final, 'w') as output_R2:
+    with open_output(r1_final, args.compress) as output_R1, open_output(r2_final, args.compress) as output_R2:
         try:
             for seq_id in profile:
 
@@ -102,4 +115,3 @@ if __name__ == '__main__':
         finally:
             if seq_index:
                 seq_index.close()
-
