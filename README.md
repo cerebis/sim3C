@@ -15,6 +15,7 @@ SGE execution
 nextflow -C sweep.config run sweep.nf --profile sge
 ```
 
+PBSPro execution
 ```bash
 nextflow -C sweep.comfig run sweep.nf --profile pbspro
 ```
