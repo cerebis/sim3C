@@ -107,7 +107,7 @@ process Evolve {
     publishDir params.output, mode: 'symlink', overwrite: 'false'
 
     input:
-    set file('ancestral.raw'), file('donor.raw'), alpha, file('input_tree'), oname from evo_sweep
+    set file('ancestral.fa'), file('donor.fa'), alpha, file('input_tree'), oname from evo_sweep
 
     output:
     set file("${oname}.evo.fa") into descendents
@@ -116,7 +116,7 @@ process Evolve {
     scale_tree.py -a ${alpha} input_tree scaled_tree
     sgEvolver --indel-freq=${params.indel_freq} --small-ht-freq=${params.small_ht_freq} --large-ht-freq=${params.large_ht_freq} \
          --inversion-freq=${params.inversion_freq} --random-seed=${params.seed} scaled_tree \
-         ancestral.raw donor.raw "${oname}.evo.aln" "${oname}.evo.fa"
+         ancestral.fa donor.fa "${oname}.evo.aln" "${oname}.evo.fa"
     strip_semis.sh "${oname}.evo.fa"
     """
 }
