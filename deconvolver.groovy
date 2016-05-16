@@ -161,30 +161,39 @@ process ReadMap {
     publishDir params.output, mode: 'symlink', overwrite: 'false'
 
     input:
-    set file('*.wgs.*r1.fq.gz'), file ('*.wgs.*.r2.fq.gz'), oname from asm_sweep
+    set file('ancestral.fa'), file('*.wgs*.fq.gz'), oname from map_sweep
 
     output:
-    file("${oname}.*.bam") into wgs_bams
+    set file("*.bam") into wgs_bams
 
     """
-    bwa index contigs.fa
-    bwa mem -t 1 contigs.fa hic.fa.gz | samtools view -bS - | samtools sort -l 9 - "${oname}.bam"
+    bwa index ancestral.fa
+    for r in `ls *.wgs.*r1.fq.gz`
+    do
+        rbase=`basename \$r .r1.fq.gz`
+        r2=\$rbase.r2.fq.gz
+        bwa mem -t 1 ancestral.fa \$r \$r2 | samtools view -bS - | samtools sort -l 9 - \$rbase.bam
+    done
     """
 }
 
 /**
  * Deconvolve the SNVs into strain genotypes
  */
+
+decon_bams = ChannelDuplicator.createFrom( wgs_bams.map { bams, oname -> [*bams, oname] } )
+decon_sweep = decon_bams.onCopy()
+
 process Deconvolve {
     cpus 1
     cache 'deep'
     publishDir params.output, mode: 'symlink', overwrite: 'false'
 
     input:
-    set file('*.wgs.*r1.fq.gz'), file ('*.wgs.*.r2.fq.gz'), oname from asm_sweep
+    set file('*.bam'), oname from decon_sweep
 
     output:
-    file("decon.csv"), file("strains.tre" into deconvolution
+    set file("decon.csv"), file("strains.tre") into deconvolution
 
     """
     snvbpnmft.py . 4 ancestral.fa ${oname}.*.bam
