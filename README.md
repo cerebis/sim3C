@@ -7,17 +7,17 @@ analytical methods under variation in both community and experiment.
 
 Standard (local) execution
 ```bash
-nextflow -C sweep.config run sweep.nf
+nextflow -C test.config run sweep.nf
 ```
 
 SGE execution
 ```bash
-nextflow -C sweep.config run sweep.nf --profile sge
+nextflow -C test.config run sweep.nf --profile sge
 ```
 
 PBSPro execution
 ```bash
-nextflow -C sweep.comfig run sweep.nf --profile pbspro
+nextflow -C test.config run sweep.nf --profile pbspro
 ```
 
 [Darling Lab](http://darlinglab.org/)
