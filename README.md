@@ -6,14 +6,15 @@ experiments in parametric form, meta-sweeper aims to permit the assessment of
 analytical methods under variation in both community and experiment.
 
 
-=== prerequisites
+### prerequisites
 
 The following software must be installed prior to using the workflow:
 
-[biopython](http://biopython.org/)
-[pandas](http://pandas.pydata.org/)
+* [biopython](http://biopython.org/)
 
-=== usage
+* [pandas](http://pandas.pydata.org/)
+
+### usage
 
 Standard (local) execution
 ```bash
