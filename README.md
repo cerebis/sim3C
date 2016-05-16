@@ -26,7 +26,7 @@ On ubuntu these can be installed by running:
 sudo apt-get install python-biopython python-pandas python-yaml python-networkx python-pysam
 ```
 
-On other systems pip may be the preferred method for installation.
+On other systems [pip](https://pip.pypa.io/en/stable/) may be the preferred method for installation.
 ```bash
 pip install --upgrade biopython pandas PyYAML networkx pysam
 ```
