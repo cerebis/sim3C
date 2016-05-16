@@ -7,12 +7,20 @@ analytical methods under variation in both community and experiment.
 
 
 ### prerequisites
+This workflow requires a system running linux on an x86-64 machine.
 
-The following software must be installed prior to using the workflow:
+The workflow depends on the following software, which must be installed prior to using it:
 
 * [biopython](http://biopython.org/)
 
 * [pandas](http://pandas.pydata.org/)
+
+* [PyYaml](http://pyyaml.org/)
+
+On ubuntu these can be installed by running:
+```bash
+sudo apt-get install python-biopython python-pandas python-yaml
+```
 
 ### usage
 
