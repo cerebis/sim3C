@@ -17,10 +17,16 @@ The workflow depends on the following software, which must be installed prior to
 
 * [PyYaml](http://pyyaml.org/)
 
+* [networkx](https://networkx.github.io/)
+
+* [pysam](https://github.com/pysam-developers/pysam)
+
 On ubuntu these can be installed by running:
 ```bash
-sudo apt-get install python-biopython python-pandas python-yaml
+sudo apt-get install python-biopython python-pandas python-yaml python-networkx python-pysam
 ```
+
+On other systems pip may be the preferred method for installation.
 
 ### usage
 
