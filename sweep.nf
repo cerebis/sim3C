@@ -64,10 +64,10 @@ process WGS_Reads {
     set file('descendent.fa'), file('profile'), xf, oname from wgs_sweep
 
     output:
-    set file("${oname}.wgs*.fq.gz"), oname into wgs_reads
+    set file("${oname}.wgs.r*.fq.gz"), oname into wgs_reads
 
     """
-    metaART.py -C gzip -t $profile -M $xf -S ${params.seed} -s ${params.wgs_ins_std} \
+    metaART.py -C gzip -t $profile -z 1 -M $xf -S ${params.seed} -s ${params.wgs_ins_std} \
             -m ${params.wgs_ins_len} -l ${params.wgs_read_len} -n "${oname}.wgs" descendent.fa .
     """
 }
