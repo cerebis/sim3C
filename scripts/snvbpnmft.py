@@ -346,20 +346,5 @@ beast_file.write( """
 """);
 
 beast_file.close()
-os.remove(bpnmf_filename)
-
-##
-# run BEAST
-#
-beast = "java -Xmx1000m -jar external/beast.jar " 
-beast_cmd = beast + " -overwrite " + beast_filename
-print beast_cmd
-os.system(beast_cmd)
-
-aln_trees = os.path.join(out_dir, "aln.trees")
-out_tree = os.path.join(out_dir, "strains.tre")
-treeanno_cmd = "java -jar external/treeannotator.jar -burnin 1000 -heights mean " + aln_trees + " " + out_tree
-print treeanno_cmd
-os.system(treeanno_cmd)
 
 
