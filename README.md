@@ -26,23 +26,27 @@ On ubuntu these can be installed by running:
 sudo apt-get install python-biopython python-pandas python-yaml python-networkx python-pysam
 ```
 
-On other systems pip may be the preferred method for installation.
+On other systems [pip](https://pip.pypa.io/en/stable/) may be the preferred method for installation.
+```bash
+pip install --upgrade biopython pandas PyYAML networkx pysam
+```
 
 ### usage
 
-Standard (local) execution
+Using regular local processes.
 ```bash
 nextflow -C test.config run sweep.nf
 ```
+With Nextflow it is easy to submit the work to a grid architecture. For Meta-sweeper, these details are organised as execution profiles in the file named ```execution.config```. We have defined a few examples which may work out of the box on your system.
 
-SGE execution
+SGE execution, where the target queue is ```all.q```.
 ```bash
 nextflow -C test.config run sweep.nf --profile sge
 ```
 
-PBSPro execution
+PBS execution, where the target queue is ```batch```.
 ```bash
-nextflow -C test.config run sweep.nf --profile pbspro
+nextflow -C test.config run sweep.nf --profile pbs
 ```
 
 [Darling Lab](http://darlinglab.org/)

@@ -1,95 +1,20 @@
+/**
+ * Include and initialise some utility classes
+ */
 class Globals {
     static String separator = '%'
 }
+helper = this.class.classLoader.parseClass(new File('Helper.groovy')).newInstance()
+duplicator = this.class.classLoader.parseClass(new File('ChannelDuplicator.groovy')).newInstance()
 
 trees = file(params.trees).collectEntries{ [it.name, it] }
 tables = file(params.tables).collectEntries{ [it.name, it] }
 ancestor = file(params.ancestor)
 donor = file(params.donor)
 
-alpha_BL = Helper.stringToList(params.alpha)
-xfold = Helper.stringToList(params.xfold)
-nhic = Helper.stringToList(params.hic_pairs)
-
-
-/**
- * Helper methods
- */
-
-import groovyx.gpars.dataflow.DataflowQueue
-
-class Helper {
-    static def separators = /[ ,\t]/
-
-    static int[] stringToInts(String str) {
-        return (str.split(separators) - '').collect { elem -> elem as int }
-    }
-
-    static float[] stringToFloats(String str) {
-        return (str.split(separators) - '').collect { elem -> elem as float }
-    }
-
-    static String[] stringToList(String str) {
-        return str.split(Helper.separators) - ''
-    }
-
-    static String dropSuffix(str) {
-        return str.lastIndexOf('.').with {it != -1 ? str[0..<it] : str}
-    }
-
-    static String safeString(val) {
-        def s
-        if (val instanceof Path) {
-            s = val.name
-        }
-        else {
-            s = val.toString()
-        }
-        return s.replaceAll(/[\\\/]/, "_")
-    }
-
-    static String[] splitSampleName(Path path) {
-        def m = (path.name =~ /^(.*)_?([rR][0-9]+).*$/)
-        return m[0][1..2]
-    }
-
-    static String removeLevels(Path path, int n) {
-        def name = path.toAbsolutePath().toString()
-        return name.split(Globals.separator)[0..-(n+1)].join(Globals.separator)
-    }
-
-    static String removeLevels(String name, int n) {
-        return name.split(Globals.separator)[0..-(n+1)].join(Globals.separator)
-    }
-
-    static Object[] product(A, B) {
-        return A.collectMany{a->B.collect{b->[a, b]}}
-    }
-}
-
-class ChannelDuplicator {
-    DataflowQueue orig
-
-    ChannelDuplicator(DataflowQueue orig) {
-        this.orig = orig
-    }
-
-    DataflowQueue onCopy() {
-	    def copied, keep
-        (copied, keep) = this.orig.into(2)
-        this.orig = keep
-        return copied
-    }
-
-    static ChannelDuplicator createFrom(Object[] o) {
-        return new ChannelDuplicator(Channel.from(o))
-    }
-
-    static ChannelDuplicator createFrom(DataflowQueue q) {
-        return new ChannelDuplicator(q)
-    }
-}
-
+alpha_BL = helper.stringToList(params.alpha)
+xfold = helper.stringToList(params.xfold)
+nhic = helper.stringToList(params.hic_pairs)
 
 /**
  * Generate simulated communities
@@ -100,7 +25,7 @@ evo_sweep = Channel
         .spread([donor])
         .spread(alpha_BL)
         .spread(trees.values())
-        .map { it += it.collect { Helper.safeString(it) }.join(Globals.separator) }
+        .map { it += it.collect { helper.safeString(it) }.join(Globals.separator) }
 
 process Evolve {
     cache 'deep'
@@ -124,7 +49,7 @@ process Evolve {
 /**
  * Generate WGS read-pairs
  */
-descendents = ChannelDuplicator.createFrom(descendents)
+descendents = duplicator.createFrom(descendents)
 
 wgs_sweep = descendents.onCopy()
         .spread(tables.values())
@@ -176,7 +101,7 @@ process HIC_Reads {
  * Assemble WGS read-pairs
  */
 
-wgs_reads = ChannelDuplicator.createFrom( wgs_reads.map { reads, oname -> [*reads, oname] } )
+wgs_reads = duplicator.createFrom( wgs_reads.map { reads, oname -> [*reads, oname] } )
 
 asm_sweep = wgs_reads.onCopy()
 
@@ -200,9 +125,9 @@ process Assemble {
  * Generate contig->descendent gold standard mapping
  */
 
-wgs_contigs = ChannelDuplicator.createFrom(wgs_contigs)
+wgs_contigs = duplicator.createFrom(wgs_contigs)
 
-a = wgs_contigs.onCopy().map { f -> [Helper.removeLevels(f.name,2), f, f.name[0..-15]] }
+a = wgs_contigs.onCopy().map { f -> [helper.removeLevels(f.name,2), f, f.name[0..-15]] }
 tr_sweep = descendents.onCopy()
         .spread(tables.values())
         .map { t -> [t[0].name[0..-8], t[0]] }
@@ -234,14 +159,14 @@ process Truth {
  */
 
 a = wgs_contigs.onCopy()
-        .map { f -> [Helper.removeLevels(f.name, 1), f] }
+        .map { f -> [helper.removeLevels(f.name, 1), f] }
         .groupTuple()
 
 hicmap_sweep = hic_reads
-        .map { f -> [Helper.removeLevels(f.name, 1), f] }
+        .map { f -> [helper.removeLevels(f.name, 1), f] }
         .groupTuple()
         .cross(a)
-        .map { t -> [t[0][0], Helper.product(t[0][1], t[1][1])] }
+        .map { t -> [t[0][0], helper.product(t[0][1], t[1][1])] }
         .flatMap { t -> t[1] } 
         .map { t -> [*t, (t[1].name[0..-15].split(Globals.separator) + t[0].name[0..-8].split(Globals.separator)[-1]).join(Globals.separator)  ] }
 
@@ -269,7 +194,7 @@ process HiCMap {
  * Generate contig graphs from HiC mappings
  */
 
-hic2ctg_mapping = ChannelDuplicator.createFrom(hic2ctg_mapping)
+hic2ctg_mapping = duplicator.createFrom(hic2ctg_mapping)
 
 graph_sweep = hic2ctg_mapping.onCopy()
         .map {t -> [t[0], t[1], t[0].name[0..-13] ] }
@@ -320,7 +245,7 @@ process WGSMap {
  * Infer contig coverage from wgs mapping
  */
 
-wgs2ctg_mapping = ChannelDuplicator.createFrom(wgs2ctg_mapping)
+wgs2ctg_mapping = duplicator.createFrom(wgs2ctg_mapping)
 
 cov_sweep = wgs2ctg_mapping.onCopy()
 
@@ -357,4 +282,3 @@ process InferReadDepth {
     }' > "${oname}.wgs2ctg.cov"
     """
 }
-
