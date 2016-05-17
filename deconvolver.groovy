@@ -138,7 +138,7 @@ process WGS_Reads {
     set file('descendent.fa'), file('profile'), xf, oname from wgs_sweep
 
     output:
-    set file("${oname}.wgs*.fq.gz"), oname into wgs_reads
+    set file("${oname}.wgs.*.r1.fq.gz"), file("${oname}.wgs.*.r2.fq.gz"), oname into wgs_reads
 
     """
     metaART.py -C gzip -t $profile -M $xf -S ${params.seed} -z ${params.num_samples} -s ${params.wgs_ins_std} \
@@ -151,28 +151,27 @@ process WGS_Reads {
  * Map WGS read-pairs to reference
  */
 
-wgs_reads = ChannelDuplicator.createFrom( wgs_reads.map { reads, oname -> [*reads, oname] } )
-
-map_sweep = wgs_reads.onCopy()
-
+map_ancestor = Channel.from([ancestor])
 process ReadMap {
     cpus 1
     cache 'deep'
     publishDir params.output, mode: 'symlink', overwrite: 'false'
 
     input:
-    set file('ancestral.fa'), file('*.wgs*.fq.gz'), oname from map_sweep
+    file(ancestor) from map_ancestor
+    set file(r1file), file(r2file), oname from wgs_reads
 
     output:
-    set file("*.bam") into wgs_bams
+    set file("*.bam"), oname into map_bams
 
     """
+    cp -L ancestor.fa ancestral.fa
     bwa index ancestral.fa
-    for r in `ls *.wgs.*r1.fq.gz`
+    for rr in `ls *.r1.fq.gz`
     do
-        rbase=`basename \$r .r1.fq.gz`
+        rbase=`basename \$rr .r1.fq.gz`
         r2=\$rbase.r2.fq.gz
-        bwa mem -t 1 ancestral.fa \$r \$r2 | samtools view -bS - | samtools sort -l 9 - \$rbase.bam
+        bwa mem -t 1 ancestral.fa \$rr \$r2 | samtools view -bS - | samtools sort -l 9 - \$rbase
     done
     """
 }
@@ -180,22 +179,39 @@ process ReadMap {
 /**
  * Deconvolve the SNVs into strain genotypes
  */
-
-decon_bams = ChannelDuplicator.createFrom( wgs_bams.map { bams, oname -> [*bams, oname] } )
-decon_sweep = decon_bams.onCopy()
-
+decon_ancestor = Channel.from([ancestor])
 process Deconvolve {
     cpus 1
     cache 'deep'
     publishDir params.output, mode: 'symlink', overwrite: 'false'
 
     input:
-    set file('*.bam'), oname from decon_sweep
+    file(ancestor) from decon_ancestor
+    set file('*.bam'), oname from map_bams
 
     output:
     set file("decon.csv"), file("strains.tre") into deconvolution
 
     """
-    snvbpnmft.py . 4 ancestral.fa ${oname}.*.bam
+    snvbpnmft.py . 4 ancestor.fa *.bam
+    java -Xmx1000m -jar \$JARPATH/beast.jar beast.xml 
+    java -jar \$JARPATH/treeannotator.jar -burnin 1000 -heights mean aln.trees strains.tre
+    """
+}
+
+
+/**
+ * Record the true strain genotypes
+ */
+process Truth {
+    input:
+    set file('ancestral.fa'), oname from descendents
+
+    output:
+    set file('truth.tsv') into truth
+
+    """
+    #java -cp Mauve.jar org.gel.mauve.analysis.SnpExporter -f alignment.xmfa -o snpd
+    touch truth.tsv
     """
 }
