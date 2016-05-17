@@ -1,93 +1,17 @@
 class Globals {
     static String separator = '%'
 }
+helper = this.class.classLoader.parseClass(new File('Helper.groovy')).newInstance()
+duplicator = this.class.classLoader.parseClass(new File('ChannelDuplicator.groovy')).newInstance()
 
 trees = file(params.trees).collectEntries{ [it.name, it] }
 tables = file(params.tables).collectEntries{ [it.name, it] }
 ancestor = file(params.ancestor)
 donor = file(params.donor)
 
-alpha_BL = Helper.stringToList(params.alpha)
-xfold = Helper.stringToList(params.xfold)
-nhic = Helper.stringToList(params.hic_pairs)
-
-/**
- * Helper methods
- */
-
-import groovyx.gpars.dataflow.DataflowQueue
-
-class Helper {
-    static def separators = /[ ,\t]/
-
-    static int[] stringToInts(String str) {
-        return (str.split(separators) - '').collect { elem -> elem as int }
-    }
-
-    static float[] stringToFloats(String str) {
-        return (str.split(separators) - '').collect { elem -> elem as float }
-    }
-
-    static String[] stringToList(String str) {
-        return str.split(Helper.separators) - ''
-    }
-
-    static String dropSuffix(str) {
-        return str.lastIndexOf('.').with {it != -1 ? str[0..<it] : str}
-    }
-
-    static String safeString(val) {
-        def s
-        if (val instanceof Path) {
-            s = val.name
-        }
-        else {
-            s = val.toString()
-        }
-        return s.replaceAll(/[\\\/]/, "_")
-    }
-
-    static String[] splitSampleName(Path path) {
-        def m = (path.name =~ /^(.*)_?([rR][0-9]+).*$/)
-        return m[0][1..2]
-    }
-
-    static String removeLevels(Path path, int n) {
-        def name = path.toAbsolutePath().toString()
-        return name.split(Globals.separator)[0..-(n+1)].join(Globals.separator)
-    }
-
-    static String removeLevels(String name, int n) {
-        return name.split(Globals.separator)[0..-(n+1)].join(Globals.separator)
-    }
-
-    static Object[] product(A, B) {
-        return A.collectMany{a->B.collect{b->[a, b]}}
-    }
-}
-
-class ChannelDuplicator {
-    DataflowQueue orig
-
-    ChannelDuplicator(DataflowQueue orig) {
-        this.orig = orig
-    }
-
-    DataflowQueue onCopy() {
-	    def copied, keep
-        (copied, keep) = this.orig.into(2)
-        this.orig = keep
-        return copied
-    }
-
-    static ChannelDuplicator createFrom(Object[] o) {
-        return new ChannelDuplicator(Channel.from(o))
-    }
-
-    static ChannelDuplicator createFrom(DataflowQueue q) {
-        return new ChannelDuplicator(q)
-    }
-}
+alpha_BL = helper.stringToList(params.alpha)
+xfold = helper.stringToList(params.xfold)
+nhic = helper.stringToList(params.hic_pairs)
 
 
 /**
@@ -99,7 +23,7 @@ evo_sweep = Channel
         .spread([donor])
         .spread(alpha_BL)
         .spread(trees.values())
-        .map { it += it.collect { Helper.safeString(it) }.join(Globals.separator) }
+        .map { it += it.collect { helper.safeString(it) }.join(Globals.separator) }
 
 process Evolve {
     cache 'deep'
@@ -123,7 +47,7 @@ process Evolve {
 /**
  * Generate WGS read-pairs
  */
-descendents = ChannelDuplicator.createFrom(descendents)
+descendents = duplicator.createFrom(descendents)
 
 wgs_sweep = descendents.onCopy()
         .spread(tables.values())
@@ -150,11 +74,6 @@ process WGS_Reads {
 /**
  * Map WGS read-pairs to reference
  */
-wgs_reads = ChannelDuplicator.createFrom(wgs_reads)
-map_sweep = Channel.from([ancestor])
-               .spread(wgs_reads.onCopy()
-                          .map { reads, oname -> [*reads, oname] } )
-
 map_ancestor = Channel.from([ancestor])
 process ReadMap {
     cpus 1
