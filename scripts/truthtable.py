@@ -8,21 +8,20 @@ import yaml
 YAML_WIDTH = 1000
 
 
-# dump OrderedDict like a regular dict. Will not reserialize ordered in this case.
+"""
+ Dump OrderedDict like a regular dict. Will not reserialize ordered in this case.
+"""
 def order_rep(dumper, data):
     return dumper.represent_mapping(u'tag:yaml.org,2002:map', data.items(), flow_style=False)
 
 yaml.add_representer(OrderedDict, order_rep)
 
 
-class Assignment(yaml.YAMLObject):
+class Assignment:
 
-    yaml_tag = u'!Assignment'
-    yaml_flow_style = True
-
-    def __init__(self, mapping):
+    def __init__(self, mapping, weight=1):
         self.mapping = mapping
-        self.weight = 1
+        self.weight = weight
 
     def get_classes(self):
         return self.mapping.keys()
@@ -42,6 +41,15 @@ class Assignment(yaml.YAMLObject):
 
     def __str__(self):
         return 'weight={0} mapping={1}'.format(self.weight, str(self.mapping))
+
+"""
+    Dump Assignment objects as a mapping of member variables
+"""
+def assignment_rep(dumper, data):
+    memb_map = {'weight': data.weight, 'mapping': data.mapping}
+    return dumper.represent_mapping(u'tag:yaml.org,2002:map', memb_map, flow_style=True)
+
+yaml.add_representer(Assignment, assignment_rep)
 
 
 class TruthTable(object):
@@ -260,12 +268,11 @@ class TruthTable(object):
         _s = OrderedDict()
         _keys = sorted(self.asgn_dict.keys())
         for k in _keys:
-            clz = self.asgn_dict[k].mapping
+            clz = self.asgn_dict[k].mapping.keys()
             if universal:
                 # relabel with universal symbols if requested
-                labels = clz
                 clz = [self.label_map[ci] for ci in clz]
-            _s[k] = set(clz)
+            _s[k] = clz
         return _s
 
     def hard(self, universal=False):
@@ -281,7 +288,7 @@ class TruthTable(object):
             pc = self.asgn_dict[_k].get_primary_class()
             if universal:
                 pc = self.label_map[pc]
-            _s[_k] = {pc}
+            _s[_k] = [pc]
         return _s
 
     def get(self, key):
@@ -293,9 +300,17 @@ class TruthTable(object):
             self.asgn_dict[key].weight = weight
 
     def update_from_yaml(self, yd):
-        self.asgn_dict = yd
-        for asgn_i in yd.values():
-            self.label_count.update(asgn_i.mapping.keys())
+        """
+        Initialise a TruthTable from a generic dict of dicts object stored
+        in YAML format. We chose to avoid a custom class here for inter-codebase
+        portability.
+
+        :param yd: generic yaml object, dict of dicts
+        :return:
+        """
+        for k, v in yd.iteritems():
+            self.asgn_dict[k] = Assignment(v['mapping'], v['weight'])
+            self.label_count.update(v['mapping'].keys())
         labels = sorted(self.label_count.keys())
         self.label_map = dict((l, n) for n, l in enumerate(labels, 1))
 
@@ -340,28 +355,25 @@ class TruthTable(object):
         return vec
 
     @staticmethod
-    def _write(dt, pathname, mode='w'):
-        """
-        Write out bare dictionary.
-        :param dt: the dictionary to write
-        :param pathname: the path for output file
-        """
-        with open(pathname, mode) as h_out:
-            yaml.dump(dt, h_out, default_flow_style=False, width=YAML_WIDTH)
+    def _write_dict(dt, pathname):
+        with open(pathname, 'w') as h_out:
+            for obj, clz in dt.iteritems():
+                h_out.write('{0} {1}\n'.format(obj, ' '.join(sorted(clz))))
 
     def write(self, pathname):
         """
-        Write the full table in YAML format"
+        Write the full table in a simple (no custom classes) YAML format"
         :pathname the output path
         """
-        TruthTable._write(self.asgn_dict, pathname)
+        with open(pathname, 'w') as h_out:
+            yaml.dump(self.asgn_dict, h_out, default_flow_style=False, width=YAML_WIDTH)
 
     def write_soft(self, pathname):
         """
         Write a plain dictionary representation in YAML format.
         :pathname the output path
         """
-        TruthTable._write(self.soft(), pathname)
+        TruthTable._write_dict(self.soft(), pathname)
 
     def write_hard(self, pathname):
         """
@@ -369,7 +381,8 @@ class TruthTable(object):
         object:class assignments.
         :pathname the output path
         """
-        TruthTable._write(self.hard(), pathname)
+        TruthTable._write_dict(self.hard(), pathname)
+
 
 
 def read_truth(pathname):
