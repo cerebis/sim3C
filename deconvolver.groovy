@@ -151,7 +151,7 @@ process WGS_Reads {
  * Map WGS read-pairs to reference
  */
 wgs_reads = ChannelDuplicator.createFrom(wgs_reads)
-map_sweep = Channel.from([ancestral])
+map_sweep = Channel.from([ancestor])
                .spread(wgs_reads.onCopy()
                           .map { reads, oname -> [*reads, oname] } )
 
