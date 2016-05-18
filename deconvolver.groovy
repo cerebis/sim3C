@@ -34,6 +34,7 @@ process Evolve {
 
     output:
     set file("${oname}.evo.fa") into descendents
+    val oname into evolvedoname
 
     """
     scale_tree.py -a ${alpha} input_tree scaled_tree
@@ -44,12 +45,14 @@ process Evolve {
     """
 }
 
+ancestor_channel = duplicator.createFrom(Channel.from([ancestor]))
+
 /**
  * Generate WGS read-pairs
  */
-descendents = duplicator.createFrom(descendents)
+wgs_descendents = duplicator.createFrom(descendents)
 
-wgs_sweep = descendents.onCopy()
+wgs_sweep = wgs_descendents.onCopy()
         .spread(tables.values())
         .spread(xfold)
         .map{ it += tuple(it[0].name[0..-8], it[1].name, it[2]).join(Globals.separator) }
@@ -74,7 +77,7 @@ process WGS_Reads {
 /**
  * Map WGS read-pairs to reference
  */
-map_ancestor = Channel.from([ancestor])
+map_ancestor = ancestor_channel.onCopy()
 process ReadMap {
     cpus 1
     cache 'deep'
@@ -102,7 +105,7 @@ process ReadMap {
 /**
  * Deconvolve the SNVs into strain genotypes
  */
-decon_ancestor = Channel.from([ancestor])
+decon_ancestor = ancestor_channel.onCopy()
 process Deconvolve {
     cpus 1
     cache 'deep'
@@ -113,12 +116,13 @@ process Deconvolve {
     set file('*.bam'), oname from map_bams
 
     output:
-    set file("decon.csv"), file("strains.tre") into deconvolution
+    set file("${oname}.decon.csv"), file("${oname}.snv_file.data.R"), file("${oname}.strains.tre"), oname into deconvolution
 
     """
     snvbpnmft.py . 4 ancestor.fa *.bam
-    java -Xmx1000m -jar \$JARPATH/beast.jar beast.xml 
-    java -jar \$JARPATH/treeannotator.jar -burnin 1000 -heights mean aln.trees strains.tre
+    #java -Xmx1000m -jar \$JARPATH/beast.jar beast.xml 
+    #java -jar \$JARPATH/treeannotator.jar -burnin 1000 -heights mean aln.trees strains.tre
+    touch strains.tre decon.csv
     """
 }
 
@@ -126,15 +130,21 @@ process Deconvolve {
 /**
  * Record the true strain genotypes
  */
+truth_ancestor = ancestor_channel.onCopy()
 process Truth {
+    cache 'deep'
+    publishDir params.output, mode: 'symlink', overwrite: 'false'
+
     input:
-    set file('ancestral.fa'), oname from descendents
+    file(ancestor) from truth_ancestor
+    set file('evo.fa') from descendents
+    val oname from evolvedoname
 
     output:
-    set file('truth.tsv') into truth
+    set file("${oname}.truth.tsv") into truth
 
     """
-    #java -cp Mauve.jar org.gel.mauve.analysis.SnpExporter -f alignment.xmfa -o snpd
-    touch truth.tsv
+    strain_truth.py --mauve-path=\$MAUVEPATH -o $oname.truth.tsv evo.fa ancestor.fa
     """
 }
+
