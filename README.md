@@ -1,9 +1,7 @@
 meta-sweeper
 ============
 
-By expressing microbial community composition and the details of metagenomic
-experiments in parametric form, meta-sweeper aims to permit the assessment of
-analytical methods under variation in both community and experiment.
+By expressing microbial community composition and the details of metagenomic experiments in parametric form, meta-sweeper aims to permit the assessment of analytical methods under variation in both community and experiment.
 
 
 ### prerequisites
@@ -35,18 +33,18 @@ pip install --upgrade biopython pandas PyYAML networkx pysam
 
 Using regular local processes.
 ```bash
-nextflow -C test.config run sweep.nf
+nextflow run hic-sweep.nf
 ```
 With Nextflow it is easy to submit the work to a grid architecture. For Meta-sweeper, these details are organised as execution profiles in the file named ```execution.config```. We have defined a few examples which may work out of the box on your system.
 
 SGE execution, where the target queue is ```all.q```.
 ```bash
-nextflow -C test.config run sweep.nf --profile sge
+nextflow run hic-sweep.nf --profile sge
 ```
 
 PBS execution, where the target queue is ```batch```.
 ```bash
-nextflow -C test.config run sweep.nf --profile pbs
+nextflow run hic-sweep.nf --profile pbs
 ```
 
 [Darling Lab](http://darlinglab.org/)
