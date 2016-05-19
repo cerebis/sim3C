@@ -11,7 +11,7 @@ import sys
 import re
 import os
 
-lofreq = "lofreq"
+lofreq = "external/lofreq/lofreq"
 alphabet = ['A','C','G','T']
 
 # parse the command-line
@@ -351,14 +351,14 @@ os.remove(bpnmf_filename)
 ##
 # run BEAST
 #
-beast = "java -Xmx1000m -jar external/beast.jar " 
+beast = "java -Xmx1000m -jar external/beast/beast.jar "
 beast_cmd = beast + " -overwrite " + beast_filename
 print beast_cmd
 os.system(beast_cmd)
 
 aln_trees = os.path.join(out_dir, "aln.trees")
 out_tree = os.path.join(out_dir, "strains.tre")
-treeanno_cmd = "java -jar external/treeannotator.jar -burnin 1000 -heights mean " + aln_trees + " " + out_tree
+treeanno_cmd = "java -jar external/treeanno/treeannotator.jar -burnin 1000 -heights mean " + aln_trees + " " + out_tree
 print treeanno_cmd
 os.system(treeanno_cmd)
 
