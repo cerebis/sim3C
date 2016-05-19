@@ -17,10 +17,34 @@ alpha_index = {'A':0,'C':1,'G':2,'T':3}
 def parse_truth(truth_filename):
     truth_file = open(truth_filename)
     for line in truth_file:
-        d = line.split("\t")
+        d = line[:-1].split("\t")
         num_strains = len(d)-1
         true_sites[d[0]] = d[1:]
     return true_sites
+
+def parse_sites(sites_filename):
+    global site_ids
+    global num_sites
+    global num_samples
+    global num_strains
+    sites_file = open(sites_filename)
+    for line in sites_file:
+        line = line[:-1]
+        if line[0:3] == "U<-":
+            num_sites = int(line[3:])
+        if line[0:3] == "T<-":
+            num_samples = int(line[3:])
+        if line[0:3] == "S<-":
+            num_strains = int(line[3:])
+        if not line[0:7] == "siteids":
+            continue
+        line = line[13:]
+        line = line[:-1]
+        d = line.split(",")
+        for i in range(len(d)):
+            site_ids[i]=d[i]
+
+    print "parsed " + str(len(site_ids)) + " site ids\n"
 
 def parse_bpnmf(bpnmf_filename):
     bpnmf_file = open(bpnmf_filename)
@@ -59,10 +83,11 @@ def parse_bpnmf(bpnmf_filename):
 def permuter( visited, order ):
     if(len(visited)==num_strains):
         compute_accuracy(order)
+        return
 
-    v = visited.copy()
-    o = order[:]
     for i in range(num_strains):
+        v = visited.copy()
+        o = order[:]
         if i in v:
             continue
         v[i] = 1
@@ -71,48 +96,58 @@ def permuter( visited, order ):
 
 
 def compute_accuracy( order ):
-    t = 0
+    t = -1
     dist = 0.0
     global best_dist
     global best_order
     global true_sites
     global site_ids
+    unknown = 0
+    total = 0
     for s in order:
+        t += 1
         for j in range(num_sites):
             # get the truth for this site
             truth = [0,0,0,0]
-            truth[alpha_index[true_sites[site_ids[j]][s]]] = 1
+            total += 1
+            if not site_ids[j] in true_sites:
+                unknown += 1
+                continue
+            truth[alpha_index[true_sites[site_ids[j]][t]]] = 1
             
             ssd = 0
+            inf = ""
             for i in range(len(truth)):
-                ssd += pow(inferred[s][j][i]-truth[s][j][i], 2)
+                ssd += pow(inferred[i][s][j]-truth[i], 2)
+                inf += ", " + str(inferred[i][s][j])
             dist += ssd
+            print "site " + site_ids[j] + " true is " + true_sites[site_ids[j]][t] + " inferred " + inf
 
     dist = pow(dist, 0.5)
     if dist < best_dist:
         best_dist = dist
         best_order = order
 
+    print "unknown " + str(unknown)
+    print "total " + str(total)
+    print "dist " + str(dist)
+    exit(0) 
 
 if __name__ == '__main__':
 
     parser = argparse.ArgumentParser(description='Measure accuracy of a genotype reconstruction relative to a ground truth SNV matrix')
     parser.add_argument('--bpnmf', required=True, help='Path to bpnmf output')
     parser.add_argument('--truth', required=True, help='Path to true genotypes file')
-    parser.add_argument('--num-sites', required=True, help='Number of variant sites found')
-    parser.add_argument('--num-strains', required=True, help='Number of strains inferred')
-    parser.add_argument('--num-samples', required=True, help='Number of samples taken')
+    parser.add_argument('--sites', required=True, help='Path to R data file with site IDs')
     args = parser.parse_args()
 
-    num_sites = int(args.num_sites)
-    num_strains = int(args.num_strains)
-    num_samples = int(args.num_samples)
+    parse_sites(args.sites)
     inferred = parse_bpnmf(args.bpnmf)
     true_sites = parse_truth(args.truth)
     print "len ts " + str(len(true_sites))
     print "len inferred[0] " + str(len(inferred[0]))
     permuter(dict(), [])
-    print "Best ordering found is " + ",".join(best_order) + "\n"
+    print "Best ordering found is " + ",".join(map(str,best_order))
     print "Best distance is " + str(best_dist)
 
 
