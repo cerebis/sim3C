@@ -7,9 +7,7 @@ analytical methods under variation in both community and experiment.
 
 
 ### prerequisites
-This workflow requires a system running linux on an x86-64 machine due to dependent binaries.
-
-Nextflow itself requires Java 7 or higher and should be installed and run using the same variant.
+This workflow requires a system running linux on an x86-64 machine due to dependent binaries, while Nextflow itself requires Java 7 or higher and should be installed and run using the same variant.
 
 The workflow depends on the following software, which must be installed prior to using it:
 
