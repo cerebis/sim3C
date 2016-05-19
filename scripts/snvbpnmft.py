@@ -21,7 +21,7 @@ if len(sys.argv)<5:
 out_dir = sys.argv[1]
 num_strains = int(sys.argv[2])
 ref_fa = sys.argv[3]
-num_samples = len(sys.argv) - 5
+num_samples = len(sys.argv) - 4
 
 depths = dict()
 for a in alphabet:
@@ -91,7 +91,7 @@ snv_file.close()
 bpnmf_filename = os.path.join(out_dir, "decon.csv")
 bpnmf_cmd = "genotypes_acgt variational output_samples=100 data file=" + snv_filename + " output file=" + bpnmf_filename
 os.system(bpnmf_cmd)
-os.remove(snv_filename)
+#os.remove(snv_filename)
 
 ##
 # summarize the tip partials and create a BEAST XML
@@ -346,20 +346,5 @@ beast_file.write( """
 """);
 
 beast_file.close()
-os.remove(bpnmf_filename)
-
-##
-# run BEAST
-#
-beast = "java -Xmx1000m -jar external/beast.jar " 
-beast_cmd = beast + " -overwrite " + beast_filename
-print beast_cmd
-os.system(beast_cmd)
-
-aln_trees = os.path.join(out_dir, "aln.trees")
-out_tree = os.path.join(out_dir, "strains.tre")
-treeanno_cmd = "java -jar external/treeannotator.jar -burnin 1000 -heights mean " + aln_trees + " " + out_tree
-print treeanno_cmd
-os.system(treeanno_cmd)
 
 

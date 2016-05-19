@@ -1,93 +1,17 @@
 class Globals {
     static String separator = '%'
 }
+helper = this.class.classLoader.parseClass(new File('Helper.groovy')).newInstance()
+duplicator = this.class.classLoader.parseClass(new File('ChannelDuplicator.groovy')).newInstance()
 
 trees = file(params.trees).collectEntries{ [it.name, it] }
 tables = file(params.tables).collectEntries{ [it.name, it] }
 ancestor = file(params.ancestor)
 donor = file(params.donor)
 
-alpha_BL = Helper.stringToList(params.alpha)
-xfold = Helper.stringToList(params.xfold)
-nhic = Helper.stringToList(params.hic_pairs)
-
-/**
- * Helper methods
- */
-
-import groovyx.gpars.dataflow.DataflowQueue
-
-class Helper {
-    static def separators = /[ ,\t]/
-
-    static int[] stringToInts(String str) {
-        return (str.split(separators) - '').collect { elem -> elem as int }
-    }
-
-    static float[] stringToFloats(String str) {
-        return (str.split(separators) - '').collect { elem -> elem as float }
-    }
-
-    static String[] stringToList(String str) {
-        return str.split(Helper.separators) - ''
-    }
-
-    static String dropSuffix(str) {
-        return str.lastIndexOf('.').with {it != -1 ? str[0..<it] : str}
-    }
-
-    static String safeString(val) {
-        def s
-        if (val instanceof Path) {
-            s = val.name
-        }
-        else {
-            s = val.toString()
-        }
-        return s.replaceAll(/[\\\/]/, "_")
-    }
-
-    static String[] splitSampleName(Path path) {
-        def m = (path.name =~ /^(.*)_?([rR][0-9]+).*$/)
-        return m[0][1..2]
-    }
-
-    static String removeLevels(Path path, int n) {
-        def name = path.toAbsolutePath().toString()
-        return name.split(Globals.separator)[0..-(n+1)].join(Globals.separator)
-    }
-
-    static String removeLevels(String name, int n) {
-        return name.split(Globals.separator)[0..-(n+1)].join(Globals.separator)
-    }
-
-    static Object[] product(A, B) {
-        return A.collectMany{a->B.collect{b->[a, b]}}
-    }
-}
-
-class ChannelDuplicator {
-    DataflowQueue orig
-
-    ChannelDuplicator(DataflowQueue orig) {
-        this.orig = orig
-    }
-
-    DataflowQueue onCopy() {
-	    def copied, keep
-        (copied, keep) = this.orig.into(2)
-        this.orig = keep
-        return copied
-    }
-
-    static ChannelDuplicator createFrom(Object[] o) {
-        return new ChannelDuplicator(Channel.from(o))
-    }
-
-    static ChannelDuplicator createFrom(DataflowQueue q) {
-        return new ChannelDuplicator(q)
-    }
-}
+alpha_BL = helper.stringToList(params.alpha)
+xfold = helper.stringToList(params.xfold)
+nhic = helper.stringToList(params.hic_pairs)
 
 
 /**
@@ -99,7 +23,7 @@ evo_sweep = Channel
         .spread([donor])
         .spread(alpha_BL)
         .spread(trees.values())
-        .map { it += it.collect { Helper.safeString(it) }.join(Globals.separator) }
+        .map { it += it.collect { helper.safeString(it) }.join(Globals.separator) }
 
 process Evolve {
     cache 'deep'
@@ -110,6 +34,7 @@ process Evolve {
 
     output:
     set file("${oname}.evo.fa") into descendents
+    val oname into evolvedoname
 
     """
     scale_tree.py -a ${alpha} input_tree scaled_tree
@@ -120,12 +45,14 @@ process Evolve {
     """
 }
 
+ancestor_channel = duplicator.createFrom(Channel.from([ancestor]))
+
 /**
  * Generate WGS read-pairs
  */
-descendents = ChannelDuplicator.createFrom(descendents)
+wgs_descendents = duplicator.createFrom(descendents)
 
-wgs_sweep = descendents.onCopy()
+wgs_sweep = wgs_descendents.onCopy()
         .spread(tables.values())
         .spread(xfold)
         .map{ it += tuple(it[0].name[0..-8], it[1].name, it[2]).join(Globals.separator) }
@@ -138,7 +65,7 @@ process WGS_Reads {
     set file('descendent.fa'), file('profile'), xf, oname from wgs_sweep
 
     output:
-    set file("${oname}.wgs*.fq.gz"), oname into wgs_reads
+    set file("${oname}.wgs.*.r1.fq.gz"), file("${oname}.wgs.*.r2.fq.gz"), oname into wgs_reads
 
     """
     metaART.py -C gzip -t $profile -M $xf -S ${params.seed} -z ${params.num_samples} -s ${params.wgs_ins_std} \
@@ -150,33 +77,27 @@ process WGS_Reads {
 /**
  * Map WGS read-pairs to reference
  */
-wgs_reads = ChannelDuplicator.createFrom(wgs_reads)
-map_sweep = Channel.from([ancestor])
-               .spread(wgs_reads.onCopy()
-                          .map { reads, oname -> [*reads, oname] } )
-
-wgs_reads = ChannelDuplicator.createFrom( wgs_reads.map { reads, oname -> [*reads, oname] } )
-
-map_sweep = wgs_reads.onCopy()
-
+map_ancestor = ancestor_channel.onCopy()
 process ReadMap {
     cpus 1
     cache 'deep'
     publishDir params.output, mode: 'symlink', overwrite: 'false'
 
     input:
-    set file('ancestral.fa'), file('*.wgs*.fq.gz'), oname from map_sweep
+    file(ancestor) from map_ancestor
+    set file(r1file), file(r2file), oname from wgs_reads
 
     output:
-    set file("*.bam") into wgs_bams
+    set file("*.bam"), oname into map_bams
 
     """
+    cp -L ancestor.fa ancestral.fa
     bwa index ancestral.fa
-    for r in `ls *.wgs.*r1.fq.gz`
+    for rr in `ls *.r1.fq.gz`
     do
-        rbase=`basename \$r .r1.fq.gz`
+        rbase=`basename \$rr .r1.fq.gz`
         r2=\$rbase.r2.fq.gz
-        bwa mem -t 1 ancestral.fa \$r \$r2 | samtools view -bS - | samtools sort -l 9 - \$rbase.bam
+        bwa mem -t 1 ancestral.fa \$rr \$r2 | samtools view -bS - | samtools sort -l 9 - \$rbase
     done
     """
 }
@@ -184,22 +105,46 @@ process ReadMap {
 /**
  * Deconvolve the SNVs into strain genotypes
  */
-
-decon_bams = ChannelDuplicator.createFrom( wgs_bams.map { bams, oname -> [*bams, oname] } )
-decon_sweep = decon_bams.onCopy()
-
+decon_ancestor = ancestor_channel.onCopy()
 process Deconvolve {
     cpus 1
     cache 'deep'
     publishDir params.output, mode: 'symlink', overwrite: 'false'
 
     input:
-    set file('*.bam'), oname from decon_sweep
+    file(ancestor) from decon_ancestor
+    set file('*.bam'), oname from map_bams
 
     output:
-    set file("decon.csv"), file("strains.tre") into deconvolution
+    set file("${oname}.decon.csv"), file("${oname}.snv_file.data.R"), file("${oname}.strains.tre"), oname into deconvolution
 
     """
-    snvbpnmft.py . 4 ancestral.fa ${oname}.*.bam
+    snvbpnmft.py . 4 ancestor.fa *.bam
+    #java -Xmx1000m -jar \$JARPATH/beast.jar beast.xml 
+    #java -jar \$JARPATH/treeannotator.jar -burnin 1000 -heights mean aln.trees strains.tre
+    touch strains.tre decon.csv
     """
 }
+
+
+/**
+ * Record the true strain genotypes
+ */
+truth_ancestor = ancestor_channel.onCopy()
+process Truth {
+    cache 'deep'
+    publishDir params.output, mode: 'symlink', overwrite: 'false'
+
+    input:
+    file(ancestor) from truth_ancestor
+    set file('evo.fa') from descendents
+    val oname from evolvedoname
+
+    output:
+    set file("${oname}.truth.tsv") into truth
+
+    """
+    strain_truth.py --mauve-path=\$MAUVEPATH -o $oname.truth.tsv evo.fa ancestor.fa
+    """
+}
+
