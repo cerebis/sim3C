@@ -11,7 +11,7 @@ import sys
 import re
 import os
 
-lofreq = "lofreq"
+lofreq = "external/lofreq/lofreq"
 alphabet = ['A','C','G','T']
 
 # parse the command-line
@@ -349,5 +349,4 @@ beast_file.write( """
 """);
 
 beast_file.close()
-
 
