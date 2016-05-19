@@ -11,7 +11,7 @@ import sys
 import re
 import os
 
-lofreq = "external/lofreq/lofreq"
+lofreq = "lofreq"
 alphabet = ['A','C','G','T']
 
 # parse the command-line
