@@ -11,7 +11,7 @@ import sys
 import re
 import os
 
-lofreq = "lofreq"
+lofreq = "external/lofreq/lofreq"
 alphabet = ['A','C','G','T']
 
 # parse the command-line
@@ -70,6 +70,7 @@ nota = "nota <- c("
 notc = "notc <- c("
 notg = "notg <- c("
 nott = "nott <- c("
+siteids = "siteids <- c("
 sepchar = ""
 for site in variant_sites:
     for i in range(num_samples):
@@ -77,12 +78,14 @@ for site in variant_sites:
         notc = notc + sepchar + str(depths['C'][site][i])
         notg = notg + sepchar + str(depths['G'][site][i])
         nott = nott + sepchar + str(depths['T'][site][i])
+        siteids = siteids + sepchar + str(site)
         sepchar = ","
 
 snv_file.write(nota+")\n")
 snv_file.write(notc+")\n")
 snv_file.write(notg+")\n")
 snv_file.write(nott+")\n")
+snv_file.write(siteids+")\n")
 snv_file.close()
 
 ##
@@ -346,5 +349,4 @@ beast_file.write( """
 """);
 
 beast_file.close()
-
 

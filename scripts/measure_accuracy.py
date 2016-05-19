@@ -8,6 +8,7 @@ import subprocess
 best_dist = 99999999999999.0
 best_order = []
 num_strains = 0
+num_samples = 0
 true_sites = dict()
 site_ids = dict()
 
@@ -98,11 +99,18 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Measure accuracy of a genotype reconstruction relative to a ground truth SNV matrix')
     parser.add_argument('--bpnmf', required=True, help='Path to bpnmf output')
     parser.add_argument('--truth', required=True, help='Path to true genotypes file')
+    parser.add_argument('--num-sites', required=True, help='Number of variant sites found')
+    parser.add_argument('--num-strains', required=True, help='Number of strains inferred')
+    parser.add_argument('--num-samples', required=True, help='Number of samples taken')
     args = parser.parse_args()
 
+    num_sites = int(args.num_sites)
+    num_strains = int(args.num_strains)
+    num_samples = int(args.num_samples)
     inferred = parse_bpnmf(args.bpnmf)
     true_sites = parse_truth(args.truth)
     print "len ts " + str(len(true_sites))
+    print "len inferred[0] " + str(len(inferred[0]))
     permuter(dict(), [])
     print "Best ordering found is " + ",".join(best_order) + "\n"
     print "Best distance is " + str(best_dist)
