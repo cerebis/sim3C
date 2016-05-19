@@ -46,11 +46,35 @@ process Evolve {
 }
 
 ancestor_channel = duplicator.createFrom(Channel.from([ancestor]))
+wgs_descendents = duplicator.createFrom(descendents)
+
+
+/**
+ * Record the true strain genotypes
+ */
+truth_ancestor = ancestor_channel.onCopy()
+truth_descendents = wgs_descendents.onCopy()
+process Truth {
+    cache 'deep'
+    publishDir params.output, mode: 'symlink', overwrite: 'false'
+
+    input:
+    file(ancestor) from truth_ancestor
+    set file('evo.fa') from truth_descendents
+    val oname from evolvedoname
+
+    output:
+    set file("${oname}.truth.tsv") into strain_truth
+
+    """
+    strain_truth.py --mauve-path=\$MAUVEPATH -o ${oname}.truth.tsv evo.fa ancestor.fa
+    """
+}
+
 
 /**
  * Generate WGS read-pairs
  */
-wgs_descendents = duplicator.createFrom(descendents)
 
 wgs_sweep = wgs_descendents.onCopy()
         .spread(tables.values())
@@ -123,28 +147,29 @@ process Deconvolve {
     #java -Xmx1000m -jar \$JARPATH/beast.jar beast.xml 
     #java -jar \$JARPATH/treeannotator.jar -burnin 1000 -heights mean aln.trees strains.tre
     touch strains.tre decon.csv
+    mv decon.csv ${oname}.decon.csv
+    mv snv_file.data.R ${oname}.snv_file.data.R
+    mv strains.tre ${oname}.strains.tre
     """
 }
 
 
 /**
- * Record the true strain genotypes
+ * Measure accuracy of strain genotypes
  */
-truth_ancestor = ancestor_channel.onCopy()
-process Truth {
+process Accuracy {
     cache 'deep'
     publishDir params.output, mode: 'symlink', overwrite: 'false'
 
     input:
-    file(ancestor) from truth_ancestor
-    set file('evo.fa') from descendents
-    val oname from evolvedoname
+    file(truthfile) from strain_truth
+    set file(snvbpnmf), file(snv_file), file(tree_file), oname from deconvolution
 
     output:
     set file("${oname}.truth.tsv") into truth
 
     """
-    strain_truth.py --mauve-path=\$MAUVEPATH -o $oname.truth.tsv evo.fa ancestor.fa
+    measure_accuracy.py --bpnmf=${snvbpnmf} --truth=${truthfile}
     """
 }
 
