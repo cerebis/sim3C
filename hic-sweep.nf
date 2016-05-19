@@ -29,7 +29,7 @@ evo_sweep = Channel
 
 process Evolve {
     cache 'deep'
-    publishDir params.output, mode: 'symlink', overwrite: 'false'
+    publishDir params.output, mode: 'symlink', overwrite: 'true'
 
     input:
     set file('ancestral.fa'), file('donor.fa'), alpha, file('input_tree'), oname from evo_sweep
@@ -58,7 +58,7 @@ wgs_sweep = descendents.onCopy()
 
 process WGS_Reads {
     cache 'deep'
-    publishDir params.output, mode: 'symlink', overwrite: 'false'
+    publishDir params.output, mode: 'symlink', overwrite: 'true'
 
     input:
     set file('descendent.fa'), file('profile'), xf, oname from wgs_sweep
@@ -83,7 +83,7 @@ hic_sweep = descendents.onCopy()
 
 process HIC_Reads {
     cache 'deep'
-    publishDir params.output, mode: 'symlink', overwrite: 'false'
+    publishDir params.output, mode: 'symlink', overwrite: 'true'
 
     input:
     set file('descendent.fa'), file('profile'), nh, oname from hic_sweep
@@ -108,7 +108,7 @@ asm_sweep = wgs_reads.onCopy()
 process Assemble {
     cpus 1
     cache 'deep'
-    publishDir params.output, mode: 'symlink', overwrite: 'false'
+    publishDir params.output, mode: 'symlink', overwrite: 'true'
 
     input:
     set file('wgs_R1.fq.gz'), file ('wgs_R2.fq.gz'), oname from asm_sweep
@@ -135,7 +135,7 @@ tr_sweep = descendents.onCopy()
 
 process Truth {
     cache 'deep'
-    publishDir params.output, mode: 'symlink', overwrite: 'false'
+    publishDir params.output, mode: 'symlink', overwrite: 'true'
 
     input:
     set key, file('ref.fa'), file('contigs.fa'), oname from tr_sweep
@@ -172,7 +172,7 @@ hicmap_sweep = hic_reads
 
 process HiCMap {
     cache 'deep'
-    publishDir params.output, mode: 'symlink', overwrite: 'false'
+    publishDir params.output, mode: 'symlink', overwrite: 'true'
 
     input:
     set file('hic.fa.gz'), file('contigs.fa'), oname from hicmap_sweep
@@ -201,7 +201,7 @@ graph_sweep = hic2ctg_mapping.onCopy()
 
 process Graph {
     cache 'deep'
-    publishDir params.output, mode: 'symlink', overwrite: 'false'
+    publishDir params.output, mode: 'symlink', overwrite: 'true'
 
     input:
     set file('hic2ctg.bam'), file('hic2ctg.bam.bai'), oname from graph_sweep
@@ -227,7 +227,7 @@ wgsmap_sweep = wgs_reads.onCopy()
 
 process WGSMap {
     cache 'deep'
-    publishDir params.output, mode: 'symlink', overwrite: 'false'
+    publishDir params.output, mode: 'symlink', overwrite: 'true'
 
     input:
     set oname, file('r1.fq.gz'), file('r2.fq.gz'), file('contigs.fa') from wgsmap_sweep
@@ -251,7 +251,7 @@ cov_sweep = wgs2ctg_mapping.onCopy()
 
 process InferReadDepth {
     cache 'deep'
-    publishDir params.output, mode: 'symlink', overwrite: 'false'
+    publishDir params.output, mode: 'symlink', overwrite: 'true'
 
     input:
     set file("wgs2ctg.bam"), oname from cov_sweep
