@@ -11,7 +11,7 @@ import sys
 import re
 import os
 
-lofreq = "external/lofreq/lofreq"
+lofreq = "lofreq"
 alphabet = ['A','C','G','T']
 
 # parse the command-line
@@ -26,7 +26,7 @@ num_samples = len(sys.argv) - 4
 depths = dict()
 for a in alphabet:
     depths[a] = dict()
-variant_sites = list()
+variant_sites = dict()
 
 ##
 # make variant calls for each input bam
@@ -55,7 +55,7 @@ for i in range(num_samples):
                     depths[a][locus][j] = 0
         depths[d[4]][locus][i] = vac
         depths[d[3]][locus][i] = int(m.group(1)) - vac
-        variant_sites = variant_sites + [locus]
+        variant_sites[locus]=1
 
 ##
 # write out a file with SNVs and sample count for Bayesian PNMF
@@ -73,12 +73,13 @@ nott = "nott <- c("
 siteids = "siteids <- c("
 sepchar = ""
 for site in variant_sites:
+    sid = site.split("\t")
+    siteids = siteids + sepchar + sid[1]
     for i in range(num_samples):
         nota = nota + sepchar + str(depths['A'][site][i])
         notc = notc + sepchar + str(depths['C'][site][i])
         notg = notg + sepchar + str(depths['G'][site][i])
         nott = nott + sepchar + str(depths['T'][site][i])
-        siteids = siteids + sepchar + str(site)
         sepchar = ","
 
 snv_file.write(nota+")\n")
