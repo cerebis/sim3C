@@ -166,4 +166,3 @@ if __name__ == '__main__':
                     os.remove(seq_tmp)
             finally:
                 print "all done, let's go home."
-

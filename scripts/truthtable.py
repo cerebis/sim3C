@@ -16,7 +16,6 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """
-
 from collections import OrderedDict, Iterable, Counter
 import pandas as pd
 import numpy as np
@@ -24,35 +23,62 @@ import copy
 import numpy
 import yaml
 
+
 YAML_WIDTH = 1000
 
 
-"""
- Dump OrderedDict like a regular dict. Will not reserialize ordered in this case.
-"""
 def order_rep(dumper, data):
+    """
+    Dump OrderedDict like a regular dict. Will not reserialize ordered in this case.
+    :param dumper:
+    :param data:
+    :return: representer
+    """
     return dumper.represent_mapping(u'tag:yaml.org,2002:map', data.items(), flow_style=False)
+
 
 yaml.add_representer(OrderedDict, order_rep)
 
 
 class Assignment:
+    """
+    Represents the assignment of an object to 1 or many classes
+    """
 
     def __init__(self, mapping, weight=1):
         self.mapping = mapping
         self.weight = weight
 
     def get_classes(self):
+        """
+        :return: the list of classes
+        """
         return self.mapping.keys()
 
     def get_primary_class(self):
-        _v = sorted(self.mapping, key=self.mapping.get, reverse=True)
-        return _v[0]
+        """
+        The class possessing the largest weight. Ties are broken by
+        random uniform selection.
+
+        :return: most significant (primary) class
+        """
+        if len(self.mapping) == 1:
+            return self.mapping.keys()[0]
+        else:
+            _v = sorted(self.mapping.items(), key=lambda x: x[1], reverse=True)
+            _nv = numpy.array([vi[1] for vi in _v])
+            return _v[numpy.random.choice(numpy.where(_nv == 3)[0])][0]
 
     def mean_proportion(self):
+        """
+        :return: the mean of assignment weights
+        """
         return numpy.mean(self.mapping.values())
 
     def num_classes(self):
+        """
+        :return: The number of classes to which the object is assigned
+        """
         return len(self.get_classes())
 
     def __repr__(self):
@@ -61,10 +87,14 @@ class Assignment:
     def __str__(self):
         return 'weight={0} mapping={1}'.format(self.weight, str(self.mapping))
 
-"""
-    Dump Assignment objects as a mapping of member variables
-"""
+
 def assignment_rep(dumper, data):
+    """
+    Dump Assignment objects as a mapping of member variables
+    :param dumper:
+    :param data:
+    :return: representer
+    """
     memb_map = {'weight': data.weight, 'mapping': data.mapping}
     return dumper.represent_mapping(u'tag:yaml.org,2002:map', memb_map, flow_style=True)
 
@@ -104,7 +134,7 @@ class TruthTable(object):
         return len(self.asgn_dict.keys())
 
     def degeneracy(self, lengths=None):
-        nobj =  self.num_objects()
+        nobj = self.num_objects()
         if nobj == 0:
             return None
         if lengths:
@@ -163,7 +193,7 @@ class TruthTable(object):
             return None
 
         print nkeys
-        ovl = np.zeros((nkeys,nkeys))
+        ovl = np.zeros((nkeys, nkeys))
 
         if lengths:
             for i in xrange(nkeys):
@@ -176,13 +206,13 @@ class TruthTable(object):
                     sovl = 0
                     for ic in uni_cls:
                         sovl += lengths[ic]
-                    ovl[i,j] = sint / float(sovl)
+                    ovl[i, j] = sint / float(sovl)
         else:
             for i in xrange(nkeys):
                 for j in xrange(nkeys):
                     int_cls = len(cl[ckeys[i]] & cl[ckeys[j]])
                     uni_cls = len(cl[ckeys[i]] | cl[ckeys[j]])
-                    ovl[i,j] = int_cls / float(uni_cls)
+                    ovl[i, j] = int_cls / float(uni_cls)
 
         return pd.DataFrame(ovl, index=ckeys, columns=ckeys)
 
@@ -197,8 +227,10 @@ class TruthTable(object):
 
         print 'ext_symb\tint_symb\tcount\tpercentage'
         for ci in sorted(self.label_count, key=self.label_count.get, reverse=True):
-            print '{0}\t{1}\t{2}\t{3:5.3f}'.format(ci, self.label_map[ci],
-                self.label_count[ci], self.label_count[ci] / float(n_assignments))
+            print '{0}\t{1}\t{2}\t{3:5.3f}'.format(ci,
+                                                   self.label_map[ci],
+                                                   self.label_count[ci],
+                                                   self.label_count[ci] / float(n_assignments))
 
     def refresh_counter(self):
         self.label_count = Counter()
@@ -219,6 +251,7 @@ class TruthTable(object):
             desc_len = sorted([obj_weights[oi] for oi in cl_map[ci]], reverse=True)
             sum_len = np.sum(desc_len)
             sum_oi = 0
+            i = None
             for i in xrange(len(desc_len)):
                 sum_oi += desc_len[i]
                 if sum_oi > 0.5*sum_len:
@@ -227,7 +260,6 @@ class TruthTable(object):
         return n50
 
     def filter_extent(self, min_proportion, obj_weights):
-        #print '##filter_started_with {0}'.format(len(self.label_count.keys()))
         # make a inverted mapping, to build the deletion collection
         cl_map = self.invert()
         cl_keys = cl_map.keys()
@@ -235,7 +267,6 @@ class TruthTable(object):
 
         for ci in cl_keys:
             rw = np.sum([obj_weights[oi] for oi in cl_map[ci]])/sum_weight
-            #print ci, cl_map[ci],rw
             if rw < min_proportion:
                 for oi in self.asgn_dict.keys():
                     if ci in self.asgn_dict[oi].mapping:
@@ -245,17 +276,16 @@ class TruthTable(object):
                 del self.label_map[ci]
 
         self.refresh_counter()
-        #print '##filter_finished_with {0}'.format(len(self.label_count.keys()))
 
     def filter_class(self, min_proportion):
         """
         Remove classes which represent less than a threshold proportion of all
         objects in the table. This can be used to address problems of scale wrt
         algorithm performance.
+        :param min_proportion least significant weight for a class assignment to pass
         """
         print '##filter_started_with {0}'.format(len(self.label_count.keys()))
         n_obj = float(sum(self.label_count.values()))
-        #counter = Counter()
         for ci in sorted(self.label_count, key=self.label_count.get, reverse=True):
             if self.label_count[ci] / n_obj < min_proportion:
                 # remove assignments to class
@@ -267,9 +297,6 @@ class TruthTable(object):
                 # remove class
                 del self.label_map[ci]
 
-        #for k, v in self.asgn_dict.iteritems():
-        #    counter.update(v)
-        #self.label_count = counter
         self.refresh_counter()
 
         print '##filter_finished_with {0}'.format(len(self.label_count.keys()))
@@ -282,6 +309,8 @@ class TruthTable(object):
 
     def soft(self, universal=False):
         """
+        Soft clustering result
+        :param universal: use universal symbols rather than labels supplied
         :return plain dictionary with degenerate classification
         """
         _s = OrderedDict()
@@ -299,6 +328,7 @@ class TruthTable(object):
         Convert TT to a plain dictionary with the single most significant classification only.
         In the case of a tie, no effort is made to be uniformly random in the case of a tie and
         dependent on the behaviour of sort.
+        :param universal: use universal symbols rather than labels supplied
         :return plain dict with only one class->cluster mapping.
         """
         _s = OrderedDict()
@@ -340,6 +370,8 @@ class TruthTable(object):
         symbol basis.
 
         :param dt: the dictionary to initialise from
+        :param weights: new weights for assignments
+        :param min_score: minimum score to consider
         """
         all_asgn = 0
         filt_obj = 0
@@ -382,7 +414,7 @@ class TruthTable(object):
     def write(self, pathname):
         """
         Write the full table in a simple (no custom classes) YAML format"
-        :pathname the output path
+        :param pathname: the output path
         """
         with open(pathname, 'w') as h_out:
             yaml.dump(self.asgn_dict, h_out, default_flow_style=False, width=YAML_WIDTH)
@@ -390,7 +422,7 @@ class TruthTable(object):
     def write_soft(self, pathname):
         """
         Write a plain dictionary representation in YAML format.
-        :pathname the output path
+        :param pathname: the output path
         """
         TruthTable._write_dict(self.soft(), pathname)
 
@@ -398,17 +430,15 @@ class TruthTable(object):
         """
         Write a plain dictionary representation of only the most significant
         object:class assignments.
-        :pathname the output path
+        :param pathname: the output path
         """
         TruthTable._write_dict(self.hard(), pathname)
-
 
 
 def read_truth(pathname):
     """
     Read a TruthTable in YAML format
     :param pathname: path to truth table
-    :param min_score: ignore objects with scores/weights/lengths below the given threshold.
     :return: truth table
     """
     with open(pathname, 'r') as h_in:
@@ -478,7 +508,7 @@ def crosstab(dt1, dt2):
     return ctab
 
 
-def simulate_error(tt, p_mut, p_indel, extra_symb=[]):
+def simulate_error(tt, p_mut, p_indel, extra_symb=()):
     """
     Simple method for introducing error in a truth table. This is useful when
     testing clustering metrics (Fm, Vm, Bcubed, etc). By default, the list of possible

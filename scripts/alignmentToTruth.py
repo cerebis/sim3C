@@ -17,7 +17,6 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """
-
 from Bio import SeqIO
 from collections import OrderedDict
 
@@ -76,7 +75,6 @@ class Alignment:
                 self.query_name, self.ref_name, self.coverage,
                 self.query_length, self.align_length)
 
-
     def __eq__(self, other):
         if not isinstance(other, self.__class__):
             return False
@@ -94,10 +92,6 @@ class Alignment:
     @property
     def coverage(self):
         return float(self.align_length) / float(self.query_length)
-
-
-#def ordereddict_rep(dumper, data):
-#    return dumper.represent_mapping(u'tag:yaml.org,2002:map', data.items(), flow_style=False)
 
 
 def write_output(simple, fmt, minlen, mincov, minid, alignment_list, file_name):
@@ -129,9 +123,9 @@ def write_truth(simple, minlen, mincov, alignment_list, file_name):
     seq2: [ctg111, ctg1]
     seq3: [ctg99]
 
+    :param simple: write as a simple hard clustering
     :param minlen: minimum query length
     :param mincov: minimum alignment coverage
-    :param minid: minimum percentage identity
     :param alignment_list: alignment list
     :param file_name: output file name
     """
@@ -270,8 +264,7 @@ def interval_overlap(a, b):
     """
     Test if two intervals overlap.
     :param a: interval a
-    :param b0: start of interval b
-    :param b1: end of interval b
+    :param b: interval b
     :return: True if there is overlap between a and b
     """
     return a[0] <= b[1] and b[0] <= a[1]
@@ -329,7 +322,7 @@ def parse_psl2(psl_file):
                 aln_masks[aln.q_name][aln.t_name] = np.zeros(int(aln.q_size))
 
             per_id = 0.01 * aln.percent_id
-            mask_slice = aln_masks[aln.q_name][aln.t_name][aln.q_start:aln.q_end+1] #= aln.percent_id/100.
+            mask_slice = aln_masks[aln.q_name][aln.t_name][aln.q_start:aln.q_end+1]  # = aln.percent_id/100.
             mask_slice[np.where(mask_slice < per_id)] = per_id
 
         truth = {}
@@ -405,7 +398,6 @@ if __name__ == '__main__':
     parser.add_argument('output_file', metavar='OUTPUT', nargs=1, help='Output file name')
     args = parser.parse_args()
 
-
     align_repo = None
     seq_length = None
     # minimum check that the necessary information has been supplied.
@@ -465,4 +457,3 @@ if __name__ == '__main__':
         print 'Reduced to {0} winning hard assignments'.format(len(winners))
         write_output(args.simple, args.ofmt, args.minlen, args.mincov,
                      args.minid, winners.values(), args.output_file[0])
-
