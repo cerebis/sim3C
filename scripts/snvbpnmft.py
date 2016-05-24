@@ -27,16 +27,22 @@ depths = dict()
 for a in alphabet:
     depths[a] = dict()
 variant_sites = dict()
+found = dict()
 
 ##
 # make variant calls for each input bam
 # parse the VCF and store calls in snvs dict
 #
 for i in range(num_samples):
+    found[i] = dict()
     cur_vcf = os.path.join(out_dir, str(i) + ".vcf")
-    lofreq_cmd = lofreq + " call " + "--no-default-filter -C 2 -f " + ref_fa + " -o " + cur_vcf + " " + sys.argv[i+4] 
+    lofreq_cmd = lofreq + " call " + " -C 2 -f " + ref_fa + " -o " + cur_vcf + " " + sys.argv[i+4] 
     print lofreq_cmd
     os.system(lofreq_cmd)
+    cur_pileup = os.path.join(out_dir, str(i) + ".pileup")
+    pileup_cmd = "samtools mpileup -f " + ref_fa + " " + sys.argv[i+4] + " > " + cur_pileup
+    print pileup_cmd
+    os.system(pileup_cmd)
     vcf_file = open(cur_vcf)
     for line in vcf_file:
         if line.startswith("#"):
@@ -46,6 +52,11 @@ for i in range(num_samples):
         if not d[6].startswith("PASS"):
             continue    # didnt pass filters
         locus = d[0] + "\t" + d[1]  # chrom & site
+        mo = re.search('DP4=.+,.+,(.+),(.+)', d[7])
+        mo1 = int(mo.group(1))
+        mo2 = int(mo.group(2))
+        if(mo1 < 1 or mo2 < 1):
+            continue    # variant not observed on both strands. unreliable.
         m = re.search('DP=(.+);AF=(.+);SB', d[7])
         vac = int(float(m.group(1)) * float(m.group(2)))
         if not locus in depths[alphabet[0]]:
@@ -55,8 +66,23 @@ for i in range(num_samples):
                     depths[a][locus][j] = 0
         depths[d[4]][locus][i] = vac
         depths[d[3]][locus][i] = int(m.group(1)) - vac
-        variant_sites[locus]=1
+        variant_sites[locus]=d[3] # store the ref allele
+        found[i][locus] = 1
 
+for i in range(num_samples):
+    # get the depths for samples without a variant allele at the site
+    cur_pileup = os.path.join(out_dir, str(i) + ".pileup")
+    pileup_file = open(cur_pileup)
+    for line in pileup_file:
+        d = line.split("\t")
+        locus = d[0] + "\t" + d[1]
+        if locus in variant_sites and not locus in found[i]:
+            ra = variant_sites[locus]
+            print "Adding depth " + d[3] + " " + " for " + ra + " at locus " + locus
+            depths[ra][locus][i] = d[3]
+
+print "Done hunting for missing depths"
+    
 ##
 # write out a file with SNVs and sample count for Bayesian PNMF
 #
@@ -93,7 +119,7 @@ snv_file.close()
 # run the Poisson NMF
 #
 bpnmf_filename = os.path.join(out_dir, "decon.csv")
-bpnmf_cmd = "genotypes_acgt variational output_samples=100 data file=" + snv_filename + " output file=" + bpnmf_filename
+bpnmf_cmd = "genotypes_acgt variational output_samples=100 total_rel_obj=0.005 algorithm=fullrank data file=" + snv_filename + " output file=" + bpnmf_filename
 os.system(bpnmf_cmd)
 #os.remove(snv_filename)
 
