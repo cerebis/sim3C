@@ -10,6 +10,8 @@ By expressing microbial community composition and the details of metagenomic exp
 
 ### Dependencies
 
+#### Nextflow
+
 The [Nextflow](http://www.nextflow.io/) framework, which can be installed easily using either of the following:
 
 ```wget -qO- get.nextflow.io | bash``` or ```curl -fsSL get.nextflow.io | bash```
@@ -18,7 +20,9 @@ assuming you have met the prerequisite of installing Java 7+.
 
 In addition, meta-sweeper expects that the main executable ```nextflow``` is accessible on the path. Users can move this file to a location already on the path or add its parent directory to the path.
 
-The workflow depends on the following Python modules, which must be installed prior to using it:
+#### Python modules
+
+The workflows depend on the following Python modules, which must be installed prior to using it:
 
 * [biopython](http://biopython.org/)
 
