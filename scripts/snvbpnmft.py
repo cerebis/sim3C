@@ -36,9 +36,13 @@ found = dict()
 for i in range(num_samples):
     found[i] = dict()
     cur_vcf = os.path.join(out_dir, str(i) + ".vcf")
-    lofreq_cmd = lofreq + " call " + " -C 2 -f " + ref_fa + " -o " + cur_vcf + " " + sys.argv[i+4] 
+    lofreq_cmd = lofreq + " call " + " -C 2 -f " + ref_fa + " -o tmp.vcf " + sys.argv[i+4] 
     print lofreq_cmd
     os.system(lofreq_cmd)
+    filter_cmd = lofreq + " filter -i tmp.vcf -B 15 -Q 60 -o " + cur_vcf 
+    print filter_cmd
+    os.system(filter_cmd)
+    os.remove("tmp.vcf")
     cur_pileup = os.path.join(out_dir, str(i) + ".pileup")
     pileup_cmd = "samtools mpileup -f " + ref_fa + " " + sys.argv[i+4] + " > " + cur_pileup
     print pileup_cmd
@@ -115,11 +119,12 @@ snv_file.write(nott+")\n")
 snv_file.write(siteids+")\n")
 snv_file.close()
 
+
 ##
 # run the Poisson NMF
 #
 bpnmf_filename = os.path.join(out_dir, "decon.csv")
-bpnmf_cmd = "genotypes_acgt variational output_samples=100 total_rel_obj=0.005 algorithm=fullrank data file=" + snv_filename + " output file=" + bpnmf_filename
+bpnmf_cmd = "genotypes_acgt variational output_samples=100 algorithm=fullrank data file=" + snv_filename + " output file=" + bpnmf_filename
 os.system(bpnmf_cmd)
 #os.remove(snv_filename)
 
