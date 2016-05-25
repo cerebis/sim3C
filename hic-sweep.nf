@@ -86,6 +86,7 @@ process WGS_Reads {
     set file("${oname}.wgs.r*.fq.gz"), oname into wgs_reads
 
     """
+    export PATH=\$EXT_BIN/art:\$PATH
     metaART.py -C gzip -t $profile -z 1 -M $xf -S ${params.seed} -s ${params.wgs_ins_std} \
             -m ${params.wgs_ins_len} -l ${params.wgs_read_len} -n "${oname}.wgs" descendent.fa .
     """
