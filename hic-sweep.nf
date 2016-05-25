@@ -58,7 +58,7 @@ process Evolve {
 
     """
     scale_tree.py -a ${alpha} input_tree scaled_tree
-    sgEvolver --indel-freq=${params.indel_freq} --small-ht-freq=${params.small_ht_freq} --large-ht-freq=${params.large_ht_freq} \
+    \$EXT_BIN/sgevolver/sgEvolver --indel-freq=${params.indel_freq} --small-ht-freq=${params.small_ht_freq} --large-ht-freq=${params.large_ht_freq} \
          --inversion-freq=${params.inversion_freq} --random-seed=${params.seed} scaled_tree \
          ancestral.fa donor.fa "${oname}.evo.aln" "${oname}.evo.fa"
     strip_semis.sh "${oname}.evo.fa"
@@ -136,7 +136,7 @@ process Assemble {
     file("${oname}.contigs.fasta") into wgs_contigs
 
     """
-    a5_pipeline.pl --threads=1 --metagenome wgs_R1.fq.gz wgs_R2.fq.gz ${oname}
+    \$EXT_BIN/a5/bin/a5_pipeline.pl --threads=1 --metagenome wgs_R1.fq.gz wgs_R2.fq.gz ${oname}
     """
 }
 
@@ -168,7 +168,7 @@ process Truth {
         lastdb db ref.fa
     fi
 
-    lastal -P 1 db contigs.fa | maf-convert psl > ctg2ref.psl
+    \$EXT_BIN/last/lastal -P 1 db contigs.fa | maf-convert psl > ctg2ref.psl
     alignmentToTruth.py --afmt test --ofmt yaml ctg2ref.psl "${oname}.truth.yaml"
     """
 }
@@ -201,6 +201,7 @@ process HiCMap {
 
 
     """
+    export PATH=\$EXT_BIN/a5/bin:\$PATH
     bwa index contigs.fa
     bwa mem -t 1 contigs.fa hic.fa.gz | samtools view -bS - | samtools sort -l 9 - "${oname}.hic2ctg"
     samtools index "${oname}.hic2ctg.bam"
@@ -255,6 +256,7 @@ process WGSMap {
     set file("${oname}.wgs2ctg.bam"), oname into wgs2ctg_mapping
 
     """
+    export PATH=\$EXT_BIN/a5/bin:\$PATH
     bwa index contigs.fa
     bwa mem -t 1 contigs.fa r1.fq.gz r2.fq.gz | samtools view -bS - | samtools sort -l 9 - "${oname}.wgs2ctg"
     """
@@ -279,7 +281,7 @@ process InferReadDepth {
     file("${oname}.wgs2ctg.cov") into wgs2ctg_coverage
 
     """
-    bedtools genomecov -ibam wgs2ctg.bam | \
+    \$EXT_BIN/bedtools/bedtools genomecov -ibam wgs2ctg.bam | \
     awk '
     BEGIN{n=0}
     {
