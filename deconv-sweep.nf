@@ -57,8 +57,9 @@ process Evolve {
 
     """
     scale_tree.py -a ${alpha} input_tree scaled_tree
-    sgEvolver --indel-freq=${params.indel_freq} --small-ht-freq=${params.small_ht_freq} --large-ht-freq=${params.large_ht_freq} \
-         --inversion-freq=${params.inversion_freq} --random-seed=${params.seed} scaled_tree \
+    \$EXT_BIN/sgevolver/sgEvolver --indel-freq=${params.indel_freq} --small-ht-freq=${params.small_ht_freq} \
+         --large-ht-freq=${params.large_ht_freq} --inversion-freq=${params.inversion_freq} \
+         --random-seed=${params.seed} scaled_tree \
          ancestral.fa donor.fa "${oname}.evo.aln" "${oname}.evo.fa"
     strip_semis.sh "${oname}.evo.fa"
     """
@@ -87,6 +88,7 @@ process WGS_Reads {
     set file("${oname}.wgs.*.r1.fq.gz"), file("${oname}.wgs.*.r2.fq.gz"), oname into wgs_reads
 
     """
+    export PATH=\$EXT_BIN/art:\$PATH
     metaART.py -C gzip -t $profile -M $xf -S ${params.seed} -z ${params.num_samples} -s ${params.wgs_ins_std} \
             -m ${params.wgs_ins_len} -l ${params.wgs_read_len} -n "${oname}.wgs" descendent.fa .
     """
@@ -110,6 +112,7 @@ process ReadMap {
     set file("*.bam"), oname into map_bams
 
     """
+    export PATH=\$EXT_BIN/a5/bin:\$PATH
     cp -L ancestor.fa ancestral.fa
     bwa index ancestral.fa
     for rr in `ls *.r1.fq.gz`
@@ -138,6 +141,7 @@ process Deconvolve {
     set file("${oname}.decon.csv"), file("${oname}.snv_file.data.R"), file("${oname}.strains.tre"), oname into deconvolution
 
     """
+    export PATH=\$EXT_BIN/lofreq_star:\$PATH
     snvbpnmft.py . 4 ancestor.fa *.bam
     #java -Xmx1000m -jar \$JARPATH/beast.jar beast.xml 
     #java -jar \$JARPATH/treeannotator.jar -burnin 1000 -heights mean aln.trees strains.tre
