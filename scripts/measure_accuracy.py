@@ -116,22 +116,19 @@ def compute_accuracy( order ):
             truth[alpha_index[true_sites[site_ids[j]][t]]] = 1
             
             ssd = 0
-            inf = ""
             for i in range(len(truth)):
                 ssd += pow(inferred[i][s][j]-truth[i], 2)
-                inf += ", " + str(inferred[i][s][j])
             dist += ssd
-            print "site " + site_ids[j] + " true is " + true_sites[site_ids[j]][t] + " inferred " + inf
 
     dist = pow(dist, 0.5)
     if dist < best_dist:
         best_dist = dist
         best_order = order
 
-    print "unknown " + str(unknown)
-    print "total " + str(total)
-    print "dist " + str(dist)
-    exit(0) 
+#    print "unknown " + str(unknown)
+#    print "total " + str(total)
+#    print "dist " + str(dist)
+#    exit(0) 
 
 if __name__ == '__main__':
 
@@ -149,5 +146,16 @@ if __name__ == '__main__':
     permuter(dict(), [])
     print "Best ordering found is " + ",".join(map(str,best_order))
     print "Best distance is " + str(best_dist)
+
+    t = -1
+    for s in best_order:
+        t += 1
+        for j in range(num_sites):
+            if not site_ids[j] in true_sites:
+                continue
+            inf = ""
+            for i in range(4):
+                inf += ", " + str(inferred[i][s][j])
+            print "strain " + str(t) + " site " + site_ids[j] + " true is " + true_sites[site_ids[j]][t] + " inferred " + inf
 
 
