@@ -5,13 +5,16 @@ By expressing microbial community composition and the details of metagenomic exp
 
 
 ### Prerequisites
-This workflow requires a system running linux on an x86-64 machine due to dependent binaries, while Nextflow itself requires Java 7 or higher and should be installed and run using the same variant.
+- Nextflow requires Java 7+.
+- Workflows require a *Linux x86-64* runtime environment due to dependence on external statically linked tools.
 
 ### Dependencies
 
 The [Nextflow](http://www.nextflow.io/) framework, which can be installed easily using either of the following:
 
 ```wget -qO- get.nextflow.io | bash``` or ```curl -fsSL get.nextflow.io | bash```
+
+assuming you have met the prerequisite of installing Java 7+.
 
 In addition, meta-sweeper expects that the main executable ``nextflow``` is accessible on the path. Users can move this file to a location already on the path or add its parent directory to the path.
 
