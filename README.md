@@ -48,10 +48,17 @@ pip install --upgrade biopython pandas PyYAML networkx pysam
 
 We recommend that users start sweeps by using the ```meta-sweeper.sh``` launch script. It is the easiest way to start meta-sweeper, providing a tiny bit of boiler plate to the subordinate workflows. Namely, it obtains the installed path of meta-sweeper and checks that nextflow exists on the path. 
 
+How parameters are varied over the sweep are defined in a Nextflow configuration file. An example ```sweep.config``` along with supporting files in ```test``` has been provided.
+
+#### Local execution
+
 Using regular local processes.
 ```bash
 meta-sweeper.sh -c sweep.config run hic-sweep.nf
 ```
+
+#### Grid execution
+
 With Nextflow it is easy to submit the work to a grid architecture. For Meta-sweeper, these details are organised as execution profiles in the file named ```execution.config```. We have defined a few examples which may work out of the box on your system.
 
 SGE execution, where the target queue is ```all.q```.
