@@ -44,7 +44,7 @@ On other systems [pip](https://pip.pypa.io/en/stable/) may be the preferred meth
 pip install --upgrade biopython pandas PyYAML networkx pysam
 ```
 
-### usage
+### Usage
 
 We recommend that users start sweeps by using the ```meta-sweeper.sh``` launch script. It is the easiest way to start meta-sweeper, providing a tiny bit of boiler plate to the subordinate workflows. Namely, it obtains the installed path of meta-sweeper and checks that nextflow exists on the path. 
 
