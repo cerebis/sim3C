@@ -20,16 +20,19 @@
 class Globals {
     static String separator = '%'
 }
+helper = this.class.classLoader.parseClass(new File('Helper.groovy')).newInstance()
 
 
-graphs = Channel.from(file('out/*graphml')).subscribe{println}
+graphs = Channel.from(file('out/*graphml'))
+        .map { f -> [f, helper.dropSuffix(f.name)] }
+        .subscribe { println it }
 
-/*process Cluster {
+process Cluster {
     cache 'deep'
     publishDir params.output, mode: 'symlink', overwrite: 'true'
 
     input:
-    set file('g.graphml') from graphs
+    set file('g.graphml'), oname from graphs
 
     output:
     set file("${oname}.louv-soft.cl") into clusterings
@@ -37,4 +40,4 @@ graphs = Channel.from(file('out/*graphml')).subscribe{println}
     """
     louvain_cluster.py --otype soft --ofmt mcl g.graphml "${oname}.louv-soft.cl"
     """
-}*/
+}
