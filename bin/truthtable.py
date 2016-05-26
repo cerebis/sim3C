@@ -67,7 +67,7 @@ class Assignment:
         else:
             _v = sorted(self.mapping.items(), key=lambda x: x[1], reverse=True)
             _nv = numpy.array([vi[1] for vi in _v])
-            return _v[numpy.random.choice(numpy.where(_nv == 3)[0])][0]
+            return _v[numpy.random.choice(numpy.where(_nv == _nv.max())[0])][0]
 
     def mean_proportion(self):
         """
