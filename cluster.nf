@@ -86,8 +86,8 @@ process Oclustr {
     """
 }
 
-louvsoft_cl.map { f-> [helper.dropSuffix(f.name, Globals.separator, '.'), f]}
-    .mix(louvhard_cl.map{ f-> [helper.dropSuffix(f.name, Globals.separator, '.'), f]})
+louvsoft_cl.map { f-> [helper.dropSuffix(f.name, Globals.separator), f]}
+    .mix(louvhard_cl.map{ f-> [helper.dropSuffix(f.name, Globals.separator), f]})
     .subscribe { println it }
 
 /*bc_sweep = oclustr_cl
