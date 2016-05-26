@@ -34,7 +34,7 @@ process LouvSoft {
     publishDir params.output, mode: 'symlink', overwrite: 'true'
 
     input:
-    set file('g.graphml'), oname from graphs
+    set file('g.graphml'), oname from gr_sweep
 
     output:
     set file("${oname}.louv-soft.cl") into clusterings
@@ -51,7 +51,7 @@ process LouvHard {
     publishDir params.output, mode: 'symlink', overwrite: 'true'
 
     input:
-    set file('g.graphml'), oname from graphs
+    set file('g.graphml'), oname from gr_sweep
 
     output:
     set file("${oname}.louv-hard.cl") into clusterings
@@ -68,7 +68,7 @@ process Oclustr {
     publishDir params.output, mode: 'symlink', overwrite: 'true'
 
     input:
-    set file('g.graphml'), oname from graphs
+    set file('g.graphml'), oname from gr_sweep
 
     output:
     set file("${oname}.louv-hard.cl") into clusterings
