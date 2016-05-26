@@ -25,7 +25,6 @@ helper = this.class.classLoader.parseClass(new File('Helper.groovy')).newInstanc
 
 graphs = Channel.from(file('out/*graphml'))
         .map { f -> [f, helper.dropSuffix(f.name)] }
-        .subscribe { println it }
 
 process LouvSoft {
     cache 'deep'
