@@ -27,7 +27,7 @@ graphs = Channel.from(file('out/*graphml'))
         .map { f -> [f, helper.dropSuffix(f.name)] }
         .subscribe { println it }
 
-process Cluster {
+process LouvSoft {
     cache 'deep'
     publishDir params.output, mode: 'symlink', overwrite: 'true'
 
@@ -39,5 +39,35 @@ process Cluster {
 
     """
     louvain_cluster.py --otype soft --ofmt mcl g.graphml "${oname}.louv-soft.cl"
+    """
+}
+
+process LouvHard {
+    cache 'deep'
+    publishDir params.output, mode: 'symlink', overwrite: 'true'
+
+    input:
+    set file('g.graphml'), oname from graphs
+
+    output:
+    set file("${oname}.louv-hard.cl") into clusterings
+
+    """
+    louvain_cluster.py --otype hard --ofmt mcl g.graphml "${oname}.louv-hard.cl"
+    """
+}
+
+process Oclustr {
+    cache 'deep'
+    publishDir params.output, mode: 'symlink', overwrite: 'true'
+
+    input:
+    set file('g.graphml'), oname from graphs
+
+    output:
+    set file("${oname}.louv-hard.cl") into clusterings
+
+    """
+    oclustr.py -f mcl g.graphml "${oname}.oclustr.cl"
     """
 }
