@@ -21,10 +21,13 @@ class Globals {
     static String separator = '%'
 }
 helper = this.class.classLoader.parseClass(new File('Helper.groovy')).newInstance()
+duplicator = this.class.classLoader.parseClass(new File('ChannelDuplicator.groovy')).newInstance()
+
+graphs = duplicator.createFrom(Channel.from(file('out/*graphml'))
+        .map { f -> [f, helper.dropSuffix(f.name)] })
 
 
-graphs = Channel.from(file('out/*graphml'))
-        .map { f -> [f, helper.dropSuffix(f.name)] }
+gr_sweep = graphs.onCopy()
 
 process LouvSoft {
     cache 'deep'
@@ -41,6 +44,8 @@ process LouvSoft {
     """
 }
 
+gr_sweep = graphs.onCopy()
+
 process LouvHard {
     cache 'deep'
     publishDir params.output, mode: 'symlink', overwrite: 'true'
@@ -55,6 +60,8 @@ process LouvHard {
     louvain_cluster.py --otype hard --ofmt mcl g.graphml "${oname}.louv-hard.cl"
     """
 }
+
+gr_sweep = graphs.onCopy()
 
 process Oclustr {
     cache 'deep'
