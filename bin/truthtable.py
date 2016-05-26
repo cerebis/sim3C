@@ -66,8 +66,8 @@ class Assignment:
             return self.mapping.keys()[0]
         else:
             _v = sorted(self.mapping.items(), key=lambda x: x[1], reverse=True)
-            _nv = numpy.array([vi[1] for vi in _v])
-            return _v[numpy.random.choice(numpy.where(_nv == _nv.max())[0])][0]
+            _nv = np.array([vi[1] for vi in _v])
+            return _v[np.random.choice(np.where(_nv == _nv.max())[0])][0]
 
     def mean_proportion(self):
         """
@@ -320,7 +320,7 @@ class TruthTable(object):
             if universal:
                 # relabel with universal symbols if requested
                 clz = [self.label_map[ci] for ci in clz]
-            _s[k] = clz
+            _s[k] = set(clz)
         return _s
 
     def hard(self, universal=False):
@@ -337,7 +337,7 @@ class TruthTable(object):
             pc = self.asgn_dict[_k].get_primary_class()
             if universal:
                 pc = self.label_map[pc]
-            _s[_k] = [pc]
+            _s[_k] = {pc}
         return _s
 
     def get(self, key):
