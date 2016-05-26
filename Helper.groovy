@@ -33,6 +33,14 @@ class Helper {
         return str.split(Helper.separators) - ''
     }
 
+    static String dropSuffix(str, sep) {
+        def p1 = str.lastIndexOf(sep)
+        if (p1 == -1) {
+            return str
+        }
+        return str.indexOf('.', p1).with { it != -1 ? str[0..<it] : str }
+    }
+
     static String dropSuffix(str) {
         return str.lastIndexOf('.').with {it != -1 ? str[0..<it] : str}
     }

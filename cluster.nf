@@ -23,13 +23,16 @@ class Globals {
 helper = this.class.classLoader.parseClass(new File('Helper.groovy')).newInstance()
 duplicator = this.class.classLoader.parseClass(new File('ChannelDuplicator.groovy')).newInstance()
 
-//truths = duplicator.createFrom(
+// truth tables
 truths = Channel.from(file('out/*truth.yaml'))
         .map { f -> [f.name[0..-12], f] }
+truths = duplicator.createFrom(truths)
 
+// contig graphs
 graphs = Channel.from(file('out/*graphml'))
         .map { f -> [helper.dropSuffix(f.name), f] }
 graphs = duplicator.createFrom(graphs)
+
 
 gr_sweep = graphs.onCopy()
 
@@ -83,7 +86,11 @@ process Oclustr {
     """
 }
 
-bc_sweep = oclustr_cl
+louvsoft_cl.map { f-> [helper.dropSuffix(f.name, Globals.separator, '.'), f]}
+    .mix(louvhard_cl.map{ f-> [helper.dropSuffix(f.name, Globals.separator, '.'), f]})
+    .subscribe { println it }
+
+/*bc_sweep = oclustr_cl
 	.map { f -> [helper.removeLevels(f.name[0..-15],1), f] }
 	.cross(truths)
 	.map { t -> [ t[0][1].name[0..-12], t[0][1], t[1][1] ]}
@@ -101,4 +108,4 @@ process Bcubed {
     """
     bcubed.py truth clust "${oname}.oclustr.bc"
     """
-}
+}*/
