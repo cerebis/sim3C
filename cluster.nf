@@ -23,8 +23,12 @@ class Globals {
 helper = this.class.classLoader.parseClass(new File('Helper.groovy')).newInstance()
 duplicator = this.class.classLoader.parseClass(new File('ChannelDuplicator.groovy')).newInstance()
 
+//truths = duplicator.createFrom(
+truths = Channel.from(file('out/*truth.yaml'))
+        .map { f -> [f.name[0..-12], f] }
+
 graphs = Channel.from(file('out/*graphml'))
-        .map { f -> [f, helper.dropSuffix(f.name)] }
+        .map { f -> [helper.dropSuffix(f.name), f] }
 graphs = duplicator.createFrom(graphs)
 
 gr_sweep = graphs.onCopy()
@@ -34,7 +38,7 @@ process LouvSoft {
     publishDir params.output, mode: 'symlink', overwrite: 'true'
 
     input:
-    set file('g.graphml'), oname from gr_sweep
+    set oname, file('g.graphml') from gr_sweep
 
     output:
     set file("${oname}.louv-soft.cl") into louvsoft_cl
@@ -51,7 +55,7 @@ process LouvHard {
     publishDir params.output, mode: 'symlink', overwrite: 'true'
 
     input:
-    set file('g.graphml'), oname from gr_sweep
+    set oname, file('g.graphml') from gr_sweep
 
     output:
     set file("${oname}.louv-hard.cl") into louvhard_cl
@@ -69,12 +73,32 @@ process Oclustr {
     publishDir params.output, mode: 'symlink', overwrite: 'true'
 
     input:
-    set file('g.graphml'), oname from gr_sweep
+    set oname, file('g.graphml') from gr_sweep
 
     output:
     set file("${oname}.oclustr.cl") into oclustr_cl
 
     """
     oclustr.py -f mcl g.graphml "${oname}.oclustr.cl"
+    """
+}
+
+bc_sweep = oclustr_cl
+	.map { f -> [helper.removeLevels(f.name[0..-15],1), f] }
+	.cross(truths)
+	.map { t -> [ t[0][1].name[0..-12], t[0][1], t[1][1] ]}
+
+process Bcubed {
+    cache 'deep'
+    publishDir params.output, mode: 'symlink', overwrite: 'true'
+
+    input:
+    set oname, file('clust'), file('truth') from bc_sweep
+
+    output:
+    set file("${oname}.oclustr.bc") into oclustr_bc
+
+    """
+    bcubed.py truth clust "${oname}.oclustr.bc"
     """
 }
