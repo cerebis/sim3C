@@ -33,7 +33,6 @@ graphs = Channel.from(file('out/*graphml'))
         .map { f -> [helper.dropSuffix(f.name), f] }
 graphs = duplicator.createFrom(graphs)
 
-
 gr_sweep = graphs.onCopy()
 
 process LouvSoft {
@@ -68,7 +67,6 @@ process LouvHard {
     """
 }
 
-
 gr_sweep = graphs.onCopy()
 
 process Oclustr {
@@ -86,13 +84,31 @@ process Oclustr {
     """
 }
 
+gr_sweep = graphs.onCopy()
+
+process GraphStats {
+    cache 'deep'
+    publishDir params.output, mode: 'symlink', overwrite: 'true'
+
+    input:
+    set oname, file('g.graphml') from gr_sweep
+
+    output:
+    set file("${oname}.gstat"), file("${oname}.geigh") into graph_info
+
+    """
+    graph_mod_iso.py g.graphml > "${oname}.gstat"
+    graph_complexity.py -m eigh g.graphml > ${oname}.geigh"
+    """
+}
+
 bc_sweep = truths.onCopy().cross(louvsoft_cl.map { f-> [helper.dropSuffix(f.name), f]}
     .mix(louvhard_cl.map{ f-> [helper.dropSuffix(f.name), f]})
     .mix(oclustr_cl.map{ f-> [helper.dropSuffix(f.name), f]})
     .map { t -> [ helper.removeLevels(t[0],1), *t ] })
     .map { t -> [ t[1][1], t[1][2], t[0][1]] }
 
-process Bcubed {
+process Bcubed  {
     cache 'deep'
     publishDir params.output, mode: 'symlink', overwrite: 'true'
 
