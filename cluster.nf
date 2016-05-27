@@ -98,7 +98,7 @@ process GraphStats {
 
     """
     graph_mod_iso.py g.graphml > "${oname}.gstat"
-    graph_complexity.py -m eigh g.graphml > ${oname}.geigh"
+    graph_complexity.py -m eigh g.graphml > "${oname}.geigh"
     """
 }
 
