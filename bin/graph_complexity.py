@@ -60,7 +60,7 @@ def eigen_product(g, s=1.0, edge_weight='weight'):
     :return: product eigenvalues
     """
     nz_eig = find_nonzero_eigenvalues_magnitudes(g, edge_weight)
-    return np.product(nz_eig ** (1.0/s))
+    return float(np.product(nz_eig ** (1.0/s)))
 
 
 def inverse_eigen_product(g, s=1.0, edge_weight='weight'):
@@ -72,7 +72,7 @@ def inverse_eigen_product(g, s=1.0, edge_weight='weight'):
     :param edge_weight: data field used for edge weights. If None, weights =1.
     :return: product eigenvalues
     """
-    return 1.0/eigen_product(g, s, edge_weight)
+    return float(1.0/eigen_product(g, s, edge_weight))
 
 
 def eigen_entropy(g, s=1.0, edge_weight='weight'):
@@ -87,7 +87,7 @@ def eigen_entropy(g, s=1.0, edge_weight='weight'):
     ev_i = find_nonzero_eigenvalues_magnitudes(g, edge_weight)
     _pi = ev_i**(1.0/s)
     _pi = _pi / np.sum(_pi)
-    return -np.sum(_pi * np.log2(_pi))
+    return float(-np.sum(_pi * np.log2(_pi)))
 
 
 if __name__ == '__main__':
