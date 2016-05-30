@@ -20,7 +20,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 from Bio import SeqIO
 import numpy as np
-import sys
 
 
 def calculate_N50_and_L50(lengths):
@@ -35,18 +34,31 @@ def calculate_N50_and_L50(lengths):
     l.sort()
     cl = np.cumsum(l)
     xi = np.searchsorted(cl, 0.5*l.sum(), side='right')
-    return {'N50': l[xi], 'L50': len(l) - xi}
+    return {'N50': (int)(l[xi]), 'L50': (int)(len(l) - xi)}
 
 if __name__ == '__main__':
+    import argparse
 
-    if len(sys.argv) != 2:
-        print 'Usage: [fasta-file]'
-        sys.exit(0)
+    parser = argparse.ArgumentParser(description='Calculate N50 and L50 from a set of sequences')
+    parser.add_argument('--if', dest='seq_fmt', choices=['fasta', 'fastq'], default='fasta',
+                        help='Input sequence format [fasta]')
+    parser.add_argument('--yaml', action='store_true', default=False,
+                        help='Write YAML format')
+    parser.add_argument('input', help='Input sequence file')
+    parser.add_argument('output', nargs="?", type=argparse.FileType('w'), default='-',
+                        help='Output file')
+    args = parser.parse_args()
 
     # determine sequence lengths from input file
-    lengths = [len(si) for si in SeqIO.parse(sys.argv[1], 'fasta')]
+    lengths = [len(si) for si in SeqIO.parse(args.input, args.seq_fmt)]
 
     # report N50 and L50
-    print '{N50}\t{L50}'.format(**calculate_N50_and_L50(lengths))
+    stats = calculate_N50_and_L50(lengths)
+
+    if args.yaml:
+        import yaml
+        yaml.dump(stats, args.output, default_flow_style=False)
+    else:
+        args.output.write('{N50}\t{L50}\n'.format(**stats))
 
 
