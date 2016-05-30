@@ -104,7 +104,7 @@ if __name__ == '__main__':
             import yaml
             yaml.dump(result, out_h, default_flow_style=False)
         else:
-            args.output.write('{method} {value}'.format(**result))
+            args.output.write('{method} {value}\n'.format(**result))
 
     def formatter(prog): return argparse.HelpFormatter(prog, width=100, max_help_position=100)
 

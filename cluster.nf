@@ -97,8 +97,8 @@ process GraphStats {
     set file("${oname}.gstat"), file("${oname}.geigh") into graph_info
 
     """
-    graph_mod_iso.py g.graphml > "${oname}.gstat"
-    graph_complexity.py -m eigh g.graphml > "${oname}.geigh"
+    graph_stats.py --yaml g.graphml "${oname}.gstat"
+    graph_complexity.py --yaml --method eigh g.graphml "${oname}.geigh"
     """
 }
 
