@@ -88,13 +88,10 @@ result['isolates'] = len(nx.isolates(g))
 result['inclusives'] = g.order() - result['isolates']
 
 # mean degree
-result['mean_deg'] = np.mean(nx.degree(g).values())
+result['mean_deg'] = float(np.mean(nx.degree(g).values()))
 
 # median degree
-result['median_deg'] = np.median(nx.degree(g).values())
-
-print '#file #nodes #iso #inclu Modularity MeanDeg MedianDeg'
-print '{0} {1} {2} {3} {4} {5} {6}'.format(sys.argv[1], g.order(), n_iso, g.order() - n_iso, mod, mean_deg, med_deg)
+result['median_deg'] = int(np.median(nx.degree(g).values()))
 
 if args.yaml:
     import yaml
