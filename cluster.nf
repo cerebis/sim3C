@@ -137,6 +137,6 @@ process AssemblyStats {
     set file("${oname}.asmstat") into asm_stats
 
     """
-    calculate_N50_L50.py contigs.fa > "${oname}.asmstat"
+    calc_N50_L50.py contigs.fa > "${oname}.asmstat"
     """
 }
