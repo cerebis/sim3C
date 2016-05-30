@@ -24,12 +24,12 @@ helper = this.class.classLoader.parseClass(new File('Helper.groovy')).newInstanc
 duplicator = this.class.classLoader.parseClass(new File('ChannelDuplicator.groovy')).newInstance()
 
 // truth tables
-truths = Channel.from(file('out/*truth.yaml'))
+truths = Channel.from(file('out/*.truth.yaml'))
         .map { f -> [f.name[0..-12], f] }
 truths = duplicator.createFrom(truths)
 
 // contig graphs
-graphs = Channel.from(file('out/*graphml'))
+graphs = Channel.from(file('out/*.graphml'))
         .map { f -> [helper.dropSuffix(f.name), f] }
 graphs = duplicator.createFrom(graphs)
 
@@ -120,5 +120,23 @@ process Bcubed  {
 
     """
     bcubed.py truth clust "${oname}.oclustr.bc"
+    """
+}
+
+contigs = Channel.from(file('out/*.contigs.fasta'))
+    .map { f -> [f.name[0..-15], f] }
+
+process AssemblyStats {
+    cache 'deep'
+    publishDir params.output, mode: 'symlink', overwrite: 'true'
+
+    input:
+    set oname, file('contigs.fa') from contigs
+
+    output:
+    set file("${oname}.asmstat") into asm_stats
+
+    """
+    calc_N50_L50 contigs.fa > "${oname}.asmstat"
     """
 }
