@@ -39,7 +39,9 @@ def calculate_N50_and_L50(lengths):
 if __name__ == '__main__':
     import argparse
 
-    parser = argparse.ArgumentParser(description='Calculate N50 and L50 from a set of sequences')
+    def formatter(prog): return argparse.HelpFormatter(prog, width=100, max_help_position=100)
+    parser = argparse.ArgumentParser(description='Calculate N50 and L50 from a set of sequences',
+                                     formatter_class=formatter)
     parser.add_argument('--if', dest='seq_fmt', choices=['fasta', 'fastq'], default='fasta',
                         help='Input sequence format [fasta]')
     parser.add_argument('--yaml', action='store_true', default=False,

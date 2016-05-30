@@ -1,8 +1,25 @@
 #!/usr/bin/env python
+"""
+meta-sweeper - for performing parametric sweeps of simulated
+metagenomic sequencing experiments.
+Copyright (C) 2016 "Matthew Z DeMaere"
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published
+by the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful, but
+WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program.  If not, see <http://www.gnu.org/licenses/>.
+"""
 
 import numpy as np
 import networkx as nx
-import argparse
 import zlib
 
 def kolmogorov(s):
@@ -72,58 +89,81 @@ def eigen_entropy(g, s=1.0, edge_weight='weight'):
     _pi = _pi / np.sum(_pi)
     return -np.sum(_pi * np.log2(_pi))
 
-parser = argparse.ArgumentParser(description='Graph complexity estimation')
-parser.add_argument('-s', '--scale', type=float, default=1.0, help='Exponential scale factor [1.0]')
-parser.add_argument('-w', '--weight', default='weight', help='Edge weighting field name [weight]')
-parser.add_argument('-m', '--method', choices=['kolmo', 'eigh', 'eigp', 'eigip'], required=True,
-                    help='Method to apply')
-parser.add_argument('input', help='GraphML format graph file to analyse')
-args = parser.parse_args()
 
-print '  Reading graph {0}'.format(args.input)
-g = nx.read_graphml(args.input)
-print '  Graph contained {0} nodes and {1} edges'.format(g.order(), g.size())
+if __name__ == '__main__':
+    import argparse
 
-# set weight parameters for edges.
-# this is necessary if we want the default to be weighted but still provide
-# users the option for equal weighting.
-weight = None if args.weight.lower() == 'none' else args.weight
+    def write_output(out_h, result, is_yaml):
+        """
+        Write result to stdout or file in specified format
+        :param out_h: output stream
+        :param result: result of computation
+        :param is_yaml: write YAML format
+        """
+        if is_yaml:
+            import yaml
+            yaml.dump(result, out_h, default_flow_style=False)
+        else:
+            args.output.write('{method} {value}'.format(**result))
 
-if args.method == 'kolmo':
-    print '  Determining adjacency matrix ...'
-    g_adj = nx.adjacency_matrix(g)
-    g_adj = g_adj.todense()
+    def formatter(prog): return argparse.HelpFormatter(prog, width=100, max_help_position=100)
 
-    # convert the adjacency matrix (which might be weighted) into a binary string.
-    # where 0 no connection, 1 connection with weight > 0.
-    print '  Converting adjacency matrix to binary string representation ...'
-    g_str = ''.join(map(str, g_adj.flatten().astype(bool).astype(int).tolist()[0]))
+    parser = argparse.ArgumentParser(description='Graph complexity estimation', formatter_class=formatter)
+    parser.add_argument('--yaml', action='store_true', default=False,
+                        help='Write YAML format')
+    parser.add_argument('-s', '--scale', type=float, default=1.0,
+                        help='Exponential scale factor [1.0]')
+    parser.add_argument('-w', '--weight', default='weight',
+                        help='Edge weighting field name [weight]')
+    parser.add_argument('--method', choices=['kolmo', 'eigh', 'eigp', 'eigip'],
+                        default='eigh', help='Method to apply [eigh]')
+    parser.add_argument('input', help='GraphML format graph file to analyse')
+    parser.add_argument('output', nargs='?', type=argparse.FileType('w'), default='-',
+                        help='Output file')
+    args = parser.parse_args()
 
-    try:
-        k = kolmogorov(g_str)
-    except RuntimeError as er:
-        print er
-        k = None
-    print 'Kolmogorov complexity estimate: {0}'.format(k)
+    print '  Reading graph {0}'.format(args.input)
+    g = nx.read_graphml(args.input)
+    print '  Graph contained {0} nodes and {1} edges'.format(g.order(), g.size())
 
-elif args.method == 'eigh':
-    try:
-        H = eigen_entropy(g, args.scale, weight)
-    except RuntimeError as er:
-        print er
-        H = None
-    print 'Eigen value entropy: {0}'.format(H)
+    # set weight parameters for edges.
+    # this is necessary if we want the default to be weighted but still provide
+    # users the option for equal weighting.
+    weight = None if args.weight.lower() == 'none' else args.weight
 
-elif args.method == 'eigp':
-    try:
-        P = eigen_product(g, args.scale, weight)
-    except RuntimeError as er:
-        P = None
-    print 'Eigen value entropy: {0}'.format(P)
+    result = {'method': args.method, 'value': None}
 
-elif args.method == 'eigip':
-    try:
-        IP = inverse_eigen_product(g, args.scale, weight)
-    except RuntimeError as er:
-        IP = None
-    print 'Eigen value entropy: {0}'.format(IP)
+    if args.method == 'kolmo':
+        print 'Determining adjacency matrix ...'
+        g_adj = nx.adjacency_matrix(g)
+        g_adj = g_adj.todense()
+
+        # convert the adjacency matrix (which might be weighted) into a binary string.
+        # where 0 no connection, 1 connection with weight > 0.
+        print 'Converting adjacency matrix to binary string representation ...'
+        g_str = ''.join(map(str, g_adj.flatten().astype(bool).astype(int).tolist()[0]))
+
+        try:
+            result['value'] = kolmogorov(g_str)
+        except RuntimeError as er:
+            print er
+
+    elif args.method == 'eigh':
+        try:
+            result['value'] = eigen_entropy(g, args.scale, weight)
+        except RuntimeError as er:
+            print er
+
+    elif args.method == 'eigp':
+        try:
+            result['value'] = eigen_product(g, args.scale, weight)
+        except RuntimeError as er:
+            print er
+
+    elif args.method == 'eigip':
+        try:
+            result['value'] = inverse_eigen_product(g, args.scale, weight)
+        except RuntimeError as er:
+            print er
+
+    write_output(args.output, result, args.yaml)
