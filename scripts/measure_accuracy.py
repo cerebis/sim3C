@@ -10,7 +10,9 @@ best_order = []
 num_strains = 0
 num_samples = 0
 true_sites = dict()
-site_ids = dict()
+site_ids = list()
+ref_alleles = list()
+snv_alleles = list()
 
 alpha_index = {'A':0,'C':1,'G':2,'T':3}
 
@@ -24,6 +26,8 @@ def parse_truth(truth_filename):
 
 def parse_sites(sites_filename):
     global site_ids
+    global ref_alleles
+    global snv_alleles
     global num_sites
     global num_samples
     global num_strains
@@ -36,15 +40,15 @@ def parse_sites(sites_filename):
             num_samples = int(line[3:])
         if line[0:3] == "S<-":
             num_strains = int(line[3:])
-        if not line[0:7] == "siteids":
-            continue
-        line = line[13:]
-        line = line[:-1]
-        d = line.split(",")
-        for i in range(len(d)):
-            site_ids[i]=d[i]
-
-    print "parsed " + str(len(site_ids)) + " site ids\n"
+        if line.startswith("#refalleles"):
+            dd = line[:-1].split("c(")[1]
+            ref_alleles = dd.split(",")
+        if line.startswith("#varalleles"):
+            dd = line[:-1].split("c(")[1]
+            snv_alleles = dd.split(",")
+        if line.startswith("#siteids"):
+            dd = line[:-1].split("c(")[1]
+            site_ids = dd.split(",")
 
 def parse_bpnmf(bpnmf_filename):
     bpnmf_file = open(bpnmf_filename)
@@ -60,12 +64,12 @@ def parse_bpnmf(bpnmf_filename):
         if ll < 0:
             continue
         d = line.split(",")
-        for i in range(len(alpha_index)):
-            for s in range(num_strains):
-                begin = num_samples + 1 + num_sites * num_strains * i + num_sites * s
-                end = begin + num_sites
-                for j in range(begin,end):
-                    tip_partials[i][s][j-begin] += float(d[j])
+        for s in range(num_strains):
+            begin = num_samples * num_strains + 1 + num_sites * s
+            end = begin + num_sites
+            for j in range(begin,end):
+                tip_partials[alpha_index[ref_alleles[j-begin]]][s][j-begin] += 1-float(d[j])
+                tip_partials[alpha_index[snv_alleles[j-begin]]][s][j-begin] += float(d[j])
 
         # normalize to a tip partial distribution
         for s in range(num_strains):
@@ -120,7 +124,7 @@ def compute_accuracy( order ):
                 ssd += pow(inferred[i][s][j]-truth[i], 2)
             dist += ssd
 
-    dist = pow(dist, 0.5)
+    dist = pow(dist/(len(order)*num_sites), 0.5)
     if dist < best_dist:
         best_dist = dist
         best_order = order
@@ -141,11 +145,11 @@ if __name__ == '__main__':
     parse_sites(args.sites)
     inferred = parse_bpnmf(args.bpnmf)
     true_sites = parse_truth(args.truth)
-    print "len ts " + str(len(true_sites))
-    print "len inferred[0] " + str(len(inferred[0]))
+    print "number of true variant sites " + str(len(true_sites))
+    print "variant sites found " + str(num_sites)
     permuter(dict(), [])
     print "Best ordering found is " + ",".join(map(str,best_order))
-    print "Best distance is " + str(best_dist)
+    print "Best RMSE is " + str(best_dist)
 
     t = -1
     for s in best_order:
