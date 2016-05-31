@@ -12,7 +12,43 @@ import re
 import os
 
 lofreq = "lofreq"
-alphabet = ['A','C','G','T']
+num_strains = 0
+alpha_index = {'A':0,'C':1,'G':2,'T':3}
+ref_alleles = list()
+snv_alleles = list()
+
+def parse_bpnmf(bpnmf_filename):
+    bpnmf_file = open(bpnmf_filename)
+    global num_strains
+    # init 2D array of tip partials
+    tip_partials = [[[0 for x in range(num_sites)] for s in range(num_strains)] for x in range(len(alpha_index))]
+
+    ll = -2 # skip the first line (csv header)
+    for line in bpnmf_file:
+        if line.startswith("#"):
+            continue 
+        ll += 1
+        if ll < 0:
+            continue
+        d = line.split(",")
+        for s in range(num_strains):
+            begin = num_samples * num_strains + 1 + num_sites * s
+            end = begin + num_sites
+            for j in range(begin,end):
+                tip_partials[alpha_index[ref_alleles[j-begin]]][s][j-begin] += 1-float(d[j])
+                tip_partials[alpha_index[snv_alleles[j-begin]]][s][j-begin] += float(d[j])
+
+        # normalize to a tip partial distribution
+        for s in range(num_strains):
+            for j in range(num_sites):
+                m = 0
+                for i in range(len(alpha_index)):
+                    m = m + tip_partials[i][s][j]
+                for i in range(len(alpha_index)):
+                    tip_partials[i][s][j] = tip_partials[i][s][j] / m
+
+    return tip_partials
+
 
 # parse the command-line
 if len(sys.argv)<5:
@@ -24,8 +60,6 @@ ref_fa = sys.argv[3]
 num_samples = len(sys.argv) - 4
 
 depths = dict()
-for a in alphabet:
-    depths[a] = dict()
 variant_sites = dict()
 found = dict()
 
@@ -35,6 +69,7 @@ found = dict()
 #
 for i in range(num_samples):
     found[i] = dict()
+    depths[i] = dict()
     cur_vcf = os.path.join(out_dir, str(i) + ".vcf")
     lofreq_cmd = lofreq + " call " + " -C 2 -f " + ref_fa + " -o tmp.vcf " + sys.argv[i+4] 
     print lofreq_cmd
@@ -55,23 +90,25 @@ for i in range(num_samples):
         d = line.split("\t")
         if not d[6].startswith("PASS"):
             continue    # didnt pass filters
-        locus = d[0] + "\t" + d[1]  # chrom & site
         mo = re.search('DP4=.+,.+,(.+),(.+)', d[7])
         mo1 = int(mo.group(1))
         mo2 = int(mo.group(2))
         if(mo1 < 1 or mo2 < 1):
             continue    # variant not observed on both strands. unreliable.
         m = re.search('DP=(.+);AF=(.+);SB', d[7])
-        vac = int(float(m.group(1)) * float(m.group(2)))
-        if not locus in depths[alphabet[0]]:
-            for a in alphabet:
-                depths[a][locus] = dict()
-                for j in range(num_samples):
-                    depths[a][locus][j] = 0
-        depths[d[4]][locus][i] = vac
-        depths[d[3]][locus][i] = int(m.group(1)) - vac
-        variant_sites[locus]=d[3] # store the ref allele
-        found[i][locus] = 1
+        vac = round(float(m.group(1)) * float(m.group(2)))
+
+        chromo = d[0]
+        site = int(d[1])
+
+        if not chromo in depths[i]:
+            depths[i][chromo] = dict()
+            found[i][chromo] = dict()
+        if not chromo in variant_sites:
+            variant_sites[chromo] = dict()
+        depths[i][chromo][site] = [m.group(1), int(vac)]
+        variant_sites[chromo][site]=[d[3],d[4]] # store the ref & variant allele
+        found[i][chromo][site] = 1
 
 for i in range(num_samples):
     # get the depths for samples without a variant allele at the site
@@ -79,43 +116,47 @@ for i in range(num_samples):
     pileup_file = open(cur_pileup)
     for line in pileup_file:
         d = line.split("\t")
-        locus = d[0] + "\t" + d[1]
-        if locus in variant_sites and not locus in found[i]:
-            ra = variant_sites[locus]
-            print "Adding depth " + d[3] + " " + " for " + ra + " at locus " + locus
-            depths[ra][locus][i] = d[3]
+        chromo = d[0]
+        if not chromo in depths[i]:
+            depths[i][chromo] = dict()
+        site = int(d[1])
+        if site in variant_sites[chromo] and not site in found[i][chromo]:
+            depths[i][chromo][site] = [d[3],0]
 
-print "Done hunting for missing depths"
     
 ##
 # write out a file with SNVs and sample count for Bayesian PNMF
 #
-num_sites = len(variant_sites)
+num_sites = 0
+for chromo in variant_sites:
+    num_sites += len(variant_sites[chromo])
 snv_filename = os.path.join(out_dir, "snv_file.data.R")
 snv_file = open(snv_filename, "w")
 snv_file.write("U<-" + str(num_sites) + "\n")  # number of sites
 snv_file.write("T<-" + str(num_samples) + "\n")  # number of time points
 snv_file.write("S<-" + str(num_strains) + "\n")  # number of time points
-nota = "nota <- c("
-notc = "notc <- c("
-notg = "notg <- c("
-nott = "nott <- c("
-siteids = "siteids <- c("
+obs = "observations <- c("
+muts = "mutations <- c("
+siteids = "#siteids <- c("
+refa = "#refalleles <- c("
+vara = "#varalleles <- c("
 sepchar = ""
-for site in variant_sites:
-    sid = site.split("\t")
-    siteids = siteids + sepchar + sid[1]
-    for i in range(num_samples):
-        nota = nota + sepchar + str(depths['A'][site][i])
-        notc = notc + sepchar + str(depths['C'][site][i])
-        notg = notg + sepchar + str(depths['G'][site][i])
-        nott = nott + sepchar + str(depths['T'][site][i])
-        sepchar = ","
+for chromo in variant_sites:
+    for site in sorted(variant_sites[chromo].keys()):
+        siteids = siteids + sepchar + str(site)
+        refa = refa + sepchar + str(variant_sites[chromo][site][0])
+        vara = vara + sepchar + str(variant_sites[chromo][site][1])
+        ref_alleles.append(variant_sites[chromo][site][0])
+        snv_alleles.append(variant_sites[chromo][site][1])
+        for i in range(num_samples):
+            obs = obs + sepchar + str(depths[i][chromo][site][0])
+            muts = muts + sepchar + str(depths[i][chromo][site][1])
+            sepchar = ","
 
-snv_file.write(nota+")\n")
-snv_file.write(notc+")\n")
-snv_file.write(notg+")\n")
-snv_file.write(nott+")\n")
+snv_file.write(obs+")\n")
+snv_file.write(muts+")\n")
+snv_file.write(refa+")\n")
+snv_file.write(vara+")\n")
 snv_file.write(siteids+")\n")
 snv_file.close()
 
@@ -124,7 +165,7 @@ snv_file.close()
 # run the Poisson NMF
 #
 bpnmf_filename = os.path.join(out_dir, "decon.csv")
-bpnmf_cmd = "genotypes_acgt variational output_samples=100 algorithm=fullrank data file=" + snv_filename + " output file=" + bpnmf_filename
+bpnmf_cmd = "genotypes2 variational output_samples=100 tol_rel_obj=0.001 iter=25000 algorithm=fullrank data file=" + snv_filename + " output file=" + bpnmf_filename
 os.system(bpnmf_cmd)
 #os.remove(snv_filename)
 
@@ -136,32 +177,7 @@ bpnmf_file = open(bpnmf_filename)
 beast_file = open(beast_filename, "w")
 
 # init 2D array of tip partials
-tip_partials = [[[0 for x in range(num_sites)] for s in range(num_strains)] for x in range(len(alphabet))]
-
-ll = -2 # skip the first line (csv header)
-for line in bpnmf_file:
-    if line.startswith("#"):
-        continue 
-    ll += 1
-    if ll < 0:
-        continue
-    d = line.split(",")
-    for i in range(len(alphabet)):
-        for s in range(num_strains):
-            begin = num_samples + 1 + num_sites * num_strains * i + num_sites * s
-            end = begin + num_sites
-            for j in range(begin,end):
-                tip_partials[i][s][j-begin] += float(d[j])
-
-    # normalize to a tip partial distribution
-    for s in range(num_strains):
-        for j in range(num_sites):
-            m = 0
-            for i in range(len(alphabet)):
-#                m = tip_partials[i][s][j] if tip_partials[i][s][j] > m else m 
-                m = m + tip_partials[i][s][j]
-            for i in range(len(alphabet)):
-                tip_partials[i][s][j] = tip_partials[i][s][j] / m
+tip_partials = parse_bpnmf(bpnmf_filename)
 
 beast_file.write( """<?xml version="1.0" standalone="yes"?>
 
@@ -185,7 +201,7 @@ beast_file.write( """
 # write to xml
 for s in range(num_strains):
     beast_file.write("\t\t<partiallyresolvedsequence>\n")
-    for i in range(len(alphabet)):
+    for i in range(len(alpha_index)):
         beast_file.write("\t\t\t<parameter value=\"")
         beast_file.write(" ".join(map(str,tip_partials[i][s])))
         beast_file.write("\"/>\n")
@@ -381,4 +397,17 @@ beast_file.write( """
 """);
 
 beast_file.close()
+
+ra_index = {0:'A',1:'C',2:'G',3:'T'}
+strains_file = open("strains.fa", "w")
+for s in range(num_strains):
+    strains_file.write("strain_" + str(s) + "\n")
+    cur_seq = ""
+    for j in range(num_sites):
+        amax = "-"
+        for i in range(len(alpha_index)):
+            if tip_partials[i][s][j] > 0.8:
+                amax = ra_index[i]
+        cur_seq += amax
+    strains_file.write(cur_seq + "\n")
 
