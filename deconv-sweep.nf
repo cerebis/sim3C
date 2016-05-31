@@ -166,10 +166,10 @@ process Accuracy {
     set file(snvbpnmf), file(snv_file), file(tree_file), oname from deconvolution
 
     output:
-    set file("${oname}.truth.tsv") into truth
+    set file("${oname}.truth.report.txt") into truth
 
     """
-    measure_accuracy.py --bpnmf=${snvbpnmf} --truth=${truthfile}
+    measure_accuracy.py --bpnmf=${snvbpnmf} --truth=${truthfile} --sites=${snv_file} > ${oname}.truth.report.txt
     """
 }
 
