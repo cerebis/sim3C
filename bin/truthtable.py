@@ -55,6 +55,12 @@ class AssignmentEncoder(json.JSONEncoder):
         return obj.__dict__
 
 
+class SetEncoder(json.JSONEncoder):
+
+    def default(self, obj):
+        return list(obj)
+
+
 class Assignment:
     """
     Represents the assignment of an object to 1 or many classes
@@ -436,7 +442,7 @@ class TruthTable(object):
         :param pathname: the output path
         :param fmt: json, yaml or delim
         """
-        TruthTable._write_dict(self.hard(), pathname, fmt=fmt)
+        TruthTable._write_dict(self.hard(), pathname, fmt=fmt, encoder=SetEncoder)
 
     @staticmethod
     def _write_dict(d, pathname, fmt='json', sep='\t', encoder=None):
