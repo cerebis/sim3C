@@ -109,9 +109,13 @@ if __name__ == '__main__':
 
     ttable = parse_psl(args.alignment, min_id=args.min_id, cover_thres=args.min_cov)
 
-    if not args.simple:
+    if args.simple:
+        import json
         # Reduce to hard 1:1 mapping
-        ttable.write_hard(args.output, fmt=args.ofmt)
+        d = ttable.hard()
+        with open(args.output, 'w') as h_out:
+            json.dump(d, h_out, indent=1)
+        #ttable.write_hard(args.output, fmt=args.ofmt)
 
     else:
         # Keep all assignments of queries to references.
