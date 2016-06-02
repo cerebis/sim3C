@@ -16,16 +16,16 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
-
+import static Globals.*
 class Globals {
-    static String separator = '%'
+    static final String SEPARATOR = '%'
 }
 helper = this.class.classLoader.parseClass(new File('Helper.groovy')).newInstance()
 duplicator = this.class.classLoader.parseClass(new File('ChannelDuplicator.groovy')).newInstance()
 
 // truth tables
-truths = Channel.from(file('out/*.truth.yaml'))
-        .map { f -> [f.name[0..-12], f] }
+truths = Channel.from(file('out/*.truth'))
+        .map { f -> [f.name[0..-7], f] }
 truths = duplicator.createFrom(truths)
 
 // contig graphs
@@ -107,7 +107,7 @@ louvsoft_cl.map { f-> [helper.dropSuffix(f.name), f]}
     .mix(oclustr_cl.map{ f-> [helper.dropSuffix(f.name), f]})
     .subscribe{println it}
 
-/*bc_sweep = truths.onCopy().cross(louvsoft_cl.map { f-> [helper.dropSuffix(f.name), f]}
+bc_sweep = truths.onCopy().cross(louvsoft_cl.map { f-> [helper.dropSuffix(f.name), f]}
     .mix(louvhard_cl.map{ f-> [helper.dropSuffix(f.name), f]})
     .mix(oclustr_cl.map{ f-> [helper.dropSuffix(f.name), f]})
     .map { t -> [ helper.removeLevels(t[0],1), *t ] })
@@ -148,6 +148,7 @@ process AssemblyStats {
     """
 }
 
+/*
 cluster_bc.map { f -> [helper.dropSuffix(f.name), f] }
     .subscribe{println it}
 */
