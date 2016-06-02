@@ -427,7 +427,7 @@ class TruthTable(object):
         :param pathname: the output path
         :param fmt: json or yaml
         """
-        TruthTable._write_dict(self.asgn_dict, pathname, fmt=fmt)
+        TruthTable._write_dict(self.asgn_dict, pathname, fmt=fmt, encoder=AssignmentEncoder)
 
     def write_hard(self, pathname, fmt='json'):
         """
@@ -439,7 +439,7 @@ class TruthTable(object):
         TruthTable._write_dict(self.hard(), pathname, fmt=fmt)
 
     @staticmethod
-    def _write_dict(d, pathname, fmt='json', sep='\t'):
+    def _write_dict(d, pathname, fmt='json', sep='\t', encoder=None):
         """
         Serialize a plain dict to file
         :param d: dict to serialize
@@ -449,7 +449,7 @@ class TruthTable(object):
         """
         with open(pathname, 'w') as h_out:
             if fmt == 'json':
-                json.dump(d, h_out, cls=AssignmentEncoder, indent=1)
+                json.dump(d, h_out, cls=encoder, indent=1)
             elif fmt == 'yaml':
                 yaml.dump(d, h_out, default_flow_style=False, width=YAML_WIDTH)
             elif fmt == 'delim':
