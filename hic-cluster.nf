@@ -43,7 +43,7 @@ process LouvSoft {
     set oname, file('g.graphml') from gr_sweep
 
     output:
-    set file("${oname}.louv-soft.cl") into louvsoft_cl
+    set file("${oname}${SEPARATOR}louv-soft.cl") into louvsoft_cl
 
     """
     louvain_cluster.py --otype soft --ofmt mcl g.graphml "${oname}.louv-soft.cl"
@@ -60,7 +60,7 @@ process LouvHard {
     set oname, file('g.graphml') from gr_sweep
 
     output:
-    set file("${oname}.louv-hard.cl") into louvhard_cl
+    set file("${oname}${SEPARATOR}louv-hard.cl") into louvhard_cl
 
     """
     louvain_cluster.py --otype hard --ofmt mcl g.graphml "${oname}.louv-hard.cl"
@@ -77,7 +77,7 @@ process Oclustr {
     set oname, file('g.graphml') from gr_sweep
 
     output:
-    set file("${oname}.oclustr.cl") into oclustr_cl
+    set file("${oname}${SEPARATOR}oclustr.cl") into oclustr_cl
 
     """
     oclustr.py -f mcl g.graphml "${oname}.oclustr.cl"
@@ -105,7 +105,7 @@ process GraphStats {
 louvsoft_cl.map { f-> [helper.dropSuffix(f.name), f]}
     .mix(louvhard_cl.map{ f-> [helper.dropSuffix(f.name), f]})
     .mix(oclustr_cl.map{ f-> [helper.dropSuffix(f.name), f]})
-    .subscribe{println it}
+    //.subscribe{println it}
 
 bc_sweep = truths.onCopy().cross(louvsoft_cl.map { f-> [helper.dropSuffix(f.name), f]}
     .mix(louvhard_cl.map{ f-> [helper.dropSuffix(f.name), f]})
