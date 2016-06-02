@@ -67,7 +67,9 @@ def keyedFrom(path) {
 g_stats = keyedFrom('out/*.graphml')
     .flatCross(keyedFrom('out/*.gstat'))
     .flatCross(keyedFrom('out/*.geigh'))
+    .subscribe{println it}
 
+/*
 cl_stats = keyedFrom('out/*.cl')
     .flatCross(keyedFrom('out/*.bc'))
     .popLevels(1)
@@ -100,3 +102,4 @@ all_stats = all_stats
 fout = file('all_stats.json')
 fout << new JsonBuilder(all_stats.val).toString()
 fout << '\n'
+*/
