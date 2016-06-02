@@ -94,6 +94,8 @@ def parse_psl(psl_file, min_id=0.90, cover_thres=0.96):
 if __name__ == '__main__':
 
     parser = argparse.ArgumentParser(description='Determine the location of query sequences on the reference')
+    parser.add_argument('--ofmt', choices=['yaml', 'json'], default='json',
+                        help='Output format [json]')
     parser.add_argument('--simple', default=False, action='store_true',
                         help='Generate a simple 1:1 mapping (hard) truth table')
     parser.add_argument('--min-id', type=float, default=0.90,
@@ -109,8 +111,8 @@ if __name__ == '__main__':
 
     if not args.simple:
         # Reduce to hard 1:1 mapping
-        ttable.write_hard(args.output, fmt='json')
+        ttable.write_hard(args.output, fmt=args.ofmt)
 
     else:
         # Keep all assignments of queries to references.
-        ttable.write(args.output, fmt='json')
+        ttable.write(args.output, fmt=args.ofmt)
