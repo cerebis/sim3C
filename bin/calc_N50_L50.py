@@ -38,14 +38,15 @@ def calculate_N50_and_L50(lengths):
 
 if __name__ == '__main__':
     import argparse
+    import pipeline_utils as pu
 
     def formatter(prog): return argparse.HelpFormatter(prog, width=100, max_help_position=100)
     parser = argparse.ArgumentParser(description='Calculate N50 and L50 from a set of sequences',
                                      formatter_class=formatter)
     parser.add_argument('--if', dest='seq_fmt', choices=['fasta', 'fastq'], default='fasta',
                         help='Input sequence format [fasta]')
-    parser.add_argument('--yaml', action='store_true', default=False,
-                        help='Write YAML format')
+    parser.add_argument('--ofmt', choices=['plain', 'yaml', 'json'], default='plain',
+                        help='Output format')
     parser.add_argument('input', help='Input sequence file')
     parser.add_argument('output', nargs="?", type=argparse.FileType('w'), default='-',
                         help='Output file')
@@ -57,10 +58,7 @@ if __name__ == '__main__':
     # report N50 and L50
     stats = calculate_N50_and_L50(lengths)
 
-    if args.yaml:
-        import yaml
-        yaml.dump(stats, args.output, default_flow_style=False)
-    else:
+    if args.ofmt == 'plain':
         args.output.write('{N50}\t{L50}\n'.format(**stats))
-
-
+    else:
+        pu.write_to_stream(args.output, stats, fmt=args.ofmt)

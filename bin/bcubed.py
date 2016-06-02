@@ -101,32 +101,32 @@ def bcubed_F(td, cd, weights=None):
 if __name__ == '__main__':
 
     import truthtable as tt
-    import pipeline_utils
+    import pipeline_utils as pu
     import argparse
     import sys
 
-    def write_msg(filename, msg):
-        if filename is None:
-            print msg
-        else:
-            with open(filename, 'w') as hout:
-                hout.write(msg + '\n')
+    def write_msg(stream, msg):
+        stream.write(msg + '\n')
 
     parser = argparse.ArgumentParser(description='Calculate extended bcubed metric')
-    parser.add_argument('truth', metavar='TRUTH', help='Truth table (yaml format)')
+    parser.add_argument('truth', metavar='TRUTH', help='Truth table (json format)')
     parser.add_argument('pred', metavar='PREDICTION', help='Prediction table (mcl format)')
-    parser.add_argument('output', metavar='OUTPUT',nargs='?', type=argparse.FileType('w'),
+    parser.add_argument('output', metavar='OUTPUT', nargs='?', type=argparse.FileType('w'),
                         default=sys.stdout, help='Output file (stdout)')
-    parser.add_argument('-w','--weighted', default=False, action='store_true', help='Use truth object weights')
+    parser.add_argument('--tfmt', choices=['json', 'yaml'], default='json',
+                        help='Data format of truth table [json]')
+    parser.add_argument('--ofmt', choices=['plain', 'json', 'yaml'], default='plain',
+                        help='Output format [plain]')
+    parser.add_argument('-w', '--weighted', default=False, action='store_true', help='Use truth object weights')
     parser.add_argument('-v', '--verbose', action='store_true', default=False, help='Verbose output')
     parser.add_argument('--hard', action='store_true', default=False, help='Extract hard truth prior to analysis')
     args = parser.parse_args()
 
     try:
         # read truth and convert to basic soft table
-        truth = tt.read_truth(args.truth)
+        truth = tt.read_truth(args.truth, args.tfmt)
         if len(truth) == 0:
-            raise RuntimeWarning('Truth table contains no assignments: {0}'.format(args.truth[0]))
+            raise RuntimeError('Truth table contains no assignments: {0}'.format(args.truth))
 
         # collect object weights if requested
         weights = truth.get_weights() if args.weighted else None
@@ -135,24 +135,22 @@ if __name__ == '__main__':
             print 'Truth Statistics'
             truth.print_tally()
 
-        if args.hard:
-            truth = truth.hard(True)
-        else:
-            truth = truth.soft(True)
+        # convert to a plain dict representation, either soft (1:*) or hard (1:1)
+        truth = truth.hard(True) if args.hard else truth.soft(True)
 
         # read clustering and convert to basic soft table
         clustering = tt.read_mcl(args.pred)
         if len(clustering) == 0:
-            raise RuntimeWarning('Clustering contains no assignments: {0}'.format(args.pred[0]))
+            raise RuntimeError('Clustering contains no assignments: {0}'.format(args.pred))
 
         if args.verbose:
             print 'Clustering Statistics'
             clustering.print_tally()
         clustering = clustering.soft(True)
 
-    except RuntimeWarning as wn:
-        write_msg(args.output, wn.message)
-        sys.exit(0)
+    except RuntimeError as er:
+        print er.message
+        sys.exit(1)
 
     result = bcubed_F(truth, clustering, weights)
-    pipeline_utils.write_to_stream(args.output, result)
+    pu.write_to_stream(args.output, result, fmt=args.ofmt)

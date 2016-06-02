@@ -83,7 +83,7 @@ process Aggregate {
     set val(method), val(oname), stdout into all_stats
     
     """
-    aggregate.py gstat geigh bc
+    aggregate.py --fmt gstat geigh bc
     """
 }
 

@@ -22,6 +22,8 @@ import numpy as np
 import copy
 import numpy
 import yaml
+import json
+import pipeline_utils
 
 
 YAML_WIDTH = 1000
@@ -38,6 +40,19 @@ def order_rep(dumper, data):
 
 
 yaml.add_representer(OrderedDict, order_rep)
+
+
+class AssignmentEncoder(json.JSONEncoder):
+    """
+    Simple JSON Encoder which converts an Asignment to a dictionary representation
+    """
+    def default(self, obj):
+        """
+        Members to dictionary
+        :param obj: instance to convert
+        :return: dictionary of members
+        """
+        return obj.__dict__
 
 
 class Assignment:
@@ -95,8 +110,7 @@ def assignment_rep(dumper, data):
     :param data:
     :return: representer
     """
-    memb_map = {'weight': data.weight, 'mapping': data.mapping}
-    return dumper.represent_mapping(u'tag:yaml.org,2002:map', memb_map, flow_style=True)
+    return dumper.represent_mapping(u'tag:yaml.org,2002:map', data.__dict__, flow_style=True)
 
 yaml.add_representer(Assignment, assignment_rep)
 
@@ -348,10 +362,12 @@ class TruthTable(object):
         if weight:
             self.asgn_dict[key].weight = weight
 
-    def update_from_yaml(self, yd):
+    def update_from_serialized(self, yd):
         """
-        Initialise a TruthTable from a generic dict of dicts object stored
-        in YAML format. We chose to avoid a custom class here for inter-codebase
+        Initialise a TruthTable from a generic dict of dicts object most likely
+        retrieved from a serialized object.
+
+        We chose to avoid a custom class here for inter-codebase
         portability.
 
         :param yd: generic yaml object, dict of dicts
@@ -405,45 +421,62 @@ class TruthTable(object):
             vec[k] = hd[k]
         return vec
 
-    @staticmethod
-    def _write_dict(dt, pathname):
-        with open(pathname, 'w') as h_out:
-            for obj, clz in dt.iteritems():
-                h_out.write('{0} {1}\n'.format(obj, ' '.join(sorted(clz))))
-
-    def write(self, pathname):
+    def write(self, pathname, fmt='json'):
         """
-        Write the full table in a simple (no custom classes) YAML format"
+        Write the full table in either JSON or YAML format"
         :param pathname: the output path
+        :param fmt: json or yaml
         """
-        with open(pathname, 'w') as h_out:
-            yaml.dump(self.asgn_dict, h_out, default_flow_style=False, width=YAML_WIDTH)
+        TruthTable._write_dict(self.asgn_dict, pathname, fmt=fmt)
 
-    def write_soft(self, pathname):
-        """
-        Write a plain dictionary representation in YAML format.
-        :param pathname: the output path
-        """
-        TruthTable._write_dict(self.soft(), pathname)
-
-    def write_hard(self, pathname):
+    def write_hard(self, pathname, fmt='json'):
         """
         Write a plain dictionary representation of only the most significant
         object:class assignments.
         :param pathname: the output path
+        :param fmt: json, yaml or delim
         """
-        TruthTable._write_dict(self.hard(), pathname)
+        TruthTable._write_dict(self.hard(), pathname, fmt=fmt)
+
+    @staticmethod
+    def _write_dict(d, pathname, fmt='json', sep='\t'):
+        """
+        Serialize a plain dict to file
+        :param d: dict to serialize
+        :param pathname: output path
+        :param fmt: json, yaml or delim
+        :param sep: delimited format separator
+        """
+        with open(pathname, 'w') as h_out:
+            if fmt == 'json':
+                json.dump(d, h_out, cls=AssignmentEncoder, indent=1)
+            elif fmt == 'yaml':
+                yaml.dump(d, h_out, default_flow_style=False, width=YAML_WIDTH)
+            elif fmt == 'delim':
+                for qry, sbjs in d.iteritems():
+                    line = [str(qry)] + [str(si) for si in sorted(sbjs)]
+                    h_out.write('{0}\n'.format(sep.join(line)))
+            else:
+                raise RuntimeError('Unknown format requested [{0}]'.format(fmt))
 
 
-def read_truth(pathname):
+def read_truth(pathname, fmt='json'):
     """
     Read a TruthTable in YAML format
     :param pathname: path to truth table
+    :param fmt: json or yaml
     :return: truth table
     """
     with open(pathname, 'r') as h_in:
         tt = TruthTable()
-        tt.update_from_yaml(yaml.load(h_in))
+        if fmt == 'json':
+            d = pipeline_utils.json_load_byteified(h_in)
+        elif fmt == 'yaml':
+            d = yaml.load(h_in)
+        else:
+            raise RuntimeError('Unsupported format requested [{0}]'.format(format))
+
+        tt.update_from_serialized(d)
         return tt
 
 
@@ -556,5 +589,5 @@ def simulate_error(tt, p_mut, p_indel, extra_symb=()):
                 mut_dict[o_i].mapping[c_add] = ins_prop
 
     mut_tt = TruthTable()
-    mut_tt.update_from_yaml(mut_dict)
+    mut_tt.update_from_serialized(mut_dict)
     return mut_tt

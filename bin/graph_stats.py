@@ -17,7 +17,7 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """
-
+import pipeline_utils as pu
 import networkx as nx
 import community as com
 import numpy as np
@@ -29,8 +29,8 @@ import os
 def formatter(prog): return argparse.HelpFormatter(prog, width=100, max_help_position=100)
 
 parser = argparse.ArgumentParser(description='Graph statistics', formatter_class=formatter)
-parser.add_argument('--yaml', action='store_true', default=False,
-                    help='Write YAML format')
+parser.add_argument('--ofmt', choices=['plain', 'json', 'yaml'], default='plain',
+                    help='Output format [json]')
 parser.add_argument('--excl-self', action='store_true', default=False,
                     help='Exclude self-loops')
 parser.add_argument('input', help='GraphML format graph file to analyse')
@@ -93,9 +93,8 @@ result['mean_deg'] = float(np.mean(nx.degree(g).values()))
 # median degree
 result['median_deg'] = int(np.median(nx.degree(g).values()))
 
-if args.yaml:
-    import yaml
-    yaml.dump(result, args.output, default_flow_style=False)
-else:
+if args.ofmt == 'plain':
     args.output.write('{0}\n'.format('\t'.join(result.keys())))
     args.output.write('{0}\n'.format('\t'.join([str(v) for v in result.values()])))
+else:
+    pu.write_to_stream(args.output, result, fmt=args.ofmt)

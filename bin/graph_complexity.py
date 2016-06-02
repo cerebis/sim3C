@@ -17,10 +17,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """
-
-import numpy as np
+import json
 import networkx as nx
+import numpy as np
+import yaml
 import zlib
+
 
 def kolmogorov(s):
     """
@@ -93,24 +95,25 @@ def eigen_entropy(g, s=1.0, edge_weight='weight'):
 if __name__ == '__main__':
     import argparse
 
-    def write_output(out_h, result, is_yaml):
+    def write_output(out_h, d, fmt='json'):
         """
         Write result to stdout or file in specified format
         :param out_h: output stream
-        :param result: result of computation
-        :param is_yaml: write YAML format
+        :param d: result of computation
+        :param fmt: output format yaml | json | plain
         """
-        if is_yaml:
-            import yaml
-            yaml.dump(result, out_h, default_flow_style=False)
-        else:
-            args.output.write('{method} {value}\n'.format(**result))
+        if fmt == 'yaml':
+            yaml.dump(d, out_h, default_flow_style=False)
+        elif fmt == 'json':
+            json.dump(d, out_h, indent=1)
+        elif fmt == 'plain':
+            args.output.write('{method} {value}\n'.format(**d))
 
     def formatter(prog): return argparse.HelpFormatter(prog, width=100, max_help_position=100)
 
     parser = argparse.ArgumentParser(description='Graph complexity estimation', formatter_class=formatter)
-    parser.add_argument('--yaml', action='store_true', default=False,
-                        help='Write YAML format')
+    parser.add_argument('--ofmt', choices=['plain', 'json', 'yaml'], default='plain',
+                        help='Output format [plain]')
     parser.add_argument('-s', '--scale', type=float, default=1.0,
                         help='Exponential scale factor [1.0]')
     parser.add_argument('-w', '--weight', default='weight',
@@ -166,4 +169,4 @@ if __name__ == '__main__':
         except RuntimeError as er:
             print er
 
-    write_output(args.output, result, args.yaml)
+    write_output(args.output, result, args.ofmt)

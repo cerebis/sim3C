@@ -30,7 +30,7 @@ truths = duplicator.createFrom(truths)
 
 // contig graphs
 graphs = Channel.from(file('out/*.graphml'))
-        .map { f -> [helper.dropSuffix(f.name), f] }
+        .map { f -> [helper.dropSuffix(f.name, '%'), f] }
 graphs = duplicator.createFrom(graphs)
 
 gr_sweep = graphs.onCopy()
@@ -97,12 +97,17 @@ process GraphStats {
     set file("${oname}.gstat"), file("${oname}.geigh") into graph_info
 
     """
-    graph_stats.py --yaml g.graphml "${oname}.gstat"
-    graph_complexity.py --yaml --method eigh g.graphml "${oname}.geigh"
+    graph_stats.py --ofmt json g.graphml "${oname}.gstat"
+    graph_complexity.py --ofmt json --method eigh g.graphml "${oname}.geigh"
     """
 }
 
-bc_sweep = truths.onCopy().cross(louvsoft_cl.map { f-> [helper.dropSuffix(f.name), f]}
+louvsoft_cl.map { f-> [helper.dropSuffix(f.name), f]}
+    .mix(louvhard_cl.map{ f-> [helper.dropSuffix(f.name), f]})
+    .mix(oclustr_cl.map{ f-> [helper.dropSuffix(f.name), f]})
+    .subscribe{println it}
+
+/*bc_sweep = truths.onCopy().cross(louvsoft_cl.map { f-> [helper.dropSuffix(f.name), f]}
     .mix(louvhard_cl.map{ f-> [helper.dropSuffix(f.name), f]})
     .mix(oclustr_cl.map{ f-> [helper.dropSuffix(f.name), f]})
     .map { t -> [ helper.removeLevels(t[0],1), *t ] })
@@ -116,27 +121,33 @@ process Bcubed  {
     set oname, file('clust'), file('truth') from bc_sweep
 
     output:
-    set file("${oname}.oclustr.bc") into oclustr_bc
+    set file("${oname}.bc") into cluster_bc
 
     """
-    bcubed.py truth clust "${oname}.oclustr.bc"
+    bcubed.py --tfmt json --ofmt json truth clust "${oname}.bc"
     """
 }
 
-contigs = Channel.from(file('out/*.contigs.fasta'))
-    .map { f -> [f.name[0..-15], f] }
+contigs = duplicator.createFrom(Channel.from(file('out/*.contigs.fasta'))
+    .map { f -> [f.name[0..-15], f] })
+
+contig_sweep = contigs.onCopy()
 
 process AssemblyStats {
     cache 'deep'
     publishDir params.output, mode: 'symlink', overwrite: 'true'
 
     input:
-    set oname, file('contigs.fa') from contigs
+    set oname, file('contigs.fa') from contig_sweep
 
     output:
     set file("${oname}.asmstat") into asm_stats
 
     """
-    calc_N50_L50.py --yaml contigs.fa "${oname}.asmstat"
+    calc_N50_L50.py --ofmt json contigs.fa "${oname}.asmstat"
     """
 }
+
+cluster_bc.map { f -> [helper.dropSuffix(f.name), f] }
+    .subscribe{println it}
+*/
