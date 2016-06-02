@@ -20,8 +20,9 @@
 /**
  * Include and initialise some utility classes
  */
+import static Globals.*
 class Globals {
-    static String separator = '%'
+    static final String SEPARATOR = '%'
 }
 helper = this.class.classLoader.parseClass(new File('Helper.groovy')).newInstance()
 duplicator = this.class.classLoader.parseClass(new File('ChannelDuplicator.groovy')).newInstance()
@@ -44,7 +45,7 @@ evo_sweep = Channel
         .spread([donor])
         .spread(alpha_BL)
         .spread(trees.values())
-        .map { it += it.collect { helper.safeString(it) }.join(Globals.separator) }
+        .map { it += it.collect { helper.safeString(it) }.join(SEPARATOR) }
 
 process Evolve {
     cache 'deep'
@@ -73,7 +74,7 @@ descendents = duplicator.createFrom(descendents)
 wgs_sweep = descendents.onCopy()
         .spread(tables.values())
         .spread(xfold)
-        .map{ it += tuple(it[0].name[0..-8], it[1].name, it[2]).join(Globals.separator) }
+        .map{ it += tuple(it[0].name[0..-8], it[1].name, it[2]).join(SEPARATOR) }
 
 process WGS_Reads {
     cache 'deep'
@@ -99,7 +100,7 @@ process WGS_Reads {
 hic_sweep = descendents.onCopy()
         .spread(tables.values())
         .spread(nhic)
-        .map{ it += tuple(it[0].name[0..-8], it[1].name, it[2]).join(Globals.separator) }
+        .map{ it += tuple(it[0].name[0..-8], it[1].name, it[2]).join(SEPARATOR) }
 
 process HIC_Reads {
     cache 'deep'
@@ -161,7 +162,7 @@ process Truth {
     set key, file('ref.fa'), file('contigs.fa'), oname from tr_sweep
 
     output:
-    file("${oname}.truth.yaml") into truth_tables
+    file("${oname}.truth") into truth_tables
 
     """
     if [ ! -e db.prj ]
@@ -170,7 +171,7 @@ process Truth {
     fi
 
     \$EXT_BIN/last/lastal -P 1 db contigs.fa | maf-convert psl > ctg2ref.psl
-    alignmentToTruth.py --afmt test --ofmt yaml ctg2ref.psl "${oname}.truth.yaml"
+    alignmentToTruth.py --ofmt json ctg2ref.psl "${oname}.truth"
     """
 }
 
@@ -188,7 +189,7 @@ hicmap_sweep = hic_reads
         .cross(a)
         .map { t -> [t[0][0], helper.product(t[0][1], t[1][1])] }
         .flatMap { t -> t[1] } 
-        .map { t -> [*t, (t[1].name[0..-15].split(Globals.separator) + t[0].name[0..-8].split(Globals.separator)[-1]).join(Globals.separator)  ] }
+        .map { t -> [*t, (t[1].name[0..-15].split(SEPARATOR) + t[0].name[0..-8].split(SEPARATOR)[-1]).join(SEPARATOR)  ] }
 
 process HiCMap {
     cache 'deep'

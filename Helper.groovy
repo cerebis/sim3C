@@ -17,6 +17,7 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 import java.nio.file.Path
+import static Globals.*
 
 class Helper {
     static def separators = /[ ,\t]/
@@ -63,11 +64,11 @@ class Helper {
 
     static String removeLevels(Path path, int n) {
         def name = path.toAbsolutePath().toString()
-        return name.split(Globals.separator)[0..-(n+1)].join(Globals.separator)
+        return name.split(SEPARATOR)[0..-(n+1)].join(SEPARATOR)
     }
 
     static String removeLevels(String name, int n) {
-        return name.split(Globals.separator)[0..-(n+1)].join(Globals.separator)
+        return name.split(SEPARATOR)[0..-(n+1)].join(SEPARATOR)
     }
 
     static Object[] product(A, B) {
