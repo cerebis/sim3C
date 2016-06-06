@@ -196,7 +196,7 @@ process HiCMap {
     set key, hic_reads, contigs, ancestor, donor, alpha, tree, profile, xfold, n3c from next
 
     output:
-    set file("${key}.hic2ctg*"), ancestor, donor, alpha, tree, profile, xfold, n3c into hicmap_out
+    set file("${key}.hic2ctg.bam"), ancestor, donor, alpha, tree, profile, xfold, n3c into hicmap_out
 
     """
     export PATH=\$EXT_BIN/a5/bin:\$PATH
@@ -211,13 +211,13 @@ process HiCMap {
 
 next = hicmap_out
     .map { it.flatten() }
-    .map { joiner(it, 2) }
-    
+    .map { joiner(it, 1) }
+
 process Graph {
     publishDir params.output, mode: 'copy', overwrite: 'true'
 
     input:
-    set key, hic_bam, hic_bai, ancestor, donor, alpha, tree, profile, xfold, n3c from next
+    set key, hic_bam, ancestor, donor, alpha, tree, profile, xfold, n3c from next
 
     output:
     set file("${key}.graphml"), ancestor, donor, alpha, tree, profile, xfold, n3c into graph_out
