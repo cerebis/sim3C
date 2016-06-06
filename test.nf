@@ -1,7 +1,28 @@
+/*
+ * meta-sweeper - for performing parametric sweeps of simulated
+ * metagenomic sequencing experiments.
+ * Copyright (C) 2016 "Matthew Z DeMaere"
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published
+ * by the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful, but
+ * WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
+
 import static Globals.*
 class Globals {
     static final String SEPARATOR = '-+-'
 }
+
+helper = this.class.classLoader.parseClass(new File('Helper.groovy')).newInstance()
 
 def absPath(path) {
     file(path)*.toAbsolutePath()
@@ -24,14 +45,24 @@ def select(row, elems) {
     row[elems]
 }
 
-trees = absPath('test/trees/*nwk')
-profiles = absPath('test/tables/*table')
-ancestor = [file('test/ancestor.fa')]
-donor = [file('test/donor.fa')]
-
-alpha_BL = [1,0.5]
-xfold = [1,2]
-n3c = [50000,100000]
+/* 
+ * Basic sweep collections
+ *
+ * These are set in the configuration file or on the command line.
+ *
+ * Explicit series must be quoted and delimited by commas, whereas wildcards
+ * can be passed to filesystem related variables.
+ *
+ * Eg. --trees /path/to/trees/*.nwk --alpha "1,2,3,4"
+ */
+ 
+trees = absPath(params.trees)
+profiles = absPath(params.profiles)
+ancestor = [file(params.ancestor)]
+donor = [file(params.donor)]
+alpha_BL = helper.stringToList(params.alpha)
+xfold = helper.stringToList(params.xfold)
+n3c = helper.stringToList(params.hic_pairs)
 
 
 next = Channel
@@ -42,6 +73,7 @@ next = Channel
     .map{ joiner(it) }
 
 process Evolve {
+    publishDir params.output, mode: 'copy', overwrite: 'true'
 
     input:
     set key, ancestor, donor, alpha, tree from next
@@ -67,6 +99,7 @@ next = next.spread(profiles)
     .map{ joiner(it, 1) }
     
 process WGS_Reads {
+    publishDir params.output, mode: 'copy', overwrite: 'true'
 
     input:
     set key, ref_seq, ancestor, donor, alpha, tree, profile, xfold from next
@@ -88,6 +121,7 @@ next = next.spread(profiles)
         .map { joiner(it, 1) }
 
 process HIC_Reads {
+    publishDir params.output, mode: 'copy', overwrite: 'true'
 
     input:
     set key, ref_seq, ancestor, donor, alpha, tree, profile, n3c from next
@@ -108,6 +142,7 @@ next = next
     .map{ joiner(it, 3) }
 
 process Assemble {
+    publishDir params.output, mode: 'copy', overwrite: 'true'
 
     input:
     set key, R1, R2, ref_seq, ancestor, donor, alpha, tree, profile, xfold from next
@@ -125,6 +160,7 @@ process Assemble {
 next = next.map { joiner(it, 2) }
 
 process Truth {
+    publishDir params.output, mode: 'copy', overwrite: 'true'
 
     input:
     set key, contigs, ref_seq, ancestor, donor, alpha, tree, profile, xfold from next
@@ -154,6 +190,7 @@ next = hic_out
     .map { joiner(it, 2) }
 
 process HiCMap {
+    publishDir params.output, mode: 'copy', overwrite: 'true'
 
     input:
     set key, hic_reads, contigs, ancestor, donor, alpha, tree, profile, xfold, n3c from next
@@ -177,6 +214,7 @@ next = hicmap_out
     .map { joiner(it, 2) }
     
 process Graph {
+    publishDir params.output, mode: 'copy', overwrite: 'true'
 
     input:
     set key, hic_bam, hic_bai, ancestor, donor, alpha, tree, profile, xfold, n3c from next
@@ -203,6 +241,7 @@ next = next
 
 
 process WGSMap {
+    publishDir params.output, mode: 'copy', overwrite: 'true'
 
     input:
     set key, R1, R2, contigs, ancestor, donor, alpha, tree, profile, xfold from next
@@ -222,6 +261,7 @@ process WGSMap {
 next = next.map { joiner(it, 1) }
 
 process InferReadDepth {
+    publishDir params.output, mode: 'copy', overwrite: 'true'
 
     input:
     set key, wgs_bam, ancestor, donor, alpha, tree, profile, xfold from next
