@@ -30,7 +30,7 @@ ancestor = [file('test/ancestor.fa')]
 donor = [file('test/donor.fa')]
 
 alpha_BL = [1,0.5]
-xfold = [10,20]
+xfold = [1,2]
 n3c = [50000,100000]
 
 
@@ -40,7 +40,6 @@ next = Channel
     .spread(alpha_BL)
     .spread(trees)
     .map{ joiner(it) }
-    .into(2)
 
 process Evolve {
 
@@ -55,7 +54,7 @@ process Evolve {
     \$EXT_BIN/sgevolver/sgEvolver --indel-freq=${params.indel_freq} --small-ht-freq=${params.small_ht_freq} \
         --large-ht-freq=${params.large_ht_freq} --inversion-freq=${params.inversion_freq} \
         --random-seed=${params.seed} scaled_tree \
-         $ancestral $donor "${key}.evo.aln" "${key}.evo.fa"
+         $ancestor $donor "${key}.evo.aln" "${key}.evo.fa"
     strip_semis.sh "${key}.evo.fa"
     """
 }
@@ -98,7 +97,7 @@ process HIC_Reads {
 
     """
     simForward.py -C gzip -r ${params.seed} -n $n3c -l ${params.hic_read_len} -p ${params.hic_inter_prob} \
-           -t $profile $descendent "${key}.hic.fa.gz"
+           -t $profile $ref_seq "${key}.hic.fa.gz"
     """
 }
 
@@ -151,8 +150,7 @@ next = hic_out
     .cross(next
         .map { joiner(it, 2, 6) })
     .map { it.flatten() }
-    .map { it.unique() }
-    .map { select(it, [1,9,3..7,10,8]) }
+    .map { select(it, [1,10,3..7,17,8]) }
     .map { joiner(it, 2) }
 
 process HiCMap {
@@ -200,9 +198,9 @@ next = next
     .cross(tmp
         .map { joiner(it, 2) })
     .map { it.flatten() }
-    .map { it.unique() }
-    .map { select(it, [1,2,10,4..9]) }
+    .map { select(it, [1,2,11,4..9]) }
     .map { joiner(it, 3) }
+
 
 process WGSMap {
 
