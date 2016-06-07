@@ -19,6 +19,32 @@
 
 import static Helper.*
 
+@groovy.transform.EqualsAndHashCode
+class NamedValue {
+    String name
+    Object value
+
+    Val(name, value) {
+        this.name = name
+        this.value = value
+    }
+
+    String toString() { value.toString() }
+}
+
+def select(keys,list) {
+    m = list.inject([:]) {acc, it -> acc[it.name] = it; acc}
+    keys.inject([]) { acc, k -> assert m[k] != null, "element [$k] not found in map"; acc << m[k]; acc }
+}
+
+/**
+ * Add a name to every object in a list.
+ */
+List.metaClass.withName = {name -> delegate.collect{new NamedValue(name, it)}}
+
+l = [1,2,3,4].withName('whatever')
+
+
 
 /* 
  * Basic sweep collections

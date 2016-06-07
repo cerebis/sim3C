@@ -19,14 +19,32 @@
 import nextflow.Nextflow
 import java.nio.file.Path
 
+/**
+ * Utility methods used in the construction of meta-sweep workflows.
+ */
 class Helper {
     static String SEPARATOR = '-+-'
     static def delimiters = /[ ,\t]/
 
+    /**
+     * Return absolute path from string.
+     *
+     * @param path - path as string, wildcards allowed
+     * @return java.nio.file.Path or list of
+     */
     static def absPath(path) {
         Nextflow.file(path)*.toAbsolutePath()
     }
 
+    /**
+     * Create string representation of value. If this is an instance of {@link java.nio.file.Path},
+     * then use only the file name. In the context of filesystem restrictions, mask problematic
+     * characters if safe=true.
+     *
+     * @param val - object to represent as a string
+     * @param safe - a flag that when true masks problematic characters
+     * @return String
+     */
     static def str(val, safe=true) {
         if (val instanceof java.nio.file.Path) {
             val = val.name - ~/[\.][^\.]+$/
@@ -34,15 +52,62 @@ class Helper {
         else {
             val = val
         }
-        return safe ? safeString(val) : val
+        return safe ? safeString(val) : val.toString()
     }
 
+    /**
+     * When performing combinatorial sweeps, channels represent tables of varied parameters,
+     * where each row corresponds to an individual combination of variable values.
+     * <p>
+     * String representations of a value-set (one value for each variable involved in sweep stage) are
+     * joined together to act as an proxy identifier or key. These keys are used both in naming output
+     * files of a process and as a means of joining channels together along relevant combinations.
+     * <p>
+     * All columns in a row are returned, prepended by the new key.
+     *
+     * @param row - channel row, where columns between firstCol and lastCol contain the relevant values from
+     * which to generate a key.
+     * @param firstCol - the first column in the row to use in the key.
+     * @param lastCol - the last column in the row to use in the key.
+     * @return [key, *row]
+     */
     static def addKey(row, firstCol=0, lastCol=-1) {
         [row[firstCol..lastCol].collect { str(it) }.join(SEPARATOR), *row]
     }
 
+    /**
+     * Select a subset of elements from a collection.
+     * <p>
+     * This is mostly for readability and is used to reduce the outcome of channel joins
+     * to only the desired columns. Where often, joins contain redundant or superfluous
+     * columns.
+     *
+     * @param row - the collection to slice
+     * @param elems - the element indices to return
+     * @return the sliced collection
+     */
     static def select(row, elems) {
         row[elems]
+    }
+
+    /**
+     * Return a safer representation of a string. Where "safe" is in the context
+     * of filesystem restrictions. Therefore, masking of backslash characters and
+     * the use only of the base file name when provided with an instance of
+     * {@link java.nio.file.Path}
+     *
+     * @param val - object to return as a stirng
+     * @return String representation
+     */
+    static String safeString(val) {
+        def s
+        if (val instanceof Path) {
+            s = val.name
+        }
+        else {
+            s = val.toString()
+        }
+        return s.replaceAll(/[\\\/]/, "_")
     }
 
     static int[] stringToInts(String str) {
@@ -53,6 +118,11 @@ class Helper {
         return (str.split(delimiters) - '').collect { elem -> elem as float }
     }
 
+    /**
+     * Convert a whitespace or comma delimited String to a List.
+     * @param str - the string to split
+     * @return List
+     */
     static String[] stringToList(String str) {
         return str.split(delimiters) - ''
     }
@@ -67,17 +137,6 @@ class Helper {
 
     static String dropSuffix(str) {
         return str.lastIndexOf('.').with {it != -1 ? str[0..<it] : str}
-    }
-
-    static String safeString(val) {
-        def s
-        if (val instanceof Path) {
-            s = val.name
-        }
-        else {
-            s = val.toString()
-        }
-        return s.replaceAll(/[\\\/]/, "_")
     }
 
     static String[] splitSampleName(Path path) {
