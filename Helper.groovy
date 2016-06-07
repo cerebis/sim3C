@@ -16,22 +16,45 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
+import nextflow.Nextflow
 import java.nio.file.Path
-import static Globals.*
 
 class Helper {
-    static def separators = /[ ,\t]/
+    static String SEPARATOR = '-+-'
+    static def delimiters = /[ ,\t]/
+
+    static def absPath(path) {
+        Nextflow.file(path)*.toAbsolutePath()
+    }
+
+    static def str(val, safe=true) {
+        if (val instanceof java.nio.file.Path) {
+            val = val.name - ~/[\.][^\.]+$/
+        }
+        else {
+            val = val
+        }
+        return safe ? safeString(val) : val
+    }
+
+    static def addKey(row, firstCol=0, lastCol=-1) {
+        [row[firstCol..lastCol].collect { str(it) }.join(SEPARATOR), *row]
+    }
+
+    static def select(row, elems) {
+        row[elems]
+    }
 
     static int[] stringToInts(String str) {
-        return (str.split(separators) - '').collect { elem -> elem as int }
+        return (str.split(delimiters) - '').collect { elem -> elem as int }
     }
 
     static float[] stringToFloats(String str) {
-        return (str.split(separators) - '').collect { elem -> elem as float }
+        return (str.split(delimiters) - '').collect { elem -> elem as float }
     }
 
     static String[] stringToList(String str) {
-        return str.split(Helper.separators) - ''
+        return str.split(delimiters) - ''
     }
 
     static String dropSuffix(str, sep) {

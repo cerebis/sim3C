@@ -17,33 +17,8 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-import static Globals.*
-class Globals {
-    static final String SEPARATOR = '-+-'
-}
+import static Helper.*
 
-helper = this.class.classLoader.parseClass(new File('Helper.groovy')).newInstance()
-
-def absPath(path) {
-    file(path)*.toAbsolutePath()
-}
-
-def str(val) {
-    if (val instanceof java.nio.file.Path) {
-        val.name - ~/[\.][^\.]+$/
-    }
-    else {
-        val
-    }
-}
-
-def joiner(row, sweepBegin=0, sweepEnd=-1) {
-    [row[sweepBegin..sweepEnd].collect { str(it) }.join(SEPARATOR), *row]
-}
-
-def select(row, elems) {
-    row[elems]
-}
 
 /* 
  * Basic sweep collections
@@ -56,13 +31,13 @@ def select(row, elems) {
  * Eg. --trees /path/to/trees/*.nwk --alpha "1,2,3,4"
  */
  
-trees = absPath(params.trees)
+ancestor = files(params.ancestor)
+donor    = files(params.donor)
+alpha_BL = stringToList(params.alpha)
+trees    = absPath(params.trees)
 profiles = absPath(params.profiles)
-ancestor = [file(params.ancestor)]
-donor = [file(params.donor)]
-alpha_BL = helper.stringToList(params.alpha)
-xfold = helper.stringToList(params.xfold)
-n3c = helper.stringToList(params.hic_pairs)
+xfold    = stringToList(params.xfold)
+n3c      = stringToList(params.hic_pairs)
 
 
 next = Channel
@@ -70,7 +45,7 @@ next = Channel
     .spread(donor)
     .spread(alpha_BL)
     .spread(trees)
-    .map{ joiner(it) }
+    .map{ addKey(it) }
 
 process Evolve {
     publishDir params.output, mode: 'copy', overwrite: 'true'
@@ -93,10 +68,9 @@ process Evolve {
 
 
 (evo_out, next) = evo_out.into(2)
-
 next = next.spread(profiles)
     .spread(xfold)
-    .map{ joiner(it, 1) }
+    .map{ addKey(it, 1) }
     
 process WGS_Reads {
     publishDir params.output, mode: 'copy', overwrite: 'true'
@@ -118,7 +92,7 @@ process WGS_Reads {
 (evo_out, next) = evo_out.into(2)
 next = next.spread(profiles)
         .spread(n3c)
-        .map { joiner(it, 1) }
+        .map { addKey(it, 1) }
 
 process HIC_Reads {
     publishDir params.output, mode: 'copy', overwrite: 'true'
@@ -139,7 +113,7 @@ process HIC_Reads {
 (wgs_out, next) = wgs_out.into(2)
 next = next
     .map { row -> row.flatten() }
-    .map{ joiner(it, 3) }
+    .map{ addKey(it, 3) }
 
 process Assemble {
     publishDir params.output, mode: 'copy', overwrite: 'true'
@@ -157,7 +131,7 @@ process Assemble {
 
 
 (asm_out, next) = asm_out.into(2)
-next = next.map { joiner(it, 2) }
+next = next.map { addKey(it, 2) }
 
 process Truth {
     publishDir params.output, mode: 'copy', overwrite: 'true'
@@ -182,12 +156,12 @@ process Truth {
 
 (asm_out, next) = asm_out.into(2)
 next = hic_out
-    .map { joiner(it, 2, 6) }
+    .map { addKey(it, 2, 6) }
     .cross(next
-        .map { joiner(it, 2, 6) })
+        .map { addKey(it, 2, 6) })
     .map { it.flatten() }
     .map { select(it, [1,10,3..7,17,8]) }
-    .map { joiner(it, 2) }
+    .map { addKey(it, 2) }
 
 process HiCMap {
     publishDir params.output, mode: 'copy', overwrite: 'true'
@@ -211,7 +185,7 @@ process HiCMap {
 
 next = hicmap_out
     .map { it.flatten() }
-    .map { joiner(it, 1) }
+    .map { addKey(it, 1) }
 
 process Graph {
     publishDir params.output, mode: 'copy', overwrite: 'true'
@@ -232,12 +206,12 @@ process Graph {
 (asm_out, tmp) = asm_out.into(2)
 next = next
     .map { it.flatten() }
-    .map { joiner(it, 3) }
+    .map { addKey(it, 3) }
     .cross(tmp
-        .map { joiner(it, 2) })
+        .map { addKey(it, 2) })
     .map { it.flatten() }
     .map { select(it, [1,2,11,4..9]) }
-    .map { joiner(it, 3) }
+    .map { addKey(it, 3) }
 
 
 process WGSMap {
@@ -258,7 +232,7 @@ process WGSMap {
 
 
 (wgsmap_out, next) = wgsmap_out.into(2)
-next = next.map { joiner(it, 1) }
+next = next.map { addKey(it, 1) }
 
 process InferReadDepth {
     publishDir params.output, mode: 'copy', overwrite: 'true'
