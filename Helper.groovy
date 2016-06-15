@@ -16,17 +16,12 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
-
-
 import groovy.transform.AutoClone
-import groovyx.gpars.dataflow.Dataflow
+import groovy.transform.Synchronized
 import groovyx.gpars.dataflow.DataflowQueue
 import nextflow.Nextflow
-import org.apache.ivy.osgi.p2.P2Artifact
-
+import nextflow.Channel
 import java.nio.file.Path
-import groovy.transform.EqualsAndHashCode
-import groovy.transform.Synchronized
 
 /**
  * Utility methods used in the construction of meta-sweep workflows.
@@ -69,6 +64,7 @@ class Helper {
         }
     }
 
+
     @AutoClone
     static class NamedValue {
         private static final int HASH_PRIME = 7
@@ -80,7 +76,14 @@ class Helper {
             this.value = value
         }
 
-        String toString() { value.toString() }
+        String toString() {
+            if (value instanceof Collection) {
+                value.toSorted().join(' ')
+            }
+            else {
+                value.toString()
+            }
+        }
 
         public static NamedValue create(name, value) {
             new NamedValue(name,value)
@@ -148,6 +151,8 @@ class Helper {
 
         String id(int maxDepth) {
             def values = varMap.values() as List
+            assert maxDepth > 0 : 'Depth must be a positive integer'
+            assert maxDepth <= values.size() : "Requested depth [$maxDepth] exceeds defined variable count [${values.size()}]"
             return id(values[0..maxDepth-1])
         }
 
@@ -206,8 +211,8 @@ class Helper {
             permute(values())
         }
 
-        public Collection permuteNames(Object... varnames) {
-            permute(subMap(varnames.collect()).values())
+        public Collection permuteNames(Object... varNames) {
+            permute(subMap(varNames.collect()).values())
         }
 
         public Collection permuteLevels(int begin = 0, int end = -1) {
@@ -242,8 +247,13 @@ class Helper {
             }
         }
 
-        public DataflowQueue extend(DataflowQueue df, Object... varNames) {
-            assert varNames.size() > 0 : "Error, no variables named in extend"
+        public DataflowQueue permutedChannel(Object... varNames) {
+            Channel.from(permuteNames(varNames))
+                    .map{ it.addKey() }
+        }
+
+        public DataflowQueue extendChannel(DataflowQueue df, Object... varNames) {
+            assert varNames.size() > 0 : "Error, no variables named in extendChannel"
             def p = permuteNames(varNames)
             if (p.size() == 0) {
                 return df
@@ -265,6 +275,25 @@ class Helper {
                     }
 
             return df
+        }
+
+        public DataflowQueue joinChannels(DataflowQueue df1, DataflowQueue df2, Integer... level) {
+            assert level != null &&
+                    level.size() >= 1 && level.size() <= 2 : 'Level can be either 1 or 2 integer values'
+
+            if (level.size() == 1) {
+                level = [level[0], level[0]]
+            }
+
+            df1 = df1.map { it ->
+                // remake key
+                [ it[0].id(level[0]), *it[1..-1] ] }
+
+            df2 = df2.map { it ->
+                // remake key
+                [ it[0].id(level[1]), *it[1..-1] ] }
+
+            return df1.cross(df2).map { it.flatten() }
         }
 
     }
