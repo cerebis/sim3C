@@ -207,6 +207,21 @@ class Helper {
             varRegistry[key] = value.collect { new NamedValue(key, it) }
         }
 
+        public String description() {
+            int width = varRegistry.keySet().inject(0) {
+                acc, it -> acc = it.length() > acc ? it.length() : acc
+            }
+
+            StringBuffer desc = new StringBuffer()
+            def spc = '\nName '.padRight(width+1)
+            desc.append("Variations defined for this sweep\n${spc} Values\n")
+            varRegistry.collect{ k, v ->
+                def label = "${k}:"
+                desc.append("${label.padRight(width+1)} $v\n")
+            }
+            return desc.toString()
+        }
+
         public Collection permuteAll() {
             permute(values())
         }

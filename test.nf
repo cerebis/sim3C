@@ -38,8 +38,10 @@ sweep['donor'] = files(params.donor)
 sweep['alpha'] = stringToList(params.alpha)
 sweep['tree'] = absPath(params.trees)
 sweep['profile'] = absPath(params.profiles)
-sweep['xfold'] = stringToList(params.xfold).collect{(int)it}
+sweep['xfold'] = stringToList(params.xfold)
 sweep['n3c'] = stringToList(params.hic_pairs)
+
+println sweep.description()
 
 // initial permutation of variables, just what is required for generating
 // the simulated community reference genomes.
@@ -177,7 +179,9 @@ process Assemble {
     }
     else {
         """
-        \$EXT_BIN/a5/bin/a5_pipeline.pl --threads=1 --metagenome $reads $key
+        export PATH=\$EXT_BIN/a5/bin:\$PATH
+        a5_pipeline.pl --threads=1 --metagenome $reads $key
+        bwa index ${key}.contigs.fasta
         """
     }
 }
@@ -248,7 +252,6 @@ process HiCMap {
     else {
         """
         export PATH=\$EXT_BIN/a5/bin:\$PATH
-        bwa index $contigs
         bwa mem -t 1 $contigs $hic_reads | samtools view -bS - | samtools sort -l 9 - "${key}.hic2ctg"
         samtools index "${key}.hic2ctg.bam"
         samtools idxstats "${key}.hic2ctg.bam" > "${key}.hic2ctg.idxstats"
@@ -315,7 +318,6 @@ process WGSMap {
     else {
         """
         export PATH=\$EXT_BIN/a5/bin:\$PATH
-        bwa index $contigs
         bwa mem -t 1 $contigs $reads | samtools view -bS - | samtools sort -l 9 - "${key}.wgs2ctg"
         """
     }
