@@ -103,9 +103,9 @@ process WGS_Reads {
     script:
     if (params.debug) {
         """
-        echo "metaART.py -C gzip -t ${key['profile']} -z 1 -M ${key['xfold']} -S ${params.seed} -s ${params.wgs_ins_std} \\
+        echo "metaART.py -C gzip -t ${key['profile']} -z 1 -M ${key['xfold']} -S ${params.seed} -s ${params.wgs_ins_std} \
                 -m ${params.wgs_ins_len} -l ${params.wgs_read_len} -n ${key}.wgs $ref_seq ." > ${key}.wgs.r1.fq.gz
-        echo "metaART.py -C gzip -t ${key['profile']} -z 1 -M ${key['xfold']} -S ${params.seed} -s ${params.wgs_ins_std} \\\\
+        echo "metaART.py -C gzip -t ${key['profile']} -z 1 -M ${key['xfold']} -S ${params.seed} -s ${params.wgs_ins_std} \
                 -m ${params.wgs_ins_len} -l ${params.wgs_read_len} -n ${key}.wgs $ref_seq ." > ${key}.wgs.r2.fq.gz
         """
     }
@@ -114,6 +114,8 @@ process WGS_Reads {
         export PATH=\$EXT_BIN/art:\$PATH
         metaART.py -C gzip -t ${key['profile']} -z 1 -M ${key['xfold']} -S ${params.seed} -s ${params.wgs_ins_std} \
                 -m ${params.wgs_ins_len} -l ${params.wgs_read_len} -n "${key}.wgs" $ref_seq .
+	wait_on_openfile.sh ${key}.wgs.r1.fq.gz
+	wait_on_openfile.sh ${key}.wgs.r2.fq.gz
         """
     }
 }
@@ -149,6 +151,7 @@ process HIC_Reads {
         """
         simForward.py -C gzip -r ${params.seed} -n ${key['n3c']} -l ${params.hic_read_len} -p ${params.hic_inter_prob} \
                -t ${key['profile']} $ref_seq "${key}.hic.fa.gz"
+        wait_on_openfile.sh ${key}.hic.fa.gz
         """
     }
 }
@@ -375,3 +378,4 @@ process InferReadDepth {
 
 // add a name to new output
 cov_out = cov_out.map { it.nameify(1, 'coverage') }
+
