@@ -215,12 +215,13 @@ process Truth {
     }
     else {
         """
+        export PATH=\$EXT_BIN/last:\$PATH
         if [ ! -e db.prj ]
         then
             lastdb db $ref_seq
         fi
 
-        \$EXT_BIN/last/lastal -P 1 db $contigs | maf-convert psl > ctg2ref.psl
+        lastal -P 1 db $contigs | maf-convert psl > ctg2ref.psl
         alignmentToTruth.py --ofmt json ctg2ref.psl "${key}.truth"
         """
     }
