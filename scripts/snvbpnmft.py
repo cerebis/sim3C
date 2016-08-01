@@ -50,14 +50,57 @@ def parse_bpnmf(bpnmf_filename):
     return tip_partials
 
 
+def run_bpnmf(num_strains):
+    snv_filename = os.path.join(out_dir, "snv_file.data.R")
+    snv_file = open(snv_filename, "w")
+    snv_file.write("U<-" + str(num_sites) + "\n")  # number of sites
+    snv_file.write("totalsites<-" + str(num_sites) + "\n")  # number of sites
+    snv_file.write("T<-" + str(num_samples) + "\n")  # number of time points
+    snv_file.write("S<-" + str(num_strains) + "\n")  # number of time points
+    snv_file.write("maxdepth<-500" + "\n")  # maximum depth of cov, to constrain uniform prior
+    obs = "notz <- c("
+    muts = "noty <- c("
+    siteids = "#siteids <- c("
+    refa = "#refalleles <- c("
+    vara = "#varalleles <- c("
+    sepchar = ""
+    for chromo in variant_sites:
+        for site in sorted(variant_sites[chromo].keys()):
+            siteids = siteids + sepchar + str(site)
+            refa = refa + sepchar + str(variant_sites[chromo][site][0])
+            vara = vara + sepchar + str(variant_sites[chromo][site][1])
+            ref_alleles.append(variant_sites[chromo][site][0])
+            snv_alleles.append(variant_sites[chromo][site][1])
+            for i in range(num_samples):
+                obs = obs + sepchar + str(depths[i][chromo][site][0])
+                muts = muts + sepchar + str(depths[i][chromo][site][1])
+                sepchar = ","
+
+    snv_file.write(obs+")\n")
+    snv_file.write(muts+")\n")
+    snv_file.write(refa+")\n")
+    snv_file.write(vara+")\n")
+    snv_file.write(siteids+")\n")
+    snv_file.close()
+
+
+    ##
+    # run the Poisson NMF
+    #
+    bpnmf_filename = os.path.join(out_dir, "decon." + str(num_strains) + ".csv")
+    diag_filename =  os.path.join(out_dir, "diag." + str(num_strains) + ".csv")
+    bpnmf_cmd = "genotypes3 variational output_samples=100 tol_rel_obj=0.001 iter=25000 algorithm=meanfield data file=" + snv_filename + " output file=" + bpnmf_filename + " diagnostic_file=" + diag_filename
+    os.system(bpnmf_cmd)
+    #os.remove(snv_filename)
+
+
 # parse the command-line
 if len(sys.argv)<5:
-    print "Usage: snvbpnmft.py <output directory> <number of strains> <reference fasta> <sample 1 bam> <sample 2 bam> .. [sample N bam]";
+    print "Usage: snvbpnmft.py <output directory> <reference fasta> <sample 1 bam> <sample 2 bam> .. [sample N bam]";
     sys.exit(-1)
 out_dir = sys.argv[1]
-num_strains = int(sys.argv[2])
-ref_fa = sys.argv[3]
-num_samples = len(sys.argv) - 4
+ref_fa = sys.argv[2]
+num_samples = len(sys.argv) - 3
 
 depths = dict()
 variant_sites = dict()
@@ -71,7 +114,7 @@ for i in range(num_samples):
     found[i] = dict()
     depths[i] = dict()
     cur_vcf = os.path.join(out_dir, str(i) + ".vcf")
-    lofreq_cmd = lofreq + " call " + " -C 2 -f " + ref_fa + " -o tmp.vcf " + sys.argv[i+4] 
+    lofreq_cmd = lofreq + " call " + " -C 2 -f " + ref_fa + " -o tmp.vcf " + sys.argv[i+3] 
     print lofreq_cmd
     os.system(lofreq_cmd)
     filter_cmd = lofreq + " filter -i tmp.vcf -B 15 -Q 60 -o " + cur_vcf 
@@ -79,7 +122,7 @@ for i in range(num_samples):
     os.system(filter_cmd)
     os.remove("tmp.vcf")
     cur_pileup = os.path.join(out_dir, str(i) + ".pileup")
-    pileup_cmd = "samtools mpileup -f " + ref_fa + " " + sys.argv[i+4] + " > " + cur_pileup
+    pileup_cmd = "samtools mpileup -f " + ref_fa + " " + sys.argv[i+3] + " > " + cur_pileup
     print pileup_cmd
     os.system(pileup_cmd)
     vcf_file = open(cur_vcf)
@@ -130,44 +173,36 @@ for i in range(num_samples):
 num_sites = 0
 for chromo in variant_sites:
     num_sites += len(variant_sites[chromo])
-snv_filename = os.path.join(out_dir, "snv_file.data.R")
-snv_file = open(snv_filename, "w")
-snv_file.write("U<-" + str(num_sites) + "\n")  # number of sites
-snv_file.write("T<-" + str(num_samples) + "\n")  # number of time points
-snv_file.write("S<-" + str(num_strains) + "\n")  # number of time points
-obs = "observations <- c("
-muts = "mutations <- c("
-siteids = "#siteids <- c("
-refa = "#refalleles <- c("
-vara = "#varalleles <- c("
-sepchar = ""
-for chromo in variant_sites:
-    for site in sorted(variant_sites[chromo].keys()):
-        siteids = siteids + sepchar + str(site)
-        refa = refa + sepchar + str(variant_sites[chromo][site][0])
-        vara = vara + sepchar + str(variant_sites[chromo][site][1])
-        ref_alleles.append(variant_sites[chromo][site][0])
-        snv_alleles.append(variant_sites[chromo][site][1])
-        for i in range(num_samples):
-            obs = obs + sepchar + str(depths[i][chromo][site][0])
-            muts = muts + sepchar + str(depths[i][chromo][site][1])
-            sepchar = ","
+min_strains = 4
+max_strains = 4
+num_repeats = 1
+best_ELBO = -9999999999999
+best_strains = 0
+S_ELBOS = [None]*(max_strains+1)
+bpnmf_filename = ""
+for S in range(min_strains,max_strains+1):
+    for r in range(1,num_repeats+1):
+        run_bpnmf(S)
+        diag_file = open("diag."+str(S)+".csv")
+        for line in diag_file:
+            if line.startswith("#"):
+                continue
+            d = line.split(",")
+            cur_elbo = float(d[2])
+            if(cur_elbo>best_ELBO):
+                best_ELBO=cur_elbo
+                best_strains = S
+                bpnmf_filename = os.path.join(out_dir, "decon." + str(S) + ".csv")
+            if(S_ELBOS[S] == None or cur_elbo>S_ELBOS[S]):
+                S_ELBOS[S] = cur_elbo
 
-snv_file.write(obs+")\n")
-snv_file.write(muts+")\n")
-snv_file.write(refa+")\n")
-snv_file.write(vara+")\n")
-snv_file.write(siteids+")\n")
-snv_file.close()
-
-
-##
-# run the Poisson NMF
-#
+print "Best strains is " + str(best_strains) + ", ELBO " + str(best_ELBO)
 bpnmf_filename = os.path.join(out_dir, "decon.csv")
-bpnmf_cmd = "genotypes2 variational output_samples=100 tol_rel_obj=0.001 iter=25000 algorithm=fullrank data file=" + snv_filename + " output file=" + bpnmf_filename
-os.system(bpnmf_cmd)
-#os.remove(snv_filename)
+os.system("mv " + os.path.join(out_dir, "decon." + str(best_strains) + ".csv") + " " + bpnmf_filename)
+for s in range(min_strains,max_strains+1):
+    print str(s) + " strains ELBO " + str(S_ELBOS[s])
+
+num_strains = best_strains
 
 ##
 # summarize the tip partials and create a BEAST XML
@@ -323,7 +358,7 @@ beast_file.write( """
 	</operators>
 
 	<!-- Define MCMC                                                             -->
-	<mcmc id="mcmc" chainLength="2000000" autoOptimize="true" operatorAnalysis=""" + "\"" + os.path.join(out_dir,"aln.ops") + "\">" + """
+	<mcmc id="mcmc" chainLength="5000000" autoOptimize="true" operatorAnalysis=""" + "\"" + os.path.join(out_dir,"aln.ops") + "\">" + """
 		<posterior id="posterior">
 			<prior id="prior">
 				<logNormalPrior mean="1.0" stdev="1.25" offset="0.0" meanInRealSpace="false">
