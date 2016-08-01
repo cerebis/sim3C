@@ -143,9 +143,9 @@ process Deconvolve {
     set file("${oname}.decon.csv"), file("${oname}.snv_file.data.R"), file("${oname}.strains.tre"), oname into deconvolution
 
     """
-    snvbpnmft.py . 4 ancestor.fa *.bam
-    #java -Xmx1000m -jar \$JARPATH/beast.jar beast.xml 
-    #java -jar \$JARPATH/treeannotator.jar -burnin 1000 -heights mean aln.trees strains.tre
+    snvbpnmft.py . ancestor.fa *.bam
+    java -Xmx1000m -jar \$JARPATH/beast/beast.jar beast.xml 
+    java -jar \$JARPATH/treeanno/treeannotator.jar -burnin 2500 -heights mean aln.trees strains.tre
     touch strains.tre decon.csv
     mv decon.csv ${oname}.decon.csv
     mv snv_file.data.R ${oname}.snv_file.data.R
