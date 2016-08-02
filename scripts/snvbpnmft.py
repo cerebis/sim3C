@@ -165,7 +165,7 @@ for i in range(num_samples):
         site = int(d[1])
         if site in variant_sites[chromo] and not site in found[i][chromo]:
             depths[i][chromo][site] = [d[3],0]
-
+    os.remove(cur_pileup)
     
 ##
 # write out a file with SNVs and sample count for Bayesian PNMF
