@@ -136,7 +136,7 @@ process Deconvolve {
     set key, file(bams), reads1, reads2, ref_seq from deconv_in
 
     output:
-    set key, file("${key}.decon.csv"), file("${key}.snv_file.data.R"), file("${key}.strains.tre"), bam, reads, ref_seq into deconv_out
+    set key, file("${key}.decon.csv"), file("${key}.snv_file.data.R"), file("${key}.strains.tre"), bams, reads1, reads2, ref_seq into deconv_out
 
     script:
     if (params.debug) {
