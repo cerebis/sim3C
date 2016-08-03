@@ -189,9 +189,6 @@ process Truth {
     }
 }
 
-// add a name to new output
-truth_out = truth_out.map { it.nameify(1, 'truth') }
-
 (truth_out, accuracy_in) = truth_out.into(2)
 (deconv_out, acc_deconv_in) = deconv_out.into(2)
 
