@@ -151,8 +151,10 @@ process Deconvolve {
         """
         export PATH=\$EXT_BIN/lofreq_star:\$PATH
         snvbpnmft.py . $fff *.bam
-        java -Xmx1000m -Djava.library.path=/usr/lib/x86_64-linux-gnu/jni/ -jar \$EXT_BIN/beast/beast.jar beast.xml 
-        java -jar \$EXT_BIN/treeanno/treeannotator.jar -burnin 1000 -heights mean aln.trees strains.tre
+        mv decon.csv ${key}.decon.csv
+        mv snv_file.data.R ${key}.snv_file.data.R
+        java -Xmx1000m \$JNI_LIB_PATH -jar \$EXT_BIN/beast/beast.jar beast.xml 
+        java -jar \$EXT_BIN/treeanno/treeannotator.jar -burnin 1000 -heights mean aln.trees ${key}.strains.tre
         """
     }
 }
@@ -189,3 +191,26 @@ process Truth {
 
 // add a name to new output
 truth_out = truth_out.map { it.nameify(1, 'truth') }
+
+(truth_out, accuracy_in) = truth_out.into(2)
+(deconv_out, acc_deconv_in) = deconv_out.into(2)
+
+/**
+ * Measure accuracy of strain genotypes
+ */
+process Accuracy {
+    cache 'deep'
+    publishDir params.output, mode: 'copy', overwrite: 'true'
+
+    input:
+    set truekey, file(truthfile) from accuracy_in
+    set key, file(snvbpnmf), file(snv_file), file(tree_file) from acc_deconv_in
+
+    output:
+    set file("${key}.truth.report.txt") into truth
+
+    """
+    measure_accuracy.py --bpnmf=${snvbpnmf} --truth=${truthfile} --sites=${snv_file} > ${key}.truth.report.txt
+    """
+}
+
