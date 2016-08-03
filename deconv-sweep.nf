@@ -144,7 +144,7 @@ process Deconvolve {
 
     """
     snvbpnmft.py . ancestor.fa *.bam
-    java -Xmx1000m -jar \$JARPATH/beast/beast.jar beast.xml 
+    java -Djava.library.path=/usr/lib/x86_64-nux-gnu/jni -Xmx1000m -jar \$JARPATH/beast/beast.jar beast.xml 
     java -jar \$JARPATH/treeanno/treeannotator.jar -burnin 2500 -heights mean aln.trees strains.tre
     touch strains.tre decon.csv
     mv decon.csv ${oname}.decon.csv

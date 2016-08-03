@@ -1,9 +1,22 @@
 #!/usr/bin/env python
 """
-Convert a SAM file to edge CSV file suitable for importing into Gephi
+meta-sweeper - for performing parametric sweeps of simulated
+metagenomic sequencing experiments.
+Copyright (C) 2016 "Matthew Z DeMaere"
 
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published
+by the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful, but
+WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """
-
 import argparse
 import math
 import re
@@ -15,11 +28,11 @@ import pysam
 
 
 class Edge:
-    """Represents an edge in the network of contigs linked
-    by Hi-C read pairs.
+    """
+    Represents an edge in the network of contigs linked by Hi-C read pairs.
     """
 
-    def __init__(self, nodes=[]):
+    def __init__(self, nodes=()):
         nodes.sort()
         self.nodes = nodes
         self.weight = 1
@@ -85,6 +98,8 @@ class Node:
 
 CODE2CIGAR = dict([y, x] for x, y in enumerate("MIDNSHP=X"))
 CIGAR_REGEX = re.compile(r"(\d+)([MIDNSHP=X])")
+
+
 def cigar_to_tuple(cigar):
     return [(CODE2CIGAR[t[1]], int(t[0])) for t in CIGAR_REGEX.findall(cigar)]
 
@@ -164,6 +179,9 @@ def strong_match(mr, min_match=None, match_start=True, min_mapq=None):
     """
     Check that a mapped read does not contain disagreeing sequence. Only
     clipped regions are permitted.
+    :param mr
+    :param min_match
+    :param match_start
     """
     if mr.is_secondary or mr.is_supplementary:
         return False
@@ -172,23 +190,6 @@ def strong_match(mr, min_match=None, match_start=True, min_mapq=None):
         return False    
 
     return good_match(mr.cigartuples, min_match, match_start)
-
-    # if len(NOT_ALLOWED & set([t[0] for t in mr.cigartuples])) == 0:
-    #     if match_start and mr.cigartuples[0][0] != 0:
-    #         return False
-    #
-    #     if mr.mapping_quality < min_mapq:
-    #         return False
-    #
-    #     if min_match:
-    #         n_matches = sum([t[1] for t in mr.cigartuples if t[0] == 0])
-    #         if n_matches < min_match:
-    #             return False
-    #
-    #     return True
-    #
-    # else:
-    #     return False
 
 
 if __name__ == '__main__':
@@ -253,7 +254,7 @@ if __name__ == '__main__':
             print 'Creating contig nodes...'
             with pysam.AlignmentFile(fn, 'rb') as bf:
                 g.add_nodes_from(zip(bf.references, [{'length': li} for li in bf.lengths]))
-                #for i in xrange(len(bf.references)):
+                # for i in xrange(len(bf.references)):
                 #    rn = bf.references[i]
                 #    if rn not in g:
                 #        g.add_node(rn, length=bf.lengths[i])
@@ -287,7 +288,7 @@ if __name__ == '__main__':
                         print 'alignment object: {0}'.format(mr)
                         sys.exit(1)
 
-                    #else:
+                    # else:
                     #    perid = dict(mr.cigartuples)[0] / float(mr.query_length) * 100.0
                     #    cov = mr.query_alignment_length / float(mr.query_length)
                     #    if cov < args.mincov or perid < args.minid:
@@ -341,17 +342,17 @@ if __name__ == '__main__':
                         except KeyError:
                             pass
 
-                    #ctg_assocs = [(ctg, rdir) for ctg in contig_set]
+                    # ctg_assocs = [(ctg, rdir) for ctg in contig_set]
                     rdir = 1 if not mr.is_reverse else 2
                     ctg_assocs = [(ctg, rdir) for ctg in contig_set]
 
                     linkage = linkage_map.get(read)
                     if linkage is None:
                         linkage_map[read] = ctg_assocs
-                        #linkage_map[read] = [(ctg, 1) for ctg in contig_set]
+                        # linkage_map[read] = [(ctg, 1) for ctg in contig_set]
                     else:
                         linkage.extend(ctg_assocs)
-                        #linkage.extend([(ctg, 2) for ctg in contig_set])
+                        # linkage.extend([(ctg, 2) for ctg in contig_set])
 
                 print 'For {0} -- rejected {1} accepted {2}, rejection rate={3:.1f}%'.format(
                         fn, reject, accept, float(reject) / (reject + accept) * 100.)
