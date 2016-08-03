@@ -58,7 +58,7 @@ process WGS_Reads {
     set key, ref_seq from wgs_in
 
     output:
-    set key, file("${key}.wgs.r*.fq.gz"), ref_seq into wgs_out
+    set key, file("${key}.wgs.*.r1.fq.gz"), file("${key}.wgs.*.r2.fq.gz"), ref_seq into wgs_out
 
     script:
     if (params.debug) {
@@ -72,7 +72,7 @@ process WGS_Reads {
     else {
         """
         export PATH=\$EXT_BIN/art:\$PATH
-        metaART.py -C gzip -t ${key['profile']} -z 1 -M ${key['xfold']} -S ${params.seed} -s ${params.wgs_ins_std} \
+        metaART.py -C gzip -t ${key['profile']} -z ${params.num_samples} -M ${key['xfold']} -S ${params.seed} -s ${params.wgs_ins_std} \
                 -m ${params.wgs_ins_len} -l ${params.wgs_read_len} -n "${key}.wgs" $ref_seq .
 	wait_on_openfile.sh ${key}.wgs.r1.fq.gz
 	wait_on_openfile.sh ${key}.wgs.r2.fq.gz
@@ -81,7 +81,7 @@ process WGS_Reads {
 }
 
 // add a name to new output
-wgs_out = wgs_out.map { it.nameify(1, 'wgs_reads') }
+//wgs_out = wgs_out.map { it.nameify(1, 'wgs_reads') }
 
 
 /**
@@ -95,10 +95,10 @@ process ReadMap {
     publishDir params.output, mode: 'copy', overwrite: 'true'
 
     input:
-    set key, reads, ref_seq from map_in
+    set key, file(reads1), file(reads2), ref_seq from map_in
 
     output:
-    set key, file("${key}.wgs2ref.bam"), reads, ref_seq into map_out
+    set key, file("*.bam"), reads1, reads2, ref_seq into map_out
 
     script:
     if (params.debug) {
@@ -110,26 +110,30 @@ process ReadMap {
         fff = files(params.ancestor)[0]
         """
         export PATH=\$EXT_BIN/a5/bin:\$PATH
-        bwa mem -t 1 $fff $reads | samtools view -bS - | samtools sort -l 9 - "${key}.wgs2ref"
+
+	for rr in `ls *.r1.fq.gz`
+        do
+        	rbase=`basename \$rr .r1.fq.gz`
+        	r2=\$rbase.r2.fq.gz
+        	bwa mem -t 1 $fff \$rr \$r2 | samtools view -bS - | samtools sort -l 9 - \$rbase
+        done
         """
     }
 }
 
-// add a name to new output
-map_out = map_out.map { it.nameify(1, 'wgs2ref') }
 
 /**
  * Deconvolve the SNVs into strain genotypes
  */
  
  (map_out, deconv_in) = map_out.into(2)
- 
- process Deconvolve {
+
+process Deconvolve {
     cache 'deep'
     publishDir params.output, mode: 'copy', overwrite: 'true'
 
     input:
-    set key, bam, reads, ref_seq from deconv_in
+    set key, file(bams), reads1, reads2, ref_seq from deconv_in
 
     output:
     set key, file("${key}.decon.csv"), file("${key}.snv_file.data.R"), file("${key}.strains.tre"), bam, reads, ref_seq into deconv_out
@@ -143,19 +147,16 @@ map_out = map_out.map { it.nameify(1, 'wgs2ref') }
         """
     }
     else {
+        fff = files(params.ancestor)[0]
         """
         export PATH=\$EXT_BIN/lofreq_star:\$PATH
-        snvbpnmft.py . 4 ancestor.fa *.bam
-        #java -Xmx1000m -jar \$JARPATH/beast.jar beast.xml 
-        #java -jar \$JARPATH/treeannotator.jar -burnin 1000 -heights mean aln.trees strains.tre
-        touch strains.tre decon.csv
+        snvbpnmft.py . $fff *.bam
+        java -Xmx1000m -jar \$EXT_BIN/beast/beast.jar beast.xml 
+        java -jar \$EXT_BIN/treeanno/treeannotator.jar -burnin 1000 -heights mean aln.trees strains.tre
         """
     }
 }
 
-// add a name to new output
-// maybe these method calls can be all in one map.. don't want to try atm.
-deconv_out = deconv_out.map { it.nameify(1, 'deconv_csv') }.map { it.nameify(2, 'deconv_R') }.map { it.nameify(3, 'deconv_tre') }
 
 /**
  * Record the true strain genotypes
