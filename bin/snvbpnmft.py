@@ -72,8 +72,12 @@ def run_bpnmf(num_strains):
             ref_alleles.append(variant_sites[chromo][site][0])
             snv_alleles.append(variant_sites[chromo][site][1])
             for i in range(num_samples):
-                obs = obs + sepchar + str(depths[i][chromo][site][0])
-                muts = muts + sepchar + str(depths[i][chromo][site][1])
+                if site in depths[i][chromo]:
+                    obs = obs + sepchar + str(depths[i][chromo][site][0])
+                    muts = muts + sepchar + str(depths[i][chromo][site][1])
+                else:
+                    obs = obs + sepchar + "0"
+                    muts = muts + sepchar + "0"
                 sepchar = ","
 
     snv_file.write(obs+")\n")
