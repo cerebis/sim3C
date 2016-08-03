@@ -51,6 +51,7 @@ evo_out = evo_out.map { it.nameify(1, 'ref_seq') }
 wgs_in = sweep.extendChannel(wgs_in, 'profile', 'xfold')
 
 process WGS_Reads {
+    cache 'deep'
     publishDir params.output, mode: 'copy', overwrite: 'true'
 
     input:
@@ -90,6 +91,7 @@ wgs_out = wgs_out.map { it.nameify(1, 'wgs_reads') }
 (wgs_out, map_in) = wgs_out.into(2)
 
 process ReadMap {
+    cache 'deep'
     publishDir params.output, mode: 'copy', overwrite: 'true'
 
     input:
@@ -105,9 +107,10 @@ process ReadMap {
         """
     }
     else {
+        fff = files(params.ancestor)[0]
         """
         export PATH=\$EXT_BIN/a5/bin:\$PATH
-        bwa mem -t 1 $contigs $reads | samtools view -bS - | samtools sort -l 9 - "${key}.wgs2ref"
+        bwa mem -t 1 $fff $reads | samtools view -bS - | samtools sort -l 9 - "${key}.wgs2ref"
         """
     }
 }
@@ -122,6 +125,7 @@ map_out = map_out.map { it.nameify(1, 'wgs2ref') }
  (map_out, deconv_in) = map_out.into(2)
  
  process Deconvolve {
+    cache 'deep'
     publishDir params.output, mode: 'copy', overwrite: 'true'
 
     input:
@@ -159,6 +163,7 @@ deconv_out = deconv_out.map { it.nameify(1, 'deconv_csv') }.map { it.nameify(2, 
 (evo_out, truth_in) = evo_out.into(2)
 
 process Truth {
+    cache 'deep'
     publishDir params.output, mode: 'copy', overwrite: 'true'
 
     input:
@@ -174,8 +179,9 @@ process Truth {
         """
     }
     else {
+        fff = files(params.ancestor)[0]
         """
-        strain_truth.py --mauve-path=\$MAUVEPATH -o $oname.truth.tsv evo.fa ancestor.fa
+        strain_truth.py --mauve-path=\$MAUVEPATH -o ${key}.truth.tsv ${ref_seq} ${fff}
         """
     }
 }
