@@ -151,7 +151,7 @@ process Deconvolve {
         """
         export PATH=\$EXT_BIN/lofreq_star:\$PATH
         snvbpnmft.py . $fff *.bam
-        java -Xmx1000m -jar \$EXT_BIN/beast/beast.jar beast.xml 
+        java -Xmx1000m -Djava.library.path=/usr/lib/x86_64-linux-gnu/jni/ -jar \$EXT_BIN/beast/beast.jar beast.xml 
         java -jar \$EXT_BIN/treeanno/treeannotator.jar -burnin 1000 -heights mean aln.trees strains.tre
         """
     }
