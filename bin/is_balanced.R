@@ -1,8 +1,8 @@
 #!/usr/bin/env Rscript
 library(ape)
-
-ttt<-read.nexus(commandArgs(TRUE)[1])
+fff<-commandArgs(TRUE)[1]
+ttt<-read.nexus(fff)
 bbb<-balance(ttt)
 # a balanced topology will have two clades with two descendants
-sum(bbb==2)==2
+write(paste(fff,sum(bbb==2)==2,sep="\t"),file="")
 
