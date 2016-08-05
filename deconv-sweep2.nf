@@ -63,10 +63,8 @@ process WGS_Reads {
     script:
     if (params.debug) {
         """
-        echo "metaART.py -C gzip -t ${key['profile']} -z 1 -M ${key['xfold']} -S ${params.seed} -s ${params.wgs_ins_std} \
-                -m ${params.wgs_ins_len} -l ${params.wgs_read_len} -n ${key}.wgs $ref_seq ." > ${key}.wgs.r1.fq.gz
-        echo "metaART.py -C gzip -t ${key['profile']} -z 1 -M ${key['xfold']} -S ${params.seed} -s ${params.wgs_ins_std} \
-                -m ${params.wgs_ins_len} -l ${params.wgs_read_len} -n ${key}.wgs $ref_seq ." > ${key}.wgs.r2.fq.gz
+        echo $key > ${key}.wgs.1.r1.fq.gz
+        echo $key > ${key}.wgs.1.r2.fq.gz
         """
     }
     else {
@@ -74,8 +72,8 @@ process WGS_Reads {
         export PATH=\$EXT_BIN/art:\$PATH
         metaART.py -C gzip -t ${key['profile']} -z ${params.num_samples} -M ${key['xfold']} -S ${params.seed} -s ${params.wgs_ins_std} \
                 -m ${params.wgs_ins_len} -l ${params.wgs_read_len} -n "${key}.wgs" $ref_seq .
-	wait_on_openfile.sh ${key}.wgs.r1.fq.gz
-	wait_on_openfile.sh ${key}.wgs.r2.fq.gz
+	    wait_on_openfile.sh ${key}.wgs.r1.fq.gz
+	    wait_on_openfile.sh ${key}.wgs.r2.fq.gz
         """
     }
 }
@@ -103,7 +101,7 @@ process ReadMap {
     script:
     if (params.debug) {
         """
-        echo $key > ${key}.wgs2ref.bam
+        echo $key > ${key}.bam
         """
     }
     else {
@@ -111,7 +109,7 @@ process ReadMap {
         """
         export PATH=\$EXT_BIN/a5/bin:\$PATH
 
-	for rr in `ls *.r1.fq.gz`
+	    for rr in `ls *.r1.fq.gz`
         do
         	rbase=`basename \$rr .r1.fq.gz`
         	r2=\$rbase.r2.fq.gz
@@ -192,6 +190,10 @@ process Truth {
 (truth_out, accuracy_in) = truth_out.into(2)
 (deconv_out, acc_deconv_in) = deconv_out.into(2)
 
+accuracy_in = accuracy_in
+        .cross(acc_deconv_in) { it -> ((Key)it[0]).id(4) }
+        .map{ t -> [t[1][0], t[0][1]] + t[1][1..3] }
+
 /**
  * Measure accuracy of strain genotypes
  */
@@ -200,14 +202,20 @@ process Accuracy {
     publishDir params.output, mode: 'copy', overwrite: 'true'
 
     input:
-    set truekey, file(truthfile) from accuracy_in
-    set key, file(snvbpnmf), file(snv_file), file(tree_file) from acc_deconv_in
+    set key, file(truthfile), file(snvbpnmf), file(snv_file), file(tree_file) from accuracy_in
 
     output:
     set file("${key}.truth.report.txt") into truth
 
-    """
-    measure_accuracy.py --bpnmf=${snvbpnmf} --truth=${truthfile} --sites=${snv_file} > ${key}.truth.report.txt
-    """
+    script:
+    if (params.debug) {
+        """
+        echo $key > ${key}.truth.report.txt
+        """
+    }
+    else {
+        """
+        measure_accuracy.py --bpnmf=${snvbpnmf} --truth=${truthfile} --sites=${snv_file} > ${key}.truth.report.txt
+        """
+    }
 }
-
