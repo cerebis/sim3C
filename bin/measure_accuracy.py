@@ -124,7 +124,8 @@ def compute_accuracy( order ):
                 ssd += pow(inferred[i][s][j]-truth[i], 2)
             dist += ssd
 
-    dist = pow(dist/(len(order)*num_sites), 0.5)
+    if(num_sites>0):
+        dist = pow(dist/(len(order)*num_sites), 0.5)
     if dist < best_dist:
         best_dist = dist
         best_order = order

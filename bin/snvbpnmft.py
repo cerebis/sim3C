@@ -167,6 +167,10 @@ for i in range(num_samples):
         if not chromo in depths[i]:
             depths[i][chromo] = dict()
         site = int(d[1])
+        if not chromo in variant_sites:
+            variant_sites[chromo] = dict()
+        if not chromo in found[i]:
+            found[i][chromo] = dict()
         if site in variant_sites[chromo] and not site in found[i][chromo]:
             depths[i][chromo][site] = [d[3],0]
     os.remove(cur_pileup)
