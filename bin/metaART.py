@@ -132,7 +132,7 @@ if __name__ == '__main__':
                     SeqIO.write([ref_seq], seq_tmp, 'fasta')
 
                     try:
-                        subprocess.call([args.art_path,
+                        subprocess.check_call([args.art_path,
                                          '-p',   # paired-end sequencing
                                          '-na',  # no alignment file
                                          '-rs', str(child_seeds.pop()),
@@ -143,10 +143,13 @@ if __name__ == '__main__':
                                          '-i', seq_tmp,
                                          '-o', os.path.join(args.output_dir, TMP_OUTPUT)],
                                         stdout=args.log, stderr=args.log)
-                    except OSError as ex:
-                        print "There was an error starting the art_illumina subprocess."
-                        print "You may need to add its location to your PATH or specify it at runtime."
-                        raise ex
+                    except OSError as e:
+                        print "There was an error executing \"art_illumina\"."
+                        print "Check that it is either on your PATH or specify it at runtime."
+                        raise e
+                    except CalledProcessError as e:
+                        print e
+                        raise e
 
                     # count generated reads
                     r1_n = 0
@@ -178,5 +181,6 @@ if __name__ == '__main__':
                         os.remove(tmp_h.name)
 
                     os.remove(seq_tmp)
-            finally:
-                print "all done, let's go home."
+	    except:
+		print 'Warning!! -- non-zero exit'
+		sys.exit(1)
