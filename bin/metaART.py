@@ -92,8 +92,11 @@ if __name__ == '__main__':
 
     # generate N simulated communities
     for n in range(0, args.num_samples):
+
         profile = {}
-        if args.num_samples == 1 and len(args.comm_table) > 0:
+
+        # read the abundance profile from the simple table format is supplied
+        if args.comm_table and args.num_samples == 1:
             with open(args.comm_table, 'r') as h_table:
                 for line in h_table:
                     line = line.rstrip().lstrip()
@@ -104,6 +107,8 @@ if __name__ == '__main__':
                         print 'sequence table has missing fields at [', line, ']'
                         sys.exit(1)
                     profile[field[0]] = float(field[2])
+
+        # otherwise generate log-normal abundance
         else:
             ra_sum = 0
             for seq_id in seq_index:
@@ -112,7 +117,9 @@ if __name__ == '__main__':
 
             for seq_id in seq_index:
                 profile[seq_id] /= ra_sum
-            print "Sample " + str(n) + " rel abundances " + ", ".join(map(str, profile))
+
+            print "Sample {0} Relative Abundances {1}".format(n, ", ".join(
+                map(lambda v: '{0}:{1:.4f}'.format(v[0],v[1]), profile.items())))
 
         r1_final = '{0}.{1}.r1.fq'.format(base_name, n)
         r2_final = '{0}.{1}.r2.fq'.format(base_name, n)
@@ -125,7 +132,7 @@ if __name__ == '__main__':
 
                     coverage = float(profile[seq_id] * args.max_coverage)
                     coverage_file.write(str(n) + "\t" + seq_id + "\t" + str(coverage) + "\n")
-                    print 'Requesting {0} coverage for {1}'.format(coverage, seq_id)
+                    print '\tRequesting {0:.4f} coverage for {1}'.format(coverage, seq_id)
 
                     ref_seq = seq_index[seq_id]
 
@@ -136,7 +143,7 @@ if __name__ == '__main__':
                         subprocess.check_call([args.art_path,
                                                '-p',   # paired-end sequencing
                                                '-na',  # no alignment file
-                                               '-rs', str(child_seeds.pop()),
+                                               '-rs', str(child_seeds[n]),
                                                '-m', str(args.insert_len),
                                                '-s', str(args.insert_sd),
                                                '-l', str(args.read_len),
@@ -162,7 +169,7 @@ if __name__ == '__main__':
                         r2_n += 1
 
                     effective_cov = args.read_len * (r1_n + r2_n) / float(ref_len)
-                    print 'Generated {0} paired-end reads for {1}, {2:.3f} coverage'.format(r1_n, seq_id, effective_cov)
+                    print '\tGenerated {0} paired-end reads for {1}, {2:.3f} coverage'.format(r1_n, seq_id, effective_cov)
                     if r1_n != r2_n:
                         print 'Error: paired-end counts do not match {0} vs {1}'.format(r1_n, r2_n)
                         sys.exit(1)
@@ -182,6 +189,7 @@ if __name__ == '__main__':
                         os.remove(tmp_h.name)
 
                     os.remove(seq_tmp)
-            except:
+            except Exception as e:
+                print e
                 print 'Warning!! -- non-zero exit'
                 sys.exit(1)
