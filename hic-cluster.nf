@@ -102,16 +102,12 @@ process GraphStats {
     """
 }
 
-louvsoft_cl.map { f-> [helper.dropSuffix(f.name), f]}
-    .mix(louvhard_cl.map{ f-> [helper.dropSuffix(f.name), f]})
-    .mix(oclustr_cl.map{ f-> [helper.dropSuffix(f.name), f]})
-    //.subscribe{println it}
-
 bc_sweep = truths.onCopy().cross(louvsoft_cl.map { f-> [helper.dropSuffix(f.name), f]}
     .mix(louvhard_cl.map{ f-> [helper.dropSuffix(f.name), f]})
     .mix(oclustr_cl.map{ f-> [helper.dropSuffix(f.name), f]})
     .map { t -> [ helper.removeLevels(t[0],1), *t ] })
     .map { t -> [ t[1][1], t[1][2], t[0][1]] }
+
 
 process Bcubed  {
     cache 'deep'
