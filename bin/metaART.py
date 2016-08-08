@@ -26,10 +26,13 @@ import sys
 import gzip
 import bz2
 import numpy
-from numpy import random
 
 TMP_INPUT = 'seq.tmp'
 TMP_OUTPUT = 'reads.tmp'
+
+# low-high seeds, giving 5M values
+LOW_SEED_VALUE = 1000000
+HIGH_SEED_VALUE = 6000000
 
 def open_output(fname, compress=None):
     if compress == 'bzip2':
@@ -52,16 +55,20 @@ if __name__ == '__main__':
                         help='Community profile table', metavar='FILE')
     parser.add_argument('-M', '--max-coverage', metavar='INT', type=int, required=True,
                         help='Coverage of must abundant taxon')
-    parser.add_argument('-S', '--seed', metavar='INT', type=int, default='1234', required=True, help='Random seed')
+    parser.add_argument('-S', '--seed', metavar='INT', type=int, required=True, help='Random seed')
     parser.add_argument('-l', '--read-len', metavar='INT', type=int, required=True, help='Read length')
     parser.add_argument('-m', '--insert-len', metavar='INT', type=int, required=True, help='Insert length')
     parser.add_argument('-s', '--insert-sd', metavar='INT', type=int, required=True, help='Insert standard deviation')
     parser.add_argument('--art-path', default='art_illumina', help='Path to ART executable [default: art_illumina]')
     parser.add_argument('--log', default='metaART.log', type=argparse.FileType('w'), help='Log file name')
-    parser.add_argument('--coverage_out', default='coverage.tsv', type=argparse.FileType('w'), help='Output file for simulated genome coverage table',required=False)
-    parser.add_argument('-z', '--num-samples', metavar='INT', type=int, default='1', required=True, help='Number of transect samples')
-    parser.add_argument('-U', '--lognorm-ra-mu', metavar='FLOAT', type=float, default='1', required=False, help='Lognormal relative abundance mu parameter')
-    parser.add_argument('-u', '--lognorm-ra-sigma', metavar='FLOAT', type=float, default='1', required=False, help='Lognormal relative abundance sigma parameter')
+    parser.add_argument('--coverage_out', default='coverage.tsv', type=argparse.FileType('w'),
+                        help='Output file for simulated genome coverage table', required=False)
+    parser.add_argument('-z', '--num-samples', metavar='INT', type=int, default='1', required=True,
+                        help='Number of transect samples')
+    parser.add_argument('-U', '--lognorm-ra-mu', metavar='FLOAT', type=float, default='1', required=False,
+                        help='Lognormal relative abundance mu parameter')
+    parser.add_argument('-u', '--lognorm-ra-sigma', metavar='FLOAT', type=float, default='1', required=False,
+                        help='Lognormal relative abundance sigma parameter')
     parser.add_argument('fasta', metavar='MULTIFASTA',
                         help='Input multi-fasta of all sequences')
     parser.add_argument('output_dir', metavar='DIR',
@@ -79,10 +86,13 @@ if __name__ == '__main__':
 
     coverage_file = args.coverage_out
 
+    RANDOM_STATE = numpy.random.RandomState(args.seed)
+    child_seeds = RANDOM_STATE.randint(LOW_SEED_VALUE, HIGH_SEED_VALUE, args.num_samples).tolist()
+
     # generate N simulated communities
-    for n in range(0,args.num_samples):
+    for n in range(0, args.num_samples):
         profile = {}
-    	if args.num_samples == 1 and len(args.comm_table)>0:
+        if args.num_samples == 1 and len(args.comm_table) > 0:
             with open(args.comm_table, 'r') as h_table:
                 for line in h_table:
                     line = line.rstrip().lstrip()
@@ -96,18 +106,17 @@ if __name__ == '__main__':
         else:
             ra_sum = 0
             for seq_id in seq_index:
-                profile[seq_id] = numpy.random.lognormal(args.lognorm_ra_mu, args.lognorm_ra_sigma)
+                profile[seq_id] = RANDOM_STATE.lognormal(args.lognorm_ra_mu, args.lognorm_ra_sigma)
                 ra_sum += profile[seq_id]
 
             for seq_id in seq_index:
                 profile[seq_id] /= ra_sum
             print "Sample " + str(n) + " rel abundances " + ", ".join(map(str, profile))
 
-
-        r1_final = '{0}.{1}.r1.fq'.format(base_name,n)
-        r2_final = '{0}.{1}.r2.fq'.format(base_name,n)
-        r1_tmp = os.path.join(args.output_dir, '{0}1.fq'.format(TMP_OUTPUT,n)) 
-        r2_tmp = os.path.join(args.output_dir, '{0}2.fq'.format(TMP_OUTPUT,n))
+        r1_final = '{0}.{1}.r1.fq'.format(base_name, n)
+        r2_final = '{0}.{1}.r2.fq'.format(base_name, n)
+        r1_tmp = os.path.join(args.output_dir, '{0}1.fq'.format(TMP_OUTPUT, n))
+        r2_tmp = os.path.join(args.output_dir, '{0}2.fq'.format(TMP_OUTPUT, n))
 
         with open_output(r1_final, args.compress) as output_R1, open_output(r2_final, args.compress) as output_R2:
             try:
@@ -124,15 +133,16 @@ if __name__ == '__main__':
 
                     try:
                         subprocess.call([args.art_path,
-                                     '-p',   # paired-end sequencing
-                                     '-na',  # no alignment file
-                                     '-rs', str(numpy.random.randint(20000000)),
-                                     '-m', str(args.insert_len),
-                                     '-s', str(args.insert_sd),
-                                     '-l', str(args.read_len),
-                                     '-f', str(coverage),
-                                     '-i', seq_tmp,
-                                     '-o', os.path.join(args.output_dir, TMP_OUTPUT)], stdout=args.log, stderr=args.log)
+                                         '-p',   # paired-end sequencing
+                                         '-na',  # no alignment file
+                                         '-rs', str(child_seeds.pop()),
+                                         '-m', str(args.insert_len),
+                                         '-s', str(args.insert_sd),
+                                         '-l', str(args.read_len),
+                                         '-f', str(coverage),
+                                         '-i', seq_tmp,
+                                         '-o', os.path.join(args.output_dir, TMP_OUTPUT)],
+                                        stdout=args.log, stderr=args.log)
                     except OSError as ex:
                         print "There was an error starting the art_illumina subprocess."
                         print "You may need to add its location to your PATH or specify it at runtime."
