@@ -58,6 +58,7 @@ if __name__ == '__main__':
     parser.add_argument('-s', '--insert-sd', metavar='INT', type=int, required=True, help='Insert standard deviation')
     parser.add_argument('--art-path', default='art_illumina', help='Path to ART executable [default: art_illumina]')
     parser.add_argument('--log', default='metaART.log', type=argparse.FileType('w'), help='Log file name')
+    parser.add_argument('--coverage_out', default='coverage.tsv', type=argparse.FileType('w'), help='Output file for simulated genome coverage table',required=False)
     parser.add_argument('-z', '--num-samples', metavar='INT', type=int, default='1', required=True, help='Number of transect samples')
     parser.add_argument('-U', '--lognorm-ra-mu', metavar='FLOAT', type=float, default='1', required=False, help='Lognormal relative abundance mu parameter')
     parser.add_argument('-u', '--lognorm-ra-sigma', metavar='FLOAT', type=float, default='1', required=False, help='Lognormal relative abundance sigma parameter')
@@ -75,6 +76,8 @@ if __name__ == '__main__':
     base_name = os.path.join(args.output_dir, args.output_name)
     all_R1 = open_output('{0}.r1.fq'.format(base_name), args.compress)
     all_R2 = open_output('{0}.r2.fq'.format(base_name), args.compress)
+
+    coverage_file = args.coverage_out
 
     # generate N simulated communities
     for n in range(0,args.num_samples):
@@ -111,6 +114,7 @@ if __name__ == '__main__':
                 for seq_id in profile:
 
                     coverage = float(profile[seq_id] * args.max_coverage)
+                    coverage_file.write(str(n) + "\t" + seq_id + "\t" + str(coverage) + "\n")
                     print 'Requesting {0} coverage for {1}'.format(coverage, seq_id)
 
                     ref_seq = seq_index[seq_id]
@@ -122,7 +126,7 @@ if __name__ == '__main__':
                         subprocess.call([args.art_path,
                                      '-p',   # paired-end sequencing
                                      '-na',  # no alignment file
-                                     '-rs', str(args.seed),
+                                     '-rs', str(numpy.random.randint(20000000)),
                                      '-m', str(args.insert_len),
                                      '-s', str(args.insert_sd),
                                      '-l', str(args.read_len),
