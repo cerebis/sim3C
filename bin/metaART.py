@@ -34,6 +34,7 @@ TMP_OUTPUT = 'reads.tmp'
 LOW_SEED_VALUE = 1000000
 HIGH_SEED_VALUE = 6000000
 
+
 def open_output(fname, compress=None):
     if compress == 'bzip2':
         fh = bz2.BZ2File(fname + '.bz2', 'w')
@@ -133,21 +134,21 @@ if __name__ == '__main__':
 
                     try:
                         subprocess.check_call([args.art_path,
-                                         '-p',   # paired-end sequencing
-                                         '-na',  # no alignment file
-                                         '-rs', str(child_seeds.pop()),
-                                         '-m', str(args.insert_len),
-                                         '-s', str(args.insert_sd),
-                                         '-l', str(args.read_len),
-                                         '-f', str(coverage),
-                                         '-i', seq_tmp,
-                                         '-o', os.path.join(args.output_dir, TMP_OUTPUT)],
-                                        stdout=args.log, stderr=args.log)
+                                               '-p',   # paired-end sequencing
+                                               '-na',  # no alignment file
+                                               '-rs', str(child_seeds.pop()),
+                                               '-m', str(args.insert_len),
+                                               '-s', str(args.insert_sd),
+                                               '-l', str(args.read_len),
+                                               '-f', str(coverage),
+                                               '-i', seq_tmp,
+                                               '-o', os.path.join(args.output_dir, TMP_OUTPUT)],
+                                              stdout=args.log, stderr=args.log)
                     except OSError as e:
                         print "There was an error executing \"art_illumina\"."
                         print "Check that it is either on your PATH or specify it at runtime."
                         raise e
-                    except CalledProcessError as e:
+                    except subprocess.CalledProcessError as e:
                         print e
                         raise e
 
@@ -181,6 +182,6 @@ if __name__ == '__main__':
                         os.remove(tmp_h.name)
 
                     os.remove(seq_tmp)
-	    except:
-		print 'Warning!! -- non-zero exit'
-		sys.exit(1)
+            except:
+                print 'Warning!! -- non-zero exit'
+                sys.exit(1)
