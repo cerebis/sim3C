@@ -111,6 +111,51 @@ variant_sites = dict()
 found = dict()
 
 ##
+# make variant calls on the entire dataset
+# use these calls to identify high quality variant sites
+#
+merge_cmd = "samtools merge merged.bam " + " ".join(sys.argv[3:-1])
+print merge_cmd
+os.system(merge_cmd)
+
+lofreq_cmd = lofreq + " call --no-default-filter " + " -C 3 -f " + ref_fa + " -o merged.vcf merged.bam"
+print lofreq_cmd
+os.system(lofreq_cmd)
+
+filter_cmd = lofreq + " filter -i merged.vcf -v 2 -B 15 -Q 60 -o merged.filt.vcf"
+print filter_cmd
+os.system(filter_cmd)
+
+#
+# TODO: fix the heinous code duplication crime below
+vcf_file = open("merged.filt.vcf")
+min_strand_cov = 2   # minimum number of reads on each strand across all time points
+for line in vcf_file:
+    if line.startswith("#"):
+        continue
+    line.rstrip()
+    d = line.split("\t")
+    if not d[6].startswith("PASS"):
+        continue    # didnt pass filters
+    mo = re.search('DP4=.+,.+,(.+),(.+)', d[7])
+    mo1 = int(mo.group(1))
+    mo2 = int(mo.group(2))
+    if(mo1 < min_strand_cov or mo2 < min_strand_cov):
+        continue    # variant not observed on both strands. unreliable.
+
+    chromo = d[0]
+    site = int(d[1])
+
+    if not chromo in variant_sites:
+        variant_sites[chromo] = dict()
+    variant_sites[chromo][site]=[d[3],d[4]] # store the ref & variant allele
+
+# destroy the evidence
+#os.remove("merged.bam")
+#os.remove("merged.vcf")
+#os.remove("merged.filt.vcf")
+
+##
 # make variant calls for each input bam
 # parse the VCF and store calls in snvs dict
 #
@@ -118,10 +163,10 @@ for i in range(num_samples):
     found[i] = dict()
     depths[i] = dict()
     cur_vcf = os.path.join(out_dir, str(i) + ".vcf")
-    lofreq_cmd = lofreq + " call " + " -C 2 -f " + ref_fa + " -o tmp.vcf " + sys.argv[i+3] 
+    lofreq_cmd = lofreq + " call --no-default-filter " + " -C 2 -f " + ref_fa + " -o tmp.vcf " + sys.argv[i+3] 
     print lofreq_cmd
     os.system(lofreq_cmd)
-    filter_cmd = lofreq + " filter -i tmp.vcf -B 15 -Q 60 -o " + cur_vcf 
+    filter_cmd = lofreq + " filter -i tmp.vcf -v 2 -B 15 -Q 60 -o " + cur_vcf 
     print filter_cmd
     os.system(filter_cmd)
     os.remove("tmp.vcf")
@@ -137,16 +182,15 @@ for i in range(num_samples):
         d = line.split("\t")
         if not d[6].startswith("PASS"):
             continue    # didnt pass filters
-        mo = re.search('DP4=.+,.+,(.+),(.+)', d[7])
-        mo1 = int(mo.group(1))
-        mo2 = int(mo.group(2))
-        if(mo1 < 1 or mo2 < 1):
-            continue    # variant not observed on both strands. unreliable.
         m = re.search('DP=(.+);AF=(.+);SB', d[7])
         vac = round(float(m.group(1)) * float(m.group(2)))
 
         chromo = d[0]
         site = int(d[1])
+
+        # check whether this is a known variant site
+        if not site in variant_sites[chromo]:
+            continue
 
         if not chromo in depths[i]:
             depths[i][chromo] = dict()
