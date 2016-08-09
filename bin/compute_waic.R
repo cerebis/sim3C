@@ -14,5 +14,5 @@ phat_waic <- sum(apply(abab[,ff:ffl],2,var))
 elpd_hats <- log(colMeans(exp(abab[,ff:ffl]))) - apply(abab[,ff:ffl],2,var)
 waic_se <- sqrt(nrow(abab) * var(elpd_hats))
 
-write("waic, standard error", file="")
+write("#waic, standard error", file="")
 write(paste(lpd_hat - phat_waic, waic_se, sep=","), file="")

@@ -51,7 +51,7 @@ def parse_bpnmf(bpnmf_filename):
 
 
 def run_bpnmf(num_strains):
-    snv_filename = os.path.join(out_dir, "snv_file.data.R")
+    snv_filename = os.path.join(out_dir, str(num_strains) + ".snv_file.data.R")
     snv_file = open(snv_filename, "w")
     snv_file.write("U<-" + str(num_sites) + "\n")  # number of sites
     snv_file.write("totalsites<-" + str(num_sites) + "\n")  # number of sites
@@ -93,10 +93,13 @@ def run_bpnmf(num_strains):
     #
     bpnmf_filename = os.path.join(out_dir, "decon." + str(num_strains) + ".csv")
     diag_filename =  os.path.join(out_dir, "diag." + str(num_strains) + ".csv")
-    bpnmf_cmd = "genotypes3 variational output_samples=100 tol_rel_obj=0.001 iter=25000 algorithm=meanfield data file=" + snv_filename + " output file=" + bpnmf_filename + " diagnostic_file=" + diag_filename
+    bpnmf_cmd = "genotypes3_waic variational output_samples=100 tol_rel_obj=0.001 iter=25000 algorithm=meanfield data file=" + snv_filename + " output file=" + bpnmf_filename + " diagnostic_file=" + diag_filename
     os.system(bpnmf_cmd)
-    #os.remove(snv_filename)
 
+    ##
+    # compute the WAIC
+    waic_cmd = "compute_waic.R " + bpnmf_filename + " " + str(num_sites) + " " + str(num_samples) + " > waic." + str(num_strains)
+    os.system(waic_cmd)
 
 # parse the command-line
 if len(sys.argv)<5:
@@ -225,34 +228,41 @@ for i in range(num_samples):
 num_sites = 0
 for chromo in variant_sites:
     num_sites += len(variant_sites[chromo])
-min_strains = 4
-max_strains = 4
-num_repeats = 1
-best_ELBO = -9999999999999
+min_strains = 1
+max_strains = 8
+num_repeats = 2
+best_metric = -9999999999999
 best_strains = 0
-S_ELBOS = [None]*(max_strains+1)
+S_metrics = [None]*(max_strains+1)
 bpnmf_filename = ""
 for S in range(min_strains,max_strains+1):
     for r in range(1,num_repeats+1):
         run_bpnmf(S)
+
+#        waic_file = open("waic."+str(S))
+#        for line in waic_file:
         diag_file = open("diag."+str(S)+".csv")
         for line in diag_file:
             if line.startswith("#"):
                 continue
             d = line.split(",")
-            cur_elbo = float(d[2])
-            if(cur_elbo>best_ELBO):
-                best_ELBO=cur_elbo
+            cur_metric = float(d[2])  # parse out evidence lower bound (ELBO)
+#            cur_metric = float(d[0]) # parse out WAIC
+            if(cur_metric>best_metric):
+                best_metric=cur_metric
                 best_strains = S
                 bpnmf_filename = os.path.join(out_dir, "decon." + str(S) + ".csv")
-            if(S_ELBOS[S] == None or cur_elbo>S_ELBOS[S]):
-                S_ELBOS[S] = cur_elbo
+            if(S_metrics[S] == None or cur_metric>S_metrics[S]):
+                S_metrics[S] = cur_metric
 
-print "Best strains is " + str(best_strains) + ", ELBO " + str(best_ELBO)
+print "Best strains is " + str(best_strains) + ", ELBO " + str(best_metric)
+#print "Best strains is " + str(best_strains) + ", WAIC " + str(best_metric)
+
 bpnmf_filename = os.path.join(out_dir, "decon.csv")
 os.system("mv " + os.path.join(out_dir, "decon." + str(best_strains) + ".csv") + " " + bpnmf_filename)
+os.system("mv " + os.path.join(out_dir, str(best_strains) + ".snv_file.data.R") + " " + os.path.join(out_dir, "snv_file.data.R"))
 for s in range(min_strains,max_strains+1):
-    print str(s) + " strains ELBO " + str(S_ELBOS[s])
+    print str(s) + " strains metric " + str(S_metrics[s])
 
 num_strains = best_strains
 
