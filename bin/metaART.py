@@ -26,10 +26,14 @@ import sys
 import gzip
 import bz2
 import numpy
-from numpy import random
 
 TMP_INPUT = 'seq.tmp'
 TMP_OUTPUT = 'reads.tmp'
+
+# low-high seeds, giving 5M values
+LOW_SEED_VALUE = 1000000
+HIGH_SEED_VALUE = 6000000
+
 
 def open_output(fname, compress=None):
     if compress == 'bzip2':
@@ -52,16 +56,20 @@ if __name__ == '__main__':
                         help='Community profile table', metavar='FILE')
     parser.add_argument('-M', '--max-coverage', metavar='INT', type=int, required=True,
                         help='Coverage of must abundant taxon')
-    parser.add_argument('-S', '--seed', metavar='INT', type=int, default='1234', required=True, help='Random seed')
+    parser.add_argument('-S', '--seed', metavar='INT', type=int, required=True, help='Random seed')
     parser.add_argument('-l', '--read-len', metavar='INT', type=int, required=True, help='Read length')
     parser.add_argument('-m', '--insert-len', metavar='INT', type=int, required=True, help='Insert length')
     parser.add_argument('-s', '--insert-sd', metavar='INT', type=int, required=True, help='Insert standard deviation')
     parser.add_argument('--art-path', default='art_illumina', help='Path to ART executable [default: art_illumina]')
     parser.add_argument('--log', default='metaART.log', type=argparse.FileType('w'), help='Log file name')
-    parser.add_argument('--coverage_out', default='coverage.tsv', type=argparse.FileType('w'), help='Output file for simulated genome coverage table',required=False)
-    parser.add_argument('-z', '--num-samples', metavar='INT', type=int, default='1', required=True, help='Number of transect samples')
-    parser.add_argument('-U', '--lognorm-ra-mu', metavar='FLOAT', type=float, default='1', required=False, help='Lognormal relative abundance mu parameter')
-    parser.add_argument('-u', '--lognorm-ra-sigma', metavar='FLOAT', type=float, default='1', required=False, help='Lognormal relative abundance sigma parameter')
+    parser.add_argument('--coverage_out', default='coverage.tsv', type=argparse.FileType('w'),
+                        help='Output file for simulated genome coverage table', required=False)
+    parser.add_argument('-z', '--num-samples', metavar='INT', type=int, default='1', required=True,
+                        help='Number of transect samples')
+    parser.add_argument('-U', '--lognorm-ra-mu', metavar='FLOAT', type=float, default='1', required=False,
+                        help='Lognormal relative abundance mu parameter')
+    parser.add_argument('-u', '--lognorm-ra-sigma', metavar='FLOAT', type=float, default='1', required=False,
+                        help='Lognormal relative abundance sigma parameter')
     parser.add_argument('fasta', metavar='MULTIFASTA',
                         help='Input multi-fasta of all sequences')
     parser.add_argument('output_dir', metavar='DIR',
@@ -79,10 +87,16 @@ if __name__ == '__main__':
 
     coverage_file = args.coverage_out
 
+    RANDOM_STATE = numpy.random.RandomState(args.seed)
+    child_seeds = RANDOM_STATE.randint(LOW_SEED_VALUE, HIGH_SEED_VALUE, args.num_samples).tolist()
+
     # generate N simulated communities
-    for n in range(0,args.num_samples):
+    for n in range(0, args.num_samples):
+
         profile = {}
-    	if args.num_samples == 1 and len(args.comm_table)>0:
+
+        # read the abundance profile from the simple table format is supplied
+        if args.comm_table and args.num_samples == 1:
             with open(args.comm_table, 'r') as h_table:
                 for line in h_table:
                     line = line.rstrip().lstrip()
@@ -93,21 +107,24 @@ if __name__ == '__main__':
                         print 'sequence table has missing fields at [', line, ']'
                         sys.exit(1)
                     profile[field[0]] = float(field[2])
+
+        # otherwise generate log-normal abundance
         else:
             ra_sum = 0
             for seq_id in seq_index:
-                profile[seq_id] = numpy.random.lognormal(args.lognorm_ra_mu, args.lognorm_ra_sigma)
+                profile[seq_id] = RANDOM_STATE.lognormal(args.lognorm_ra_mu, args.lognorm_ra_sigma)
                 ra_sum += profile[seq_id]
 
             for seq_id in seq_index:
                 profile[seq_id] /= ra_sum
-            print "Sample " + str(n) + " rel abundances " + ", ".join(map(str, profile))
 
+            print "Sample {0} Relative Abundances {1}".format(n, ", ".join(
+                map(lambda v: '{0}:{1:.4f}'.format(v[0],v[1]), profile.items())))
 
-        r1_final = '{0}.{1}.r1.fq'.format(base_name,n)
-        r2_final = '{0}.{1}.r2.fq'.format(base_name,n)
-        r1_tmp = os.path.join(args.output_dir, '{0}1.fq'.format(TMP_OUTPUT,n)) 
-        r2_tmp = os.path.join(args.output_dir, '{0}2.fq'.format(TMP_OUTPUT,n))
+        r1_final = '{0}.{1}.r1.fq'.format(base_name, n)
+        r2_final = '{0}.{1}.r2.fq'.format(base_name, n)
+        r1_tmp = os.path.join(args.output_dir, '{0}1.fq'.format(TMP_OUTPUT, n))
+        r2_tmp = os.path.join(args.output_dir, '{0}2.fq'.format(TMP_OUTPUT, n))
 
         with open_output(r1_final, args.compress) as output_R1, open_output(r2_final, args.compress) as output_R2:
             try:
@@ -115,7 +132,7 @@ if __name__ == '__main__':
 
                     coverage = float(profile[seq_id] * args.max_coverage)
                     coverage_file.write(str(n) + "\t" + seq_id + "\t" + str(coverage) + "\n")
-                    print 'Requesting {0} coverage for {1}'.format(coverage, seq_id)
+                    print '\tRequesting {0:.4f} coverage for {1}'.format(coverage, seq_id)
 
                     ref_seq = seq_index[seq_id]
 
@@ -123,20 +140,24 @@ if __name__ == '__main__':
                     SeqIO.write([ref_seq], seq_tmp, 'fasta')
 
                     try:
-                        subprocess.call([args.art_path,
-                                     '-p',   # paired-end sequencing
-                                     '-na',  # no alignment file
-                                     '-rs', str(numpy.random.randint(20000000)),
-                                     '-m', str(args.insert_len),
-                                     '-s', str(args.insert_sd),
-                                     '-l', str(args.read_len),
-                                     '-f', str(coverage),
-                                     '-i', seq_tmp,
-                                     '-o', os.path.join(args.output_dir, TMP_OUTPUT)], stdout=args.log, stderr=args.log)
-                    except OSError as ex:
-                        print "There was an error starting the art_illumina subprocess."
-                        print "You may need to add its location to your PATH or specify it at runtime."
-                        raise ex
+                        subprocess.check_call([args.art_path,
+                                               '-p',   # paired-end sequencing
+                                               '-na',  # no alignment file
+                                               '-rs', str(child_seeds[n]),
+                                               '-m', str(args.insert_len),
+                                               '-s', str(args.insert_sd),
+                                               '-l', str(args.read_len),
+                                               '-f', str(coverage),
+                                               '-i', seq_tmp,
+                                               '-o', os.path.join(args.output_dir, TMP_OUTPUT)],
+                                              stdout=args.log, stderr=args.log)
+                    except OSError as e:
+                        print "There was an error executing \"art_illumina\"."
+                        print "Check that it is either on your PATH or specify it at runtime."
+                        raise e
+                    except subprocess.CalledProcessError as e:
+                        print e
+                        raise e
 
                     # count generated reads
                     r1_n = 0
@@ -148,7 +169,7 @@ if __name__ == '__main__':
                         r2_n += 1
 
                     effective_cov = args.read_len * (r1_n + r2_n) / float(ref_len)
-                    print 'Generated {0} paired-end reads for {1}, {2:.3f} coverage'.format(r1_n, seq_id, effective_cov)
+                    print '\tGenerated {0} paired-end reads for {1}, {2:.3f} coverage'.format(r1_n, seq_id, effective_cov)
                     if r1_n != r2_n:
                         print 'Error: paired-end counts do not match {0} vs {1}'.format(r1_n, r2_n)
                         sys.exit(1)
@@ -168,5 +189,7 @@ if __name__ == '__main__':
                         os.remove(tmp_h.name)
 
                     os.remove(seq_tmp)
-            finally:
-                print "all done, let's go home."
+            except Exception as e:
+                print e
+                print 'Warning!! -- non-zero exit'
+                sys.exit(1)
