@@ -1,0 +1,7 @@
+# Created by .ignore support plugin (hsz.mobi)
+*.pyc
+.RData
+.Rhistory
+work/
+out/
+.ipynb_checkpoints/
