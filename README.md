@@ -57,7 +57,7 @@ Using regular local processes.
 meta-sweeper.sh -c sweep.config run hic-sweep.nf
 ```
 
-_Note_ the nature of mixing concurrency and potentially resource hungry processes (such as genome assembly) can mean that a basic local execution strategy may result in resource stravation and subsequently premature program termination. It is recommended that, in the long run, it is worthwhile for users to configure a [https://www.nextflow.io/docs/latest/executor.html](Nextflow supported distributed resource manager (DRM)) such as SGE, SLURM, etc. to take responsibility for managing available local resources.
+**Note:** the nature of mixing concurrency and potentially resource hungry processes (such as genome assembly) can mean that a basic local execution strategy may result in resource stravation and subsequently premature program termination. It is recommended that, in the long run, it is worthwhile for users to configure a [https://www.nextflow.io/docs/latest/executor.html](Nextflow supported distributed resource manager (DRM)) such as SGE, SLURM, etc. to take responsibility for managing available local resources.
 
 #### Distributed execution
 
