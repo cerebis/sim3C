@@ -46,7 +46,7 @@ pip install --upgrade biopython pandas PyYAML networkx pysam
 
 ### Usage
 
-We recommend that users start sweeps by using the ```meta-sweeper.sh``` launch script. It is the easiest way to start meta-sweeper, providing a tiny bit of boiler plate to the subordinate workflows. Namely, it obtains the installed path of meta-sweeper and checks that nextflow exists on the path. 
+We recommend users start sweeps using the ```meta-sweeper.sh``` launch script. It is the easiest way to start meta-sweeper, providing a tiny bit of boiler plate to the subordinate workflows. Namely, it obtains the installed path of meta-sweeper and checks that nextflow exists on the path. 
 
 How parameters are varied over the sweep are defined in a Nextflow configuration file. An example ```sweep.config``` along with supporting files in ```test``` has been provided.
 
@@ -57,7 +57,9 @@ Using regular local processes.
 meta-sweeper.sh -c sweep.config run hic-sweep.nf
 ```
 
-#### Grid execution
+_Note_ the nature of mixing concurrency and potentially resource hungry processes (such as genome assembly) can mean that a basic local execution strategy may result in resource stravation and subsequently premature program termination. It is recommended that, in the long run, it is worthwhile for users to configure a [https://www.nextflow.io/docs/latest/executor.html](Nextflow supported distributed resource manager (DRM)) such as SGE, SLURM, etc. to take responsibility for managing available local resources.
+
+#### Distributed execution
 
 With Nextflow it is easy to submit the work to a grid architecture. For Meta-sweeper, these details are organised as execution profiles in the file named ```execution.config```. We have defined a few examples which may work out of the box on your system.
 
