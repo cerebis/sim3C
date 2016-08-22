@@ -16,11 +16,15 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
+package mzd
+
 import groovy.transform.AutoClone
 import groovy.transform.Synchronized
 import groovyx.gpars.dataflow.DataflowQueue
-import nextflow.Nextflow
 import nextflow.Channel
+import nextflow.Nextflow
+import nextflow.util.KryoHelper
+
 import java.nio.file.Path
 
 /**
@@ -31,6 +35,13 @@ class Helper {
     static def delimiters = /[ ,\t]/
 
     static {
+
+        // For Nextflow caching to function, we must register our custom classes
+        // with the chosen serialization library (Kryo). We do not provide any
+        // custom Serializer implementation.
+        KryoHelper.register(Key);
+        KryoHelper.register(NamedValue);
+
         List.metaClass.pick = { ... picks ->
             if (picks instanceof Object[]) {
                 picks = picks.collect()
@@ -71,6 +82,9 @@ class Helper {
         String name
         Object value
 
+        // required for serialization
+        NamedValue() {/*...*/}
+
         NamedValue(name, value) {
             this.name = name
             this.value = value
@@ -101,13 +115,16 @@ class Helper {
         }
 
         int hashCode() {
-            return HASH_PRIME * name.hashCode() * value.hashCode()
+            return name.hashCode()
         }
     }
 
     static class Key {
         private static final int HASH_PRIME = 37
         LinkedHashMap varMap = [:]
+
+        // required for serialization
+        Key() {/*...*/}
 
         @Synchronized
         Key copy() {
@@ -171,8 +188,8 @@ class Helper {
             return _o.varMap.keySet().equals(varMap.keySet())
         }
 
-        int hashcode() {
-            return HASH_PRIME * varMap.keySet().hashcode()
+        int hashCode() {
+            return this.toString().hashCode()
         }
 
         public def getKeys() {
@@ -456,4 +473,3 @@ class Helper {
         return A.collectMany{a->B.collect{b->[a, b]}}
     }
 }
-
