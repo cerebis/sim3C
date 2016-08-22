@@ -115,7 +115,7 @@ class Helper {
         }
 
         int hashCode() {
-            return name.hashCode()
+            return Objects.hash(name, value)
         }
     }
 
@@ -185,11 +185,11 @@ class Helper {
                 return true
             }
             Key _o = other as Key
-            return _o.varMap.keySet().equals(varMap.keySet())
+            return _o.varMap.values().equals(varMap.values())
         }
 
         int hashCode() {
-            return this.toString().hashCode()
+            return Objects.hash(toString())
         }
 
         public def getKeys() {
