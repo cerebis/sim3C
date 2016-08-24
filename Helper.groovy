@@ -368,18 +368,18 @@ class Helper {
 
             df = df.spread(p)
                     .map { row ->
-                def key = row[0].copy();
-                def vars = row[-varNames.size()..-1]
-                vars.each { key.put(it) }
+                        def key = row[0].copy();
+                        def vars = row[-varNames.size()..-1]
+                        vars.each { key.put(it) }
 
-                proc_vars = []
-                int num_proc_vars = row.size() - varNames.size() - 1
-                if (num_proc_vars > 0) {
-                    row[1..num_proc_vars].each { proc_vars << it }
-                }
+                        proc_vars = []
+                        int num_proc_vars = row.size() - varNames.size() - 1
+                        if (num_proc_vars > 0) {
+                            row[1..num_proc_vars].each { proc_vars << it }
+                        }
 
-                [key, *proc_vars]
-            }
+                        [key, *proc_vars]
+                    }
 
             return df
         }
