@@ -86,11 +86,11 @@ class Alignment:
     @property
     def percent_id(self):
         '''
-        Percentage identity of alignment
+        Percentage identity of alignment. Range [0..1]
         As defined by BLAT perl script for calculating percentage identity
         '''
         return (1.0 - float(self.mismatches + self.q_num_insert) /
-                float(self.matches + self.mismatches + self.repmatches)) * 100.0
+                float(self.matches + self.mismatches + self.repmatches))
 
 
 _dataline_pattern = re.compile(r'^[0-9]+\t')
