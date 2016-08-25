@@ -52,8 +52,6 @@ def validate_combinations(counters):
             return False
         return True
 
-    if
-
 if __name__ == '__main__':
     import argparse
 
