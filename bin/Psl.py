@@ -107,7 +107,11 @@ def parse(handle):
     for line in handle:
         if not _dataline_pattern.match(line):
             continue
-        yield Alignment(line)
+        try:
+            yield Alignment(line)
+        except IndexError as e:
+            print e
+            print line
 
 
 def _delim_string_to_int_list(str, delim=','):
@@ -118,3 +122,4 @@ def _delim_string_to_int_list(str, delim=','):
     :return: list of ints
     """
     return [int(si) for si in str.split(delim) if si]
+
