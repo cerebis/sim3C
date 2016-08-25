@@ -93,11 +93,11 @@ if __name__ == '__main__':
         print
 
     if no_files > 0:
-        print 'There were {0} suffixes with no files'.format(no_files)
+        print 'PROBLEM: there were {0} suffixes with no files'.format(no_files)
     else:
-        print 'Files found for all suffixes'
+        print 'OK: files found for all suffixes'
 
     if not_valid > 0:
-        print 'There were {0} validation errors'.format(not_valid)
+        print 'PROBLEM: there were {0} validation errors'.format(not_valid)
     else:
-        print 'No validation errors'
+        print 'OK: no validation errors'
