@@ -17,16 +17,11 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """
-from Bio import SeqIO
-from collections import OrderedDict
-
 import Psl
 import truthtable as tt
 
 import numpy as np
 import argparse
-import sys
-import re
 
 
 def parse_psl(psl_file, min_id=0.90, cover_thres=0.96):
@@ -56,7 +51,7 @@ def parse_psl(psl_file, min_id=0.90, cover_thres=0.96):
 
             all_hits += 1
 
-            if 0.1*aln.percent_id < min_id:
+            if aln.percent_id < min_id:
                 rejected += 1
                 continue
 
@@ -66,7 +61,7 @@ def parse_psl(psl_file, min_id=0.90, cover_thres=0.96):
             if aln.t_name not in aln_masks[aln.q_name]:
                 aln_masks[aln.q_name][aln.t_name] = np.zeros(int(aln.q_size))
 
-            per_id = 0.01 * aln.percent_id
+            per_id = aln.percent_id
             mask_slice = aln_masks[aln.q_name][aln.t_name][aln.q_start:aln.q_end+1]
             mask_slice[np.where(mask_slice < per_id)] = per_id
 
@@ -110,11 +105,7 @@ if __name__ == '__main__':
     ttable = parse_psl(args.alignment, min_id=args.min_id, cover_thres=args.min_cov)
 
     if args.simple:
-        #import json
         # Reduce to hard 1:1 mapping
-        #d = ttable.hard()
-        #with open(args.output, 'w') as h_out:
-        #    json.dump(d, h_out, indent=1)
         ttable.write_hard(args.output, fmt=args.ofmt)
 
     else:
