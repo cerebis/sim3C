@@ -37,14 +37,22 @@ def validate_combinations(counters):
 
     its = [sum(ci.values()) for ci in counters.values()]
     print '  Iterations per level: {0}'.format(its)
+
     uniq_its = set(its)
     if len(uniq_its) > 1:
         print '  Iteration count was inconsistent: {0}'.format(uniq_its)
         print '  Something is wrong in sweep'
         return False
     else:
-        print '  Iteration count was consistent: {0}'.format(uniq_its.pop())
+        enumerated_count = uniq_its.pop()
+        print '  Iteration count was consistent: {0}'.format(enumerated_count)
+        if enumerated_count != goal_by_obs:
+            print '  Something was wrong, inferred goal and enumerated ' \
+                  'are not equal {0}!={1}'.format(goal_by_obs, enumerated_count)
+            return False
         return True
+
+    if
 
 if __name__ == '__main__':
     import argparse
