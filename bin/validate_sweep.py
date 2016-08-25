@@ -41,9 +41,10 @@ def validate_combinations(counters):
     if len(uniq_its) > 1:
         print '  Iteration count was inconsistent: {0}'.format(uniq_its)
         print '  Something is wrong in sweep'
+        return False
     else:
         print '  Iteration count was consistent: {0}'.format(uniq_its.pop())
-
+        return True
 
 if __name__ == '__main__':
     import argparse
@@ -67,20 +68,36 @@ if __name__ == '__main__':
         '.wgs.r1.fq.gz',
         '.wgs.r2.fq.gz']
 
+    not_valid = 0
+    no_files = 0
     for suf in hic_suffixes:
+
         print 'For suffix: {0}'.format(suf)
         file_list = find_files(args.workdir, '*' + suf)
         if len(file_list) <= 0:
+            no_files += 1
             print '  No files found'
             print
             continue
 
         file_list = remove_suffix(file_list, suf)
-
         counters = split_count(file_list, sep=args.separator)
+
         print 'Validation:'
-        validate_combinations(counters)
+        if not validate_combinations(counters):
+            not_valid += 1
+
         print 'Raw combination counts:'
         for li, ci in counters.iteritems():
             print '  Level', li, json.dumps(ci, sort_keys=True, indent=4)
         print
+
+    if no_files > 0:
+        print 'There were {0} suffixes with no files'.format(no_files)
+    else:
+        print 'Files found for all suffixes'
+
+    if not_valid > 0:
+        print 'There were {0} validation errors'.format(not_valid)
+    else:
+        print 'No validation errors'
