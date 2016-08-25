@@ -254,10 +254,6 @@ if __name__ == '__main__':
             print 'Creating contig nodes...'
             with pysam.AlignmentFile(fn, 'rb') as bf:
                 g.add_nodes_from(zip(bf.references, [{'length': li} for li in bf.lengths]))
-                # for i in xrange(len(bf.references)):
-                #    rn = bf.references[i]
-                #    if rn not in g:
-                #        g.add_node(rn, length=bf.lengths[i])
 
             print 'There were {0} referenced contigs in alignment file'.format(g.order())
 
