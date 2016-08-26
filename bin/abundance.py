@@ -20,9 +20,9 @@ def relative_profile(random_state, taxa, mode, **kwargs):
         ntax = len(taxa)
         isNamed = True
 
-    if mode == 'flat':
+    if mode == 'equal':
         if kwargs:
-            raise RuntimeWarning('mode=flat does not accept additional options [{0}]'.format(kwargs))
+            raise RuntimeWarning('mode=equal does not accept additional options [{0}]'.format(kwargs))
         prf = np.full(ntax, 1.0/ntax, dtype=np.float64)
     elif mode == 'uniform':
         if kwargs:

@@ -104,8 +104,8 @@ if __name__ == '__main__':
         # generate abundance profile from global seeded random state.
         profile = None
         try:
-            profile = abundance.relative_profile(RANDOM_STATE, seq_index, mode=args.mode,
-                                                 lognorm_mu=args.lognorm_ra_mu, lognorm_sigma=args.lognorm_ra_sigma)
+            profile = abundance.relative_profile(RANDOM_STATE, seq_index, mode=args.dist,
+                                                 lognorm_mu=args.lognorm_mu, lognorm_sigma=args.lognorm_sigma)
         except RuntimeWarning:
             pass
 
