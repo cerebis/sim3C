@@ -18,6 +18,76 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """
 import json
 import yaml
+import gzip
+import bz2
+
+# default buffer for incremental read/write
+DEF_BUFFER = 16384
+
+
+def open_output(fname, mode, compress=None):
+
+    if compress == 'bzip2':
+        fh = bz2.BZ2File(fname + '.bz2', mode)
+    elif compress == 'gzip':
+        # fix compression level to 6 since this is the norm on Unix. The default
+        # of 9 is slow and is still often worse than bzip2.
+        fh = gzip.GzipFile(fname + '.gz', mode, compresslevel=6)
+    else:
+        fh = open(fname, mode)
+
+    return fh
+
+
+def multicopy_tostream(fname, *ostreams, **kwargs):
+    """
+    Copy an input file to multiple output streams.
+    :param fname: input file name
+    :param oname: output streams
+    :param kwargs: optional parameters: write_mode (default 'w'), compress [gzip, bzip2] default: None
+    :return:
+    """
+    bufsize = DEF_BUFFER if 'bufsize' not in kwargs else kwargs['bufsize']
+
+    with open(fname, 'r') as in_h:
+        done = False
+        while not done:
+            buf = in_h.read(bufsize)
+            if not buf:
+                done = True
+            for oi in ostreams:
+                oi.write(buf)
+
+
+def multicopy_tofile(fname, *onames, **kwargs):
+    """
+    Copy an input file to multiple output files.
+    :param fname: input file name
+    :param onames: output file names
+    :param kwargs: optional parameters: write_mode (default 'w'), compress [gzip, bzip2] default: None
+    :return:
+    """
+    bufsize = DEF_BUFFER if 'bufsize' not in kwargs else kwargs['bufsize']
+    write_mode = "w" if 'write_mode' not in kwargs else kwargs['write_mode']
+    compress = None if 'compress' not in kwargs else kwargs['compress']
+
+    out_h = None
+    try:
+        in_h = open(fname, 'r')
+        out_h = [open_output(oi, write_mode, compress) for oi in onames]
+
+        done = False
+        while not done:
+            buf = in_h.read(bufsize)
+            if not buf:
+                done = True
+            for oi in out_h:
+                oi.write(buf)
+    finally:
+        if out_h:
+            for oi in out_h:
+                if oi:
+                    oi.close()
 
 
 def write_to_stream(stream, data, fmt='plain'):

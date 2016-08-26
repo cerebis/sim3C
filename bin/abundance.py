@@ -1,6 +1,7 @@
 from collections import Iterable, OrderedDict
 import numpy as np
 
+
 def relative_profile(random_state, taxa, mode, **kwargs):
     """
     Generate a relative abundance profile.
@@ -13,20 +14,16 @@ def relative_profile(random_state, taxa, mode, **kwargs):
     """
 
     ntax = None
-    isNamed = False
+    is_named = False
     if isinstance(taxa, int):
         ntax = taxa
     elif isinstance(taxa, Iterable):
         ntax = len(taxa)
-        isNamed = True
+        is_named = True
 
     if mode == 'equal':
-        #if kwargs:
-        #    raise RuntimeWarning('mode=equal does not accept additional options [{0}]'.format(kwargs))
         prf = np.full(ntax, 1.0/ntax, dtype=np.float64)
     elif mode == 'uniform':
-        #if kwargs:
-        #    raise RuntimeWarning('mode=uniform does not accept additional options [{0}]'.format(kwargs))
         prf = random_state.uniform(size=ntax)
         prf /= prf.sum()
     elif mode == 'lognormal':
@@ -36,7 +33,7 @@ def relative_profile(random_state, taxa, mode, **kwargs):
         raise RuntimeError('unsupported mode [{0}]'.format(mode))
 
     # just return a plain Python list
-    if isNamed:
+    if is_named:
         named_prf = OrderedDict()
         ordered_names = sorted(list(taxa))
         for n, ti in enumerate(ordered_names):

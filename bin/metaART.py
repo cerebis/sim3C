@@ -20,13 +20,12 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 from Bio import SeqIO
 
 import abundance
+import io_utils
 
 import argparse
 import os
 import subprocess
 import sys
-import gzip
-import bz2
 import numpy
 import atexit
 
@@ -37,18 +36,6 @@ TMP_OUTPUT = 'reads.tmp'
 # low-high seeds, giving 5M values
 LOW_SEED_VALUE = 1000000
 HIGH_SEED_VALUE = 6000000
-
-
-def open_output(fname, compress=None):
-    if compress == 'bzip2':
-        fh = bz2.BZ2File(fname + '.bz2', 'w')
-    elif compress == 'gzip':
-        # fix compression level to 6 since this is the norm on Unix. The default
-        # of 9 is slow and is still often worse than bzip2.
-        fh = gzip.GzipFile(fname + '.gz', 'w', compresslevel=6)
-    else:
-        fh = open(fname, 'w')
-    return fh
 
 
 if __name__ == '__main__':
@@ -80,107 +67,106 @@ if __name__ == '__main__':
                         help='Output directory')
     args = parser.parse_args()
 
+    @atexit.register
+    def close_cov():
+        coverage_file.close()
+
+    seq_index = SeqIO.index(args.fasta, 'fasta')
+
+    base_name = os.path.join(args.output_dir, args.output_name)
+
     r1_tmp = os.path.join(args.output_dir, '{0}1.fq'.format(TMP_OUTPUT))
     r2_tmp = os.path.join(args.output_dir, '{0}2.fq'.format(TMP_OUTPUT))
     seq_tmp = os.path.join(args.output_dir, TMP_INPUT)
 
-    seq_index = SeqIO.index(args.fasta, 'fasta')
-    base_name = os.path.join(args.output_dir, args.output_name)
-    all_R1 = open_output('{0}.r1.fq'.format(base_name), args.compress)
-    all_R2 = open_output('{0}.r2.fq'.format(base_name), args.compress)
+    all_R1 = io_utils.open_output('{0}.r1.fq'.format(base_name), mode='w', compress=args.compress)
+    all_R2 = io_utils.open_output('{0}.r2.fq'.format(base_name), mode='w', compress=args.compress)
 
     coverage_file = open(os.path.join(args.output_dir, args.coverage_out), 'w')
-
-    @atexit.register
-    def close_cov():
-        coverage_file.close()
 
     RANDOM_STATE = numpy.random.RandomState(args.seed)
     child_seeds = RANDOM_STATE.randint(LOW_SEED_VALUE, HIGH_SEED_VALUE, args.num_samples).tolist()
 
     # generate N simulated communities
-    for n in range(0, args.num_samples):
+    for n in xrange(0, args.num_samples):
 
         # generate abundance profile from global seeded random state.
         profile = abundance.relative_profile(RANDOM_STATE, seq_index, mode=args.dist,
                                              lognorm_mu=args.lognorm_mu, lognorm_sigma=args.lognorm_sigma)
 
-        for i, sn in enumerate(profile):
-            coverage_file.write('{0}\t{1}\t{2}\t{3}\n'.format(n, i, sn, profile[sn]*args.max_coverage))
+        for i, sn in enumerate(profile, start=1):
+            coverage_file.write('{0}\t{1}\t{2}\t{3}\n'.format(n+1, i, sn, profile[sn]*args.max_coverage))
 
         print "Sample {0} Relative Abundances {1}".format(n, ", ".join(
             map(lambda v: '{0}:{1:.4f}'.format(v[0], v[1]), profile.items())))
 
-        r1_final = '{0}.{1}.r1.fq'.format(base_name, n)
-        r2_final = '{0}.{1}.r2.fq'.format(base_name, n)
-        r1_tmp = os.path.join(args.output_dir, '{0}1.fq'.format(TMP_OUTPUT, n))
-        r2_tmp = os.path.join(args.output_dir, '{0}2.fq'.format(TMP_OUTPUT, n))
+        r1_final = '{0}.{1}.r1.fq'.format(base_name, n+1)
+        r2_final = '{0}.{1}.r2.fq'.format(base_name, n+1)
 
-        with open_output(r1_final, args.compress) as output_R1, open_output(r2_final, args.compress) as output_R2:
-            try:
-                for seq_id in profile:
+        r1_tmp = os.path.join(args.output_dir, '{0}1.fq'.format(TMP_OUTPUT, n+1))
+        r2_tmp = os.path.join(args.output_dir, '{0}2.fq'.format(TMP_OUTPUT, n+1))
 
-                    coverage = profile[seq_id]*args.max_coverage
+        output_R1 = io_utils.open_output(r1_final, mode='w', compress=args.compress)
+        output_R2 = io_utils.open_output(r2_final, mode='w', compress=args.compress)
 
-                    print '\tRequesting {0:.4f} coverage for {1}'.format(coverage, seq_id)
+        try:
 
-                    ref_seq = seq_index[seq_id]
+            # iteratively call ART for each taxon, accumulate the results
+            for seq_id in profile:
 
-                    ref_len = len(ref_seq)
-                    SeqIO.write([ref_seq], seq_tmp, 'fasta')
+                coverage = profile[seq_id] * args.max_coverage
+                print '\tRequesting {0:.4f} coverage for {1}'.format(coverage, seq_id)
 
-                    try:
-                        subprocess.check_call([args.art_path,
-                                               '-p',   # paired-end sequencing
-                                               '-na',  # no alignment file
-                                               '-rs', str(child_seeds[n]),
-                                               '-m', str(args.insert_len),
-                                               '-s', str(args.insert_sd),
-                                               '-l', str(args.read_len),
-                                               '-f', str(coverage),
-                                               '-i', seq_tmp,
-                                               '-o', os.path.join(args.output_dir, TMP_OUTPUT)],
-                                              stdout=args.log, stderr=args.log)
-                    except OSError as e:
-                        print "There was an error executing \"art_illumina\"."
-                        print "Check that it is either on your PATH or specify it at runtime."
-                        raise e
-                    except subprocess.CalledProcessError as e:
-                        print e
-                        raise e
+                # iteration target for ART
+                ref_seq = seq_index[seq_id]
+                ref_len = len(ref_seq)
+                SeqIO.write([ref_seq], seq_tmp, 'fasta')
 
-                    # count generated reads
-                    r1_n = 0
-                    for seq in SeqIO.parse(r1_tmp, 'fastq'):
-                        r1_n += 1
+                try:
 
-                    r2_n = 0
-                    for seq in SeqIO.parse(r2_tmp, 'fastq'):
-                        r2_n += 1
+                    subprocess.check_call([args.art_path,
+                                           '-p',   # paired-end sequencing
+                                           '-na',  # no alignment file
+                                           '-rs', str(child_seeds[n]),
+                                           '-m', str(args.insert_len),
+                                           '-s', str(args.insert_sd),
+                                           '-l', str(args.read_len),
+                                           '-f', str(coverage),
+                                           '-i', seq_tmp,
+                                           '-o', os.path.join(args.output_dir, TMP_OUTPUT)],
+                                          stdout=args.log, stderr=args.log)
 
-                    effective_cov = args.read_len * (r1_n + r2_n) / float(ref_len)
-                    print '\tGenerated {0} paired-end reads for {1}, {2:.3f} coverage'.format(r1_n, seq_id, effective_cov)
-                    if r1_n != r2_n:
-                        print 'Error: paired-end counts do not match {0} vs {1}'.format(r1_n, r2_n)
-                        sys.exit(1)
+                except OSError as e:
+                    print "There was an error executing \"art_illumina\"."
+                    print "Check that it is either on your PATH or specify it at runtime."
+                    raise e
+                except subprocess.CalledProcessError as e:
+                    print e
+                    raise e
 
-                    with open(r1_tmp, 'r') as tmp_h:
-                        all_R1.write(tmp_h.read())
+                # count generated reads
+                r1_n = 0
+                for seq in SeqIO.parse(r1_tmp, 'fastq'):
+                    r1_n += 1
 
-                    with open(r2_tmp, 'r') as tmp_h:
-                        all_R2.write(tmp_h.read())
+                r2_n = 0
+                for seq in SeqIO.parse(r2_tmp, 'fastq'):
+                    r2_n += 1
 
-                    with open(r1_tmp, 'r') as tmp_h:
-                        output_R1.write(tmp_h.read())
-                        os.remove(tmp_h.name)
+                effective_cov = args.read_len * (r1_n + r2_n) / float(ref_len)
+                print '\tGenerated {0} paired-end reads for {1}, {2:.3f} coverage'.format(r1_n, seq_id, effective_cov)
+                if r1_n != r2_n:
+                    print 'Error: paired-end counts do not match {0} vs {1}'.format(r1_n, r2_n)
+                    sys.exit(1)
 
-                    with open(r2_tmp, 'r') as tmp_h:
-                        output_R2.write(tmp_h.read())
-                        os.remove(tmp_h.name)
+                io_utils.multicopy_tostream(r1_tmp, all_R1, output_R1)
+                io_utils.multicopy_tostream(r1_tmp, all_R2, output_R2)
 
-                    os.remove(seq_tmp)
-            except Exception as e:
-                print e
-                print 'Warning!! -- non-zero exit'
-                sys.exit(1)
+                os.remove(r1_tmp)
+                os.remove(r2_tmp)
+                os.remove(seq_tmp)
 
+        except Exception as e:
+            print e
+            print 'Warning!! -- non-zero exit'
+            sys.exit(1)
