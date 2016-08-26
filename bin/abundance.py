@@ -41,3 +41,8 @@ def relative_profile(random_state, taxa, mode, **kwargs):
         return named_prf
     else:
         return prf.tolist()
+
+
+def print_abundance(profile, ostream):
+    for k, v in profile.iteritems():
+        print '{0}\t{1:.3f}'.format(k, v)

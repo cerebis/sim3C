@@ -17,42 +17,43 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """
-
 from Bio import Alphabet
 from Bio import SeqIO
 
 from collections import OrderedDict
-#from optparse import OptionParser
-
 from Bio.Restriction import *
+
+import abundance
+import io_utils
 
 import argparse
 import numpy
 import re
 import time
 import sys
-import gzip
-import bz2
+import os
 
 # numpy version 1.8.2 is apparently incompatible
 from distutils.version import StrictVersion
 
+
 if StrictVersion(numpy.__version__) < StrictVersion("1.9.0"):
     sys.stderr.write("Error: numpy version 1.9.0 or later required\n")
-    sys.stderr.write("If numpy is installed in both your home & system directory, you may need to run with python -S\n")
-    sys.exit(-1)
+    sys.stderr.write("If numpy is installed in both your home & system directory, "
+                     "you may need to run with python -S\n")
+    sys.exit(1)
 
 
-def open_output(fname, compress=None):
-    if compress == 'bzip2':
-        fh = bz2.BZ2File(fname, 'w')
-    elif compress == 'gzip':
-        # fix compression level to 6 since this is the norm on Unix. The default
-        # of 9 is slow and is still often worse than bzip2.
-        fh = gzip.GzipFile(fname, 'w', compresslevel=6)
-    else:
-        fh = open(fname, 'w')
-    return fh
+# def open_output(fname, compress=None):
+#     if compress == 'bzip2':
+#         fh = bz2.BZ2File(fname, 'w')
+#     elif compress == 'gzip':
+#         # fix compression level to 6 since this is the norm on Unix. The default
+#         # of 9 is slow and is still often worse than bzip2.
+#         fh = gzip.GzipFile(fname, 'w', compresslevel=6)
+#     else:
+#         fh = open(fname, 'w')
+#     return fh
 
 #
 # Globals
@@ -426,8 +427,8 @@ class Community:
 
     [replicon name] [cell name] [abundance]
     """
-
-    def __init__(self, interrep_prob, table_filename, seq_filename, cutters):
+    # def __init__(self, interrep_prob, table_filename, seq_filename, cutters):
+    def __init__(self, interrep_prob, comm_table, seq_filename, cutters):
         self.pdf = None
         self.cdf = None
         self.totalRawAbundance = 0
@@ -440,21 +441,9 @@ class Community:
         # Read in the sequences
         sequences = SeqIO.to_dict(SeqIO.parse(open(seq_filename), 'fasta', Alphabet.generic_dna))
 
-        # Read table
-        with open(table_filename, 'r') as h_table:
-            for line in h_table:
-                line = line.rstrip().lstrip()
-                if line.startswith('#') or len(line) == 0:
-                    continue
-                field = line.split()
-                if len(field) != 3:
-                    print 'sequence table has missing fields at [', line, ']'
-                    sys.exit(1)
-                replicon_name = field[0]
-                cell_name = field[1]
-                cell_abundance = field[2]
-                parent_cell = self.register_cell(cell_name, cell_abundance)
-                self.build_register_replicon(replicon_name, parent_cell, sequences.get(replicon_name))
+        for replicon_name, cell_name, cell_abundance in comm_table:
+            parent_cell = self.register_cell(cell_name, cell_abundance)
+            self.build_register_replicon(replicon_name, parent_cell, sequences.get(replicon_name))
 
         # init community wide probs
         self.__init_prob()
@@ -631,13 +620,29 @@ parser.add_argument('-l', '--read-length', metavar='INT', type=int, required=Tru
                     help='Length of reads from Hi-C fragments')
 parser.add_argument('-p', '--interrep-prob', dest='inter_prob', metavar='FLOAT', type=float, required=True,
                     help='Probability that a fragment spans two replicons')
-parser.add_argument('-t', '--community-table', dest='comm_table', metavar='FILE', required=True,
+
+parser.add_argument('-t', '--community-table', dest='comm_table', metavar='FILE',
                     help='Community profile table')
+
+parser.add_argument('--comm-out', metavar='FILE', default='comm.tsv',
+                    help='Output file for simulated HiC coverage', required=False)
+
+parser.add_argument('--dist', metavar='DISTNAME', choices=['equal', 'uniform', 'lognormal'], required=True,
+                    help='Abundance profile distribution [equal, uniform, lognormal]')
+parser.add_argument('--lognorm-mu', metavar='FLOAT', type=float, default='1', required=False,
+                    help='Log-normal relative abundance mu parameter')
+parser.add_argument('--lognorm-sigma', metavar='FLOAT', type=float, default='1', required=False,
+                    help='Log-normal relative abundance sigma parameter')
+
+
 parser.add_argument(dest='genome_seq', metavar='FASTA',
                     help='Genome sequences for the community')
 parser.add_argument(dest='output_file', metavar='OUTPUT',
                     help='Output Hi-C reads file')
 args = parser.parse_args()
+
+if 'community_table' in args and args.dist:
+    raise RuntimeError('Cannot define abundance both explicitly as a table (-t) and a distribution (--dist).')
 
 #
 # Main routine
@@ -646,9 +651,48 @@ args = parser.parse_args()
 # set state for random number generation
 RANDOM_STATE = numpy.random.RandomState(args.seed)
 
+#
+# Prepare community table, either procedurally or from a file
+#
+#   Note: currently, all sequences for a single taxon are
+#   treated equally.
+#
+comm_table = []
+if args.dist:
+    # procedural, number of taxa defined by number of sequences (assumes contiguous genomes)
+    seq_index = None
+    try:
+        seq_index = SeqIO.index(args.genome_seq, 'fasta')
+        profile = abundance.relative_profile(RANDOM_STATE, seq_index, mode=args.dist,
+                                             lognorm_mu=args.lognorm_mu, lognorm_sigma=args.lognorm_sigma)
+        abundance.print_abundance(profile, sys.stdout)
+
+        for si, pi in profile.iteritems():
+            comm_table.append([si, si, pi])
+
+        with open(os.path.join(os.path.dirname(args.output_file), args.comm_out), 'w') as comm_h:
+            comm_h.write('#\treplicon\tcell\tabundance\n')
+            for n, sn in enumerate(profile, start=1):
+                comm_h.write('{0}\t{1}\t{2}\t{3}\n'.format(n, sn, sn, profile[sn]))
+    finally:
+        if seq_index:
+            seq_index.close()
+else:
+    # read explicit table from file
+    with open(args.community_table, 'r') as h_table:
+        for line in h_table:
+            line = line.rstrip().lstrip()
+            if line.startswith('#') or len(line) == 0:
+                continue
+            field = line.split()
+            if len(field) != 3:
+                print 'sequence table has missing fields at [', line, ']'
+                sys.exit(1)
+            comm_table.append(field)
+
 # Initialize community object
 print "Initializing community"
-comm = Community(args.inter_prob, args.comm_table, args.genome_seq, [CUTTER_NAME])
+comm = Community(args.inter_prob, comm_table, args.genome_seq, [CUTTER_NAME])
 
 # Junction produced in Hi-C prep
 rb = RestrictionBatch([CUTTER_NAME])
@@ -669,7 +713,7 @@ else:
     rev_fmt = 'frg{0}rev'
 
 # Open output file for writing reads
-with open_output(args.output_file, args.compress) as h_output:
+with io_utils.open_output(args.output_file, mode='w', compress=args.compress) as h_output:
 
     print "Creating reads"
     skip_count = 0

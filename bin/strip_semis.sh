@@ -24,5 +24,17 @@ then
     exit 1
 fi
 
-sed -i -r 's/^(>[^;]+); $/\1/' $1
+if [ `uname` == 'Darwin' ]
+then
+	if [ -z `which gsed` ]
+	then
+		echo "Gawk Sed not found. Considering using Macports to meet dependencies"
+		exit 1
+	fi
+	SED=gsed
+else
+	SED=sed
+fi
+
+$SED -i -r 's/^(>[^;]+); $/\1/' $1
 
