@@ -19,6 +19,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """
 from Bio import SeqIO
 
+import abundance
+
 import argparse
 import os
 import subprocess
@@ -26,6 +28,8 @@ import sys
 import gzip
 import bz2
 import numpy
+import atexit
+
 
 TMP_INPUT = 'seq.tmp'
 TMP_OUTPUT = 'reads.tmp'
@@ -52,8 +56,6 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Simulate a metagenomic data set from an abundance profile')
     parser.add_argument('-C', '--compress', choices=['gzip', 'bzip2'], default=None, help='Compress output files')
     parser.add_argument('-n', '--output-name', metavar='PATH', help='Output file base name', required=True)
-    parser.add_argument('-t', '--community-table', dest='comm_table', required=False,
-                        help='Community profile table', metavar='FILE')
     parser.add_argument('-M', '--max-coverage', metavar='INT', type=int, required=True,
                         help='Coverage of must abundant taxon')
     parser.add_argument('-S', '--seed', metavar='INT', type=int, required=True, help='Random seed')
@@ -62,14 +64,16 @@ if __name__ == '__main__':
     parser.add_argument('-s', '--insert-sd', metavar='INT', type=int, required=True, help='Insert standard deviation')
     parser.add_argument('--art-path', default='art_illumina', help='Path to ART executable [default: art_illumina]')
     parser.add_argument('--log', default='metaART.log', type=argparse.FileType('w'), help='Log file name')
-    parser.add_argument('--coverage_out', default='coverage.tsv', type=argparse.FileType('w'),
+    parser.add_argument('--coverage-out', metavar='FILE', default='coverage.tsv',
                         help='Output file for simulated genome coverage table', required=False)
     parser.add_argument('-z', '--num-samples', metavar='INT', type=int, default='1', required=True,
                         help='Number of transect samples')
-    parser.add_argument('-U', '--lognorm-ra-mu', metavar='FLOAT', type=float, default='1', required=False,
-                        help='Lognormal relative abundance mu parameter')
-    parser.add_argument('-u', '--lognorm-ra-sigma', metavar='FLOAT', type=float, default='1', required=False,
-                        help='Lognormal relative abundance sigma parameter')
+    parser.add_argument('--dist', metavar='DISTNAME', choices=['equal', 'uniform', 'lognormal'], required=True,
+                        help='Abundance profile distribution [equal, uniform, lognormal]')
+    parser.add_argument('--lognorm-mu', metavar='FLOAT', type=float, default='1', required=False,
+                        help='Log-normal relative abundance mu parameter')
+    parser.add_argument('--lognorm-sigma', metavar='FLOAT', type=float, default='1', required=False,
+                        help='Log-normal relative abundance sigma parameter')
     parser.add_argument('fasta', metavar='MULTIFASTA',
                         help='Input multi-fasta of all sequences')
     parser.add_argument('output_dir', metavar='DIR',
@@ -85,7 +89,11 @@ if __name__ == '__main__':
     all_R1 = open_output('{0}.r1.fq'.format(base_name), args.compress)
     all_R2 = open_output('{0}.r2.fq'.format(base_name), args.compress)
 
-    coverage_file = args.coverage_out
+    coverage_file = open(os.path.join(args.output_dir, args.coverage_out), 'w')
+
+    @atexit.register
+    def close_cov():
+        coverage_file.close()
 
     RANDOM_STATE = numpy.random.RandomState(args.seed)
     child_seeds = RANDOM_STATE.randint(LOW_SEED_VALUE, HIGH_SEED_VALUE, args.num_samples).tolist()
@@ -93,33 +101,16 @@ if __name__ == '__main__':
     # generate N simulated communities
     for n in range(0, args.num_samples):
 
-        profile = {}
+        # generate abundance profile from global seeded random state.
+        profile = None
+        try:
+            profile = abundance.relative_profile(RANDOM_STATE, seq_index, mode=args.mode,
+                                                 lognorm_mu=args.lognorm_ra_mu, lognorm_sigma=args.lognorm_ra_sigma)
+        except RuntimeWarning:
+            pass
 
-        # read the abundance profile from the simple table format is supplied
-        if args.comm_table and args.num_samples == 1:
-            with open(args.comm_table, 'r') as h_table:
-                for line in h_table:
-                    line = line.rstrip().lstrip()
-                    if line.startswith('#') or len(line) == 0:
-                        continue
-                    field = line.split()
-                    if len(field) != 3:
-                        print 'sequence table has missing fields at [', line, ']'
-                        sys.exit(1)
-                    profile[field[0]] = float(field[2])
-
-        # otherwise generate log-normal abundance
-        else:
-            ra_sum = 0
-            for seq_id in seq_index:
-                profile[seq_id] = RANDOM_STATE.lognormal(args.lognorm_ra_mu, args.lognorm_ra_sigma)
-                ra_sum += profile[seq_id]
-
-            for seq_id in seq_index:
-                profile[seq_id] /= ra_sum
-
-            print "Sample {0} Relative Abundances {1}".format(n, ", ".join(
-                map(lambda v: '{0}:{1:.4f}'.format(v[0],v[1]), profile.items())))
+        print "Sample {0} Relative Abundances {1}".format(n, ", ".join(
+            map(lambda v: '{0}:{1:.4f}'.format(v[0], v[1]), profile.items())))
 
         r1_final = '{0}.{1}.r1.fq'.format(base_name, n)
         r2_final = '{0}.{1}.r2.fq'.format(base_name, n)
@@ -130,8 +121,9 @@ if __name__ == '__main__':
             try:
                 for seq_id in profile:
 
-                    coverage = float(profile[seq_id] * args.max_coverage)
-                    coverage_file.write(str(n) + "\t" + seq_id + "\t" + str(coverage) + "\n")
+                    coverage = profile[seq_id] * args.max_coverage
+                    coverage_file.write('{0}\t{1}\t{2}\n'.format(n, seq_id, coverage))
+
                     print '\tRequesting {0:.4f} coverage for {1}'.format(coverage, seq_id)
 
                     ref_seq = seq_index[seq_id]
