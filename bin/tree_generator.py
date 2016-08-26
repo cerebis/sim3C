@@ -23,6 +23,44 @@ import random
 import sys
 
 
+def get_taxon_namespace(ntax, label='taxa'):
+    """
+    Generate a TaxonNamepsace for use in dendroppy method calls. This represents the names
+    of taxa and determines the number of tips generated in a tree simulation.
+
+    :param ntax: the number of taxa/tips
+    :param label: a label for the namespace generated.
+    :return:
+    """
+    return dendropy.TaxonNamespace(map(lambda x: 'T{0}'.format(x), range(1, ntax + 1)), label=label)
+
+
+def rescale_tree(tr, max_height):
+    """
+    Recale a tree by maximum root->tip height
+    :param tr: the tree to scale
+    :param max_height: maximum height from root to furtest tip
+    :return: rescaled dendropy.Tree
+    """
+    return tr.scale_edges(max_height / max(tr.calc_node_root_distances()))
+
+
+def star_tree(ntax, max_height):
+    """
+    Generate a star tree, this is a non-random process and so requires no seed.
+    :param ntax: number of tips/taxa in resulting tree
+    :param max_height: maximum root->tip length
+    :return: dendropy.Tree object
+    """
+    tns = get_taxon_namespace(ntax)
+    tr = dendropy.simulate.treesim.star_tree(tns)
+    # star trees have no length attributes, so we explicitly set them
+    for e in tr.edges():
+        if e.is_leaf():
+            e.length = max_height
+    return tr
+
+
 def simulate_tree(seed, ntax, max_height, birth_rate, death_rate):
     """
     Simulate a phylogenetic tree using a birth death model
@@ -33,19 +71,21 @@ def simulate_tree(seed, ntax, max_height, birth_rate, death_rate):
     :param death_rate: speices death rate
     :return: dendropy.Tree object
     """
-    random.seed(seed)
-    tns = dendropy.TaxonNamespace(map(lambda x: 't{0}'.format(x), range(1, ntax + 1)), label="taxa1")
+    if seed:
+        random.seed(seed)
+
+    tns = get_taxon_namespace(ntax)
     tr = dendropy.simulate.treesim.birth_death_tree(birth_rate, death_rate, taxon_namespace=tns, rng=random)
-    tr.scale_edges(max_height / max(tr.calc_node_root_distances()))
-    return tr
+    return rescale_tree(tr, max_height)
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Generate random phylogenetic trees')
     parser.add_argument('--suppress-rooting', default=False, action='store_true',
                         help='Suppress printing of rooting token [&R]|[&U]')
-    parser.add_argument('--seed', type=int, metavar='INT',
-                        help='Random seed')
+    parser.add_argument('--seed', type=int, metavar='INT', help='Random seed')
+    parser.add_argument('--mode', choices=['star', 'random'], required=True,
+                        help='Tree generation mode [star, random]')
     parser.add_argument('--max_height', type=float, metavar='FLOAT', default=0.1,
                         help='Maximum height of resulting tree [0.1]')
     parser.add_argument('--birth-rate', type=float, metavar='FLOAT', default=1.0,
@@ -60,5 +100,15 @@ if __name__ == '__main__':
                         nargs='?', help='Output file name [stdout]')
     args = parser.parse_args()
 
-    tr = simulate_tree(args.seed, args.num_taxa, args.max_height, args.birth_rate, args.death_rate)
-    tr.write_to_stream(args.output, args.format, suppress_rooting=args.suppress_rooting)
+    if args.mode == 'random' and not args.seed:
+        print 'Warning: random tree without specifying a seed makes repeatability difficult!'
+
+    gen_tr = None
+    if args.mode == 'random':
+        gen_tr = simulate_tree(args.seed, args.num_taxa, args.max_height, args.birth_rate, args.death_rate)
+    elif args.mode == 'star':
+        gen_tr = star_tree(args.num_taxa, args.max_height)
+    else:
+        raise RuntimeError('unsupported mode')
+
+    gen_tr.write_to_stream(args.output, args.format, suppress_rooting=args.suppress_rooting)
