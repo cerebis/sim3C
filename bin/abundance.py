@@ -1,4 +1,4 @@
-from collections import Iterable
+from collections import Iterable, OrderedDict
 import numpy as np
 
 def relative_profile(random_state, taxa, mode, **kwargs):
@@ -21,12 +21,12 @@ def relative_profile(random_state, taxa, mode, **kwargs):
         isNamed = True
 
     if mode == 'equal':
-        if kwargs:
-            raise RuntimeWarning('mode=equal does not accept additional options [{0}]'.format(kwargs))
+        #if kwargs:
+        #    raise RuntimeWarning('mode=equal does not accept additional options [{0}]'.format(kwargs))
         prf = np.full(ntax, 1.0/ntax, dtype=np.float64)
     elif mode == 'uniform':
-        if kwargs:
-            raise RuntimeWarning('mode=uniform does not accept additional options [{0}]'.format(kwargs))
+        #if kwargs:
+        #    raise RuntimeWarning('mode=uniform does not accept additional options [{0}]'.format(kwargs))
         prf = random_state.uniform(size=ntax)
         prf /= prf.sum()
     elif mode == 'lognormal':
@@ -37,8 +37,9 @@ def relative_profile(random_state, taxa, mode, **kwargs):
 
     # just return a plain Python list
     if isNamed:
-        named_prf = {}
-        for n, ti in taxa:
+        named_prf = OrderedDict()
+        ordered_names = sorted(list(taxa))
+        for n, ti in enumerate(ordered_names):
             named_prf[ti] = prf[n]
         return named_prf
     else:
