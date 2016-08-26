@@ -102,12 +102,11 @@ if __name__ == '__main__':
     for n in range(0, args.num_samples):
 
         # generate abundance profile from global seeded random state.
-        profile = None
-        try:
-            profile = abundance.relative_profile(RANDOM_STATE, seq_index, mode=args.dist,
-                                                 lognorm_mu=args.lognorm_mu, lognorm_sigma=args.lognorm_sigma)
-        except RuntimeWarning:
-            pass
+        profile = abundance.relative_profile(RANDOM_STATE, seq_index, mode=args.dist,
+                                             lognorm_mu=args.lognorm_mu, lognorm_sigma=args.lognorm_sigma)
+
+        for i, sn in enumerate(profile):
+            coverage_file.write('{0}\t{1}\t{2}\t{3}\n'.format(n, i, sn, profile[sn]*args.max_coverage))
 
         print "Sample {0} Relative Abundances {1}".format(n, ", ".join(
             map(lambda v: '{0}:{1:.4f}'.format(v[0], v[1]), profile.items())))
@@ -121,8 +120,7 @@ if __name__ == '__main__':
             try:
                 for seq_id in profile:
 
-                    coverage = profile[seq_id] * args.max_coverage
-                    coverage_file.write('{0}\t{1}\t{2}\n'.format(n, seq_id, coverage))
+                    coverage = profile[seq_id]*args.max_coverage
 
                     print '\tRequesting {0:.4f} coverage for {1}'.format(coverage, seq_id)
 
@@ -185,3 +183,4 @@ if __name__ == '__main__':
                 print e
                 print 'Warning!! -- non-zero exit'
                 sys.exit(1)
+
