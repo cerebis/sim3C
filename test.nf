@@ -95,7 +95,7 @@ process Evolve {
     set key, tree_file, seed, clade, alpha from evo_in
 
     output:
-    set key, file("${key}.evo.fa") into evo_out
+    set key, file("${key}.evo.fa"), seed, clade into evo_out
 
     script:
     if (params.debug) {
@@ -119,8 +119,42 @@ process Evolve {
 }
 
 // add a name to new output
-//evo_out = evo_out.map { it.nameify(1, 'ref_seq') }
+evo_out = evo_out.map { it.nameify(1, 'ref_seq') }
 
+(evo_out, merge_in) = evo_out.into(2)
+merge_in = merge_in.groupBy{ it[0].selectedKey('seed','alpha') }
+        .flatMap{ it.collect { k,v -> [k] +  v.flatten()[1..-1] } }
+        .map{ it.pickWithoutKeys('ref_seq') }
+        .map{ it ->
+            List l = it as List;
+            [l[0], l[1..-1]] }
+//        .map{println it}
+
+process Merge {
+    publishDir params.output, mode: 'copy', overwrite: 'true'
+
+    input:
+    set key, ref_seqs from merge_in
+
+    output:
+    set key, file("${key}.com.fa") into merge_out
+
+    script:
+    if (params.debug) {
+        """
+        echo $key > "${key}.com.fa"
+        """
+    }
+    else {
+        """
+        for fn in $ref_seqs
+        do
+            cat \$fn >> ${key}.com.fa
+        done
+        """
+    }
+
+}
 
 /**
  *  Make WGS reads

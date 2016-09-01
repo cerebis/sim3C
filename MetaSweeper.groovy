@@ -68,9 +68,32 @@ class MetaSweeper {
             else {
                 picks = picks.unique()
             }
+            println 'yo'
             picks.inject([] as Set){acc, pi -> pi
                 owner.delegate.each {
                     if (!(it instanceof NamedValue) || it.name == pi) {
+                        acc << it
+                    }
+                }
+                acc
+            }
+        }
+
+        List.metaClass.pickWithoutKeys = { ... picks ->
+            if (picks instanceof Object[]) {
+                picks = picks.collect()
+            }
+            else if (! (picks instanceof Collection)) {
+                picks = [picks]
+            }
+            else {
+                picks = picks.unique()
+            }
+
+            picks.inject([] as Set){acc, pi -> pi
+                acc << delegate[0]
+                owner.delegate[1..-1].each {
+                    if (it instanceof NamedValue && it.name == pi) {
                         acc << it
                     }
                 }
@@ -334,6 +357,17 @@ class MetaSweeper {
             keys.hi.putAll(values[level..-1])
             return keys
         }
+
+        public Key selectedKey(String... names) {
+            assert names.size() > 0 : 'Must have at least one element selected'
+            Map m = varMap.subMap(names)
+            assert m.size() > 0 : "No elements matched [$names]"
+            assert m.size() == names.size() : "Not all specified key names [$names] existed in [${varMap.keySet()}]"
+            Key k = new Key()
+            k.putAll(m.values())
+            return k
+        }
+
     }
 
     /**
