@@ -444,6 +444,7 @@ class MetaSweeper {
                 hashFileContent(hshr, cl.ancestor)
                 hashFileContent(hshr, cl.donor)
 
+                hshr.putUnencodedChars(cl.prefix)
                 hshr.putInt(cl.ntaxa)
 
                 // include the definition of tree and profile
@@ -485,6 +486,8 @@ class MetaSweeper {
      * How many taxa in exist in the clade is defined by ntaxa.
      */
     static class Clade {
+        //
+        public String prefix
         // common ancestor
         private Path ancestor
         // donor used for htg
@@ -520,10 +523,15 @@ class MetaSweeper {
          * String representation of the Clade as a concatenated set of its parameters
          * @return String
          */
+        public String describe() {
+            def l = [prefix, simpleSafeString(ancestor), simpleSafeString(donor), ntaxa] +
+                    mapString(tree) + mapString(profile)
+            l.flatten().join(SEPARATOR)
+        }
+
         @Override
         public String toString() {
-            def l = [simpleSafeString(ancestor), simpleSafeString(donor), ntaxa] + mapString(tree) + mapString(profile)
-            l.flatten().join(SEPARATOR)
+            prefix
         }
 
         protected static List mapString(Map<?,?> m) {

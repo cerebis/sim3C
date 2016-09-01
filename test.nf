@@ -22,31 +22,6 @@ import MetaSweeper
 MetaSweeper ms = MetaSweeper.fromFile(new File('sweep.yaml'))
 //println ms.describeSweep()
 
-/*
- * Basic sweep collections
- *
- * These are set in the configuration file or on the command line.
- *
- * Explicit series must be quoted and delimited by commas, whereas wildcards
- * can be passed to filesystem related variables.
- *
- * Eg. --trees /path/to/trees/*.nwk --alpha "1,2,3,4"
- */
-
-//sweep = new MetaSweeper.Sweep()
-//sweep['ancestor'] = files(params.ancestor)
-//sweep['donor'] = files(params.donor)
-//sweep['alpha'] = stringToList(params.alpha)
-//sweep['tree'] = absPath(params.trees)
-//sweep['profile'] = absPath(params.profiles)
-//sweep['xfold'] = stringToList(params.xfold)
-//sweep['n3c'] = stringToList(params.hic_pairs)
-
-
-// initial permutation of variables, just what is required for generating
-// the simulated community reference genomes.
-//evo_in = ms.sweep.permutedChannel('seed', 'community', 'alpha')
-
 gen_in = ms.createSweep()
         .withVariable('seed')
         .withVariable('community',true)
@@ -73,8 +48,8 @@ process TreeGen {
     }
     else {
         """
-        tree_generator.py --seed $seed --suppress-rooting --mode random --max-height 0.1 \
-            --birth-rate ${clade.value.tree['birth']} --death-rate ${clade.value.tree['death']} \
+        tree_generator.py --seed $seed --prefix ${clade.value.prefix} --suppress-rooting --mode random \
+            --max-height 0.1 --birth-rate ${clade.value.tree['birth']} --death-rate ${clade.value.tree['death']} \
             --format newick --num-taxa ${clade.value.ntaxa} ${key}.nwk
         """
     }

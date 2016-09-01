@@ -6,12 +6,14 @@ variables:
     name: trial
     clades:
       - !clade
+        prefix: clade1
         ancestor: test/ancestor.fa
         donor: test/donor.fa
         ntaxa: 5
         tree: {birth: 0.9, death: 0.5}
         profile: {mu: 0.1, sigma: 1}
       - !clade
+        prefix: clade2
         ancestor: test/ancestor.fa
         donor: test/donor.fa
         ntaxa: 3
