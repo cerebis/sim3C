@@ -127,14 +127,14 @@ merge_in = merge_in.groupBy{ it[0].selectedKey('seed','alpha') }
         .map{ it.pickWithoutKeys('ref_seq') }
         .map{ it ->
             List l = it as List;
-            [l[0], l[1..-1]] }
-//        .map{println it}
+            [l[0], l[1..-1]*.value] }
+//        .map{println it[1]*.getClass()}
 
 process Merge {
     publishDir params.output, mode: 'copy', overwrite: 'true'
 
     input:
-    set key, ref_seqs from merge_in
+    set key, file('seq') from merge_in
 
     output:
     set key, file("${key}.com.fa") into merge_out
@@ -147,13 +147,9 @@ process Merge {
     }
     else {
         """
-        for fn in $ref_seqs
-        do
-            cat \$fn >> ${key}.com.fa
-        done
+        cat seq* >> ${key}.com.fa
         """
     }
-
 }
 
 /**
