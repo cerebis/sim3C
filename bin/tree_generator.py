@@ -17,6 +17,7 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """
+from dendropy.simulate import treesim
 import dendropy
 import argparse
 import random
@@ -42,7 +43,8 @@ def rescale_tree(tr, max_height):
     :param max_height: maximum height from root to furtest tip
     :return: rescaled dendropy.Tree
     """
-    return tr.scale_edges(max_height / max(tr.calc_node_root_distances()))
+    tr.scale_edges(max_height / max(tr.calc_node_root_distances()))
+    return tr
 
 
 def star_tree(ntax, max_height):
@@ -53,7 +55,7 @@ def star_tree(ntax, max_height):
     :return: dendropy.Tree object
     """
     tns = get_taxon_namespace(ntax)
-    tr = dendropy.simulate.treesim.star_tree(tns)
+    tr = treesim.star_tree(tns)
     # star trees have no length attributes, so we explicitly set them
     for e in tr.edges():
         if e.is_leaf():
@@ -75,7 +77,7 @@ def simulate_tree(seed, ntax, max_height, birth_rate, death_rate):
         random.seed(seed)
 
     tns = get_taxon_namespace(ntax)
-    tr = dendropy.simulate.treesim.birth_death_tree(birth_rate, death_rate, taxon_namespace=tns, rng=random)
+    tr = treesim.birth_death_tree(birth_rate, death_rate, taxon_namespace=tns, rng=random)
     return rescale_tree(tr, max_height)
 
 
@@ -86,7 +88,7 @@ if __name__ == '__main__':
     parser.add_argument('--seed', type=int, metavar='INT', help='Random seed')
     parser.add_argument('--mode', choices=['star', 'random'], required=True,
                         help='Tree generation mode [star, random]')
-    parser.add_argument('--max_height', type=float, metavar='FLOAT', default=0.1,
+    parser.add_argument('--max-height', type=float, metavar='FLOAT', default=0.1,
                         help='Maximum height of resulting tree [0.1]')
     parser.add_argument('--birth-rate', type=float, metavar='FLOAT', default=1.0,
                         help='Birth rate [1.0]')
