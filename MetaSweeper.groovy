@@ -18,14 +18,19 @@
  */
 package mzd
 
+@Grab('org.yaml:snakeyaml:1.17')
 import groovy.transform.AutoClone
 import groovy.transform.Synchronized
 import groovyx.gpars.dataflow.DataflowQueue
+import java.nio.file.Path
+import java.io.File
+import java.io.Writer
 import nextflow.Channel
 import nextflow.Nextflow
 import nextflow.util.KryoHelper
-
-import java.nio.file.Path
+import org.yaml.snakeyaml.Yaml
+import org.yaml.snakeyaml.TypeDescription
+import org.yaml.snakeyaml.constructor.Constructor
 
 /**
  * Utility methods used in the construction of meta-sweep workflows.
@@ -63,6 +68,7 @@ class Helper {
         }
 
         List.metaClass.addKey = {
+            println "Ran addKey()"
             Key key = new Key()
             delegate.each { key.put(it) }
             [key, *delegate]
@@ -73,6 +79,11 @@ class Helper {
             delegate[ix] = new NamedValue(name, val)
             return delegate
         }
+
+    }
+
+    static List makeList(Collection col) {
+        col.collect()
     }
 
 
@@ -290,6 +301,56 @@ class Helper {
         }
     }
 
+    /*static class Community {
+        private List clades;
+
+    }*/
+
+    static class Clade {
+        private String ancestor
+        private String donor
+        private Integer ntaxa
+        private Map<String, Float> tree
+        private Map<String, Float> profile
+    }
+
+    static class Config {
+
+        private static ThreadLocal<Yaml> threadLocal;
+
+        static {
+            threadLocal = new ThreadLocal<Yaml>() {
+                @Override
+                protected Yaml initialValue() {
+                    Constructor cnstr = new Constructor()
+                    TypeDescription commDesc = new TypeDescription(Clade.class)
+                    commDesc.putListPropertyType("community", Clade.class)
+                    cnstr.addTypeDescription(commDesc)
+                    new Yaml(cnstr)
+                }
+            }
+        }
+
+        public static Map read(File file) {
+            Yaml yaml = threadLocal.get()
+            yaml.load(new FileReader(file))
+        }
+
+        public static Map read(String doc) {
+            Yaml yaml = threadLocal.get()
+            yaml.load(doc)
+        }
+
+        public static String write(Map config) {
+            Yaml yaml = threadLocal.get()
+            yaml.dump(config)
+        }
+
+        public static void write(Map config, Writer writer) {
+            Yaml yaml = threadLocal.get()
+            yaml.dump(config, writer)
+        }
+    }
 
     static class Sweep {
         @Delegate
@@ -319,7 +380,10 @@ class Helper {
         }
 
         public Collection permuteNames(Object... varNames) {
-            permute(subMap(varNames.collect()).values())
+            def ln = varNames.collect()
+            ln = subMap(ln)
+            println "Submap=${ln.values()}"
+            permute(ln.values())
         }
 
         public Collection permuteLevels(int begin = 0, int end = -1) {
@@ -337,7 +401,7 @@ class Helper {
             }
         }
 
-        /** Recursive implementation for {@link #permutations(List, Collection)} */
+        /** Recursive implementation for permutations(List, Collection) */
         private static void permuteImpl(ori, res, d, current) {
             // if depth equals number of original collections, final reached, add and return
             if (d == ori.size()) {
@@ -355,8 +419,21 @@ class Helper {
         }
 
         public DataflowQueue permutedChannel(Object... varNames) {
-            Channel.from(permuteNames(varNames))
-                    .map{ it.addKey() }
+            def pn = permuteNames(varNames)
+            println pn
+            Channel.from(pn)
+                    .map{ it ->
+
+                try {
+                    println "it=$it"
+                    it.addKey()
+                }
+                catch (Throwable t) {
+                    println "ITER $it"
+                    println "EXCEPTION: $t"
+                    throw ex
+                }
+            }
         }
 
         public DataflowQueue extendChannel(DataflowQueue df, Object... varNames) {

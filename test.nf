@@ -17,8 +17,10 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-import static Helper.*
+import MetaSweeper
 
+MetaSweeper ms = MetaSweeper.fromFile(new File('sweep.yaml'))
+//println ms.describeSweep()
 
 /*
  * Basic sweep collections
@@ -31,32 +33,66 @@ import static Helper.*
  * Eg. --trees /path/to/trees/*.nwk --alpha "1,2,3,4"
  */
 
-sweep = new Sweep()
+//sweep = new MetaSweeper.Sweep()
+//sweep['ancestor'] = files(params.ancestor)
+//sweep['donor'] = files(params.donor)
+//sweep['alpha'] = stringToList(params.alpha)
+//sweep['tree'] = absPath(params.trees)
+//sweep['profile'] = absPath(params.profiles)
+//sweep['xfold'] = stringToList(params.xfold)
+//sweep['n3c'] = stringToList(params.hic_pairs)
 
-sweep['ancestor'] = files(params.ancestor)
-sweep['donor'] = files(params.donor)
-sweep['alpha'] = stringToList(params.alpha)
-sweep['tree'] = absPath(params.trees)
-sweep['profile'] = absPath(params.profiles)
-sweep['xfold'] = stringToList(params.xfold)
-sweep['n3c'] = stringToList(params.hic_pairs)
-
-println sweep.description()
 
 // initial permutation of variables, just what is required for generating
 // the simulated community reference genomes.
-evo_in = sweep.permutedChannel('ancestor', 'donor', 'alpha', 'tree')
+//evo_in = ms.sweep.permutedChannel('seed', 'community', 'alpha')
 
+gen_in = ms.createSweep()
+        .withVariable('seed')
+        .withVariable('community',true)
+        .permute()
 
 /**
  * Generate reference genomes from ancestor
  */
 
+process TreeGen {
+    publishDir params.output, mode: 'copy', overwrite: 'true'
+
+    input:
+    set key, seed, clade from gen_in
+
+    output:
+    set key, file("${key}.nwk"), seed, clade into tree_out
+
+    script:
+    if (params.debug) {
+        """
+        echo $key > "${key}.nwk"
+        """
+    }
+    else {
+        """
+        tree_generator.py --seed $seed --mode random --max-height 0.1 \
+            --birth-rate ${clade.value.tree['birth']} --death-rate ${clade.value.tree['death']} \
+            --format newick --num-taxa ${clade.value.ntaxa} ${key}.nwk
+        """
+    }
+}
+
+tree_out = tree_out.map{ it.nameify(1, 'tree_file') }
+
+(tree_out, evo_in) = tree_out.into(2)
+
+// add abundance profile and wgs coverage to initial sweep
+evo_in = ms.withVariable('alpha')
+            .extend(evo_in, 'alpha')
+
 process Evolve {
     publishDir params.output, mode: 'copy', overwrite: 'true'
 
     input:
-    set key, ancestor, donor, alpha, tree from evo_in
+    set key, tree_file, seed, clade, alpha from evo_in
 
     output:
     set key, file("${key}.evo.fa") into evo_out
@@ -69,11 +105,13 @@ process Evolve {
     }
     else {
         """
-        scale_tree.py -a $alpha $tree scaled_tree
-        \$EXT_BIN/sgevolver/sgEvolver --indel-freq=${params.indel_freq} --small-ht-freq=${params.small_ht_freq} \
-            --large-ht-freq=${params.large_ht_freq} --inversion-freq=${params.inversion_freq} \
-            --random-seed=${params.seed} scaled_tree \
-             $ancestor $donor "${key}.evo.aln" "${key}.evo.fa"
+        scale_tree.py -a $alpha $tree_file scaled_tree
+        \$EXT_BIN/sgevolver/sgEvolver --indel-freq=${ms.options['evo']['indel_freq']}
+            --small-ht-freq=${ms.options['evo']['small_ht_freq']} \
+            --large-ht-freq=${ms.options['evo']['large_ht_freq']} \
+            --inversion-freq=${ms.options['evo']['inversion_freq']} \
+            --random-seed=$seed scaled_tree \
+             $clade.value.ancestor $clade.value.donor "${key}.evo.aln" "${key}.evo.fa"
         strip_semis.sh "${key}.evo.fa"
         """
     }
@@ -81,13 +119,14 @@ process Evolve {
 }
 
 // add a name to new output
-evo_out = evo_out.map { it.nameify(1, 'ref_seq') }
+//evo_out = evo_out.map { it.nameify(1, 'ref_seq') }
 
 
 /**
  *  Make WGS reads
  */
-(evo_out, wgs_in) = evo_out.into(2)
+/*(evo_out, wgs_in) = evo_out.into(2)
+
 // add abundance profile and wgs coverage to initial sweep
 wgs_in = sweep.extendChannel(wgs_in, 'profile', 'xfold')
 
@@ -114,8 +153,8 @@ process WGS_Reads {
         export PATH=\$EXT_BIN/art:\$PATH
         metaART.py -C gzip -t ${key['profile']} -z 1 -M ${key['xfold']} -S ${params.seed} -s ${params.wgs_ins_std} \
                 -m ${params.wgs_ins_len} -l ${params.wgs_read_len} -n "${key}.wgs" $ref_seq .
-	wait_on_openfile.sh ${key}.wgs.r1.fq.gz
-	wait_on_openfile.sh ${key}.wgs.r2.fq.gz
+        wait_on_openfile.sh ${key}.wgs.r1.fq.gz
+        wait_on_openfile.sh ${key}.wgs.r2.fq.gz
         """
     }
 }
@@ -124,10 +163,11 @@ process WGS_Reads {
 wgs_out = wgs_out.map { it.nameify(1, 'wgs_reads') }
 
 
-/**
- * Make HiC reads
- */
+//
+// Make HiC reads
+//
 (evo_out, hic_in) = evo_out.into(2)
+
 // add abundance profile and 3c depth to initial sweep
 hic_in = sweep.extendChannel(hic_in, 'profile', 'n3c')
 
@@ -160,9 +200,9 @@ process HIC_Reads {
 hic_out = hic_out.map { it.nameify(1, 'hic_reads') }
 
 
-/**
- * Assemble WGS reads
- */
+//
+// Assemble WGS reads
+//
 (wgs_out, asm_in) = wgs_out.into(2)
 
 process Assemble {
@@ -193,9 +233,9 @@ process Assemble {
 asm_out = asm_out.map { it.nameify(1, 'contigs') }
 
 
-/**
- * Make Truth Tables
- */
+//
+// Make Truth Tables
+//
 (asm_out, truth_in) = asm_out.into(2)
 
 process Truth {
@@ -231,9 +271,9 @@ process Truth {
 // add a name to new output
 truth_out = truth_out.map { it.nameify(1, 'truth') }
 
-/**
- * Map HiC reads to assembled contigs
- */
+//
+// Map HiC reads to assembled contigs
+//
 (asm_out, hicmap_in) = asm_out.into(2)
 // combine results of hic and assembly processes, reduce to unique columns and select those relevant
 hicmap_in = sweep.joinChannels(hic_out, hicmap_in, 5).map{ it.unique() }.map{ it.pick('contigs', 'hic_reads') }
@@ -267,9 +307,9 @@ process HiCMap {
 // add a name to new output
 hicmap_out = hicmap_out.map { it.nameify(1, 'hic2ctg') }
 
-/**
- * Generate contig graphs
- */
+//
+// Generate contig graphs
+//
 (hicmap_out, graph_in) = hicmap_out.into(2)
 
 process Graph {
@@ -298,10 +338,9 @@ process Graph {
 // add a name to new output
 graph_out = graph_out.map { it.nameify(1, 'graph') }
 
-/**
- * Map WGS reads to contigs
- */
-
+//
+// Map WGS reads to contigs
+//
 (asm_out, wgsmap_in) = asm_out.into(2)
 
 process WGSMap {
@@ -330,9 +369,9 @@ process WGSMap {
 // add a name to new output
 wgsmap_out = wgsmap_out.map { it.nameify(1, 'wgs2ctg') }
 
-/**
- * Calculate assembly contig coverage
- */
+//
+// Calculate assembly contig coverage
+//
 (wgsmap_out, cov_in) = wgsmap_out.into(2)
 
 
@@ -379,4 +418,4 @@ process InferReadDepth {
 
 // add a name to new output
 cov_out = cov_out.map { it.nameify(1, 'coverage') }
-
+*/

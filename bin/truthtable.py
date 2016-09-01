@@ -23,7 +23,7 @@ import copy
 import numpy
 import yaml
 import json
-import pipeline_utils
+import io_utils
 
 
 YAML_WIDTH = 1000
@@ -44,7 +44,7 @@ yaml.add_representer(OrderedDict, order_rep)
 
 class AssignmentEncoder(json.JSONEncoder):
     """
-    Simple JSON Encoder which converts an Asignment to a dictionary representation
+    Simple JSON Encoder which stores an Assignment as a dict
     """
     def default(self, obj):
         """
@@ -470,7 +470,7 @@ def read_truth(pathname, fmt='json'):
     with open(pathname, 'r') as h_in:
         tt = TruthTable()
         if fmt == 'json':
-            d = pipeline_utils.json_load_byteified(h_in)
+            d = io_utils.json_load_byteified(h_in)
         elif fmt == 'yaml':
             d = yaml.load(h_in)
         else:

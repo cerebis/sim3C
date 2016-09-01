@@ -17,7 +17,7 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """
-import pipeline_utils as pu
+import io_utils
 import networkx as nx
 import community as com
 import numpy as np
@@ -97,4 +97,4 @@ if args.ofmt == 'plain':
     args.output.write('{0}\n'.format('\t'.join(result.keys())))
     args.output.write('{0}\n'.format('\t'.join([str(v) for v in result.values()])))
 else:
-    pu.write_to_stream(args.output, result, fmt=args.ofmt)
+    io_utils.write_to_stream(args.output, result, fmt=args.ofmt)
