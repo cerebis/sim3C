@@ -73,7 +73,7 @@ process TreeGen {
     }
     else {
         """
-        tree_generator.py --seed $seed --mode random --max-height 0.1 \
+        tree_generator.py --seed $seed --suppress-rooting --mode random --max-height 0.1 \
             --birth-rate ${clade.value.tree['birth']} --death-rate ${clade.value.tree['death']} \
             --format newick --num-taxa ${clade.value.ntaxa} ${key}.nwk
         """
@@ -106,7 +106,7 @@ process Evolve {
     else {
         """
         scale_tree.py -a $alpha $tree_file scaled_tree
-        \$EXT_BIN/sgevolver/sgEvolver --indel-freq=${ms.options['evo']['indel_freq']}
+        \$EXT_BIN/sgevolver/sgEvolver --indel-freq=${ms.options['evo']['indel_freq']} \
             --small-ht-freq=${ms.options['evo']['small_ht_freq']} \
             --large-ht-freq=${ms.options['evo']['large_ht_freq']} \
             --inversion-freq=${ms.options['evo']['inversion_freq']} \
