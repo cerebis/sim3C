@@ -452,15 +452,35 @@ class MetaSweeper {
      */
     static class Clade {
         // common ancestor
-        public File ancestor
+        private Path ancestor
         // donor used for htg
-        public File donor
+        private Path donor
         // number of leaves/tips.
         public Integer ntaxa
         // parameters involved in generating the tree
         public Map<String, Float> tree
         // parameters involved in generating the profile
         public Map<String, Float> profile
+
+        public void setAncestor(String ancestor) {
+            this.ancestor = Nextflow.file(ancestor)
+        }
+        public String getAncestor() {
+            return ancestor.toString()
+        }
+        public Path getAncestorPath() {
+            return ancestor
+        }
+
+        public void setDonor(String donor) {
+            this.donor = Nextflow.file(donor)
+        }
+        public String getDonor() {
+            return donor.toString()
+        }
+        public Path getDonorPath() {
+            return donor
+        }
 
         /**
          * String representation of the Clade as a concatenated set of its parameters
