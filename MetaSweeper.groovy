@@ -19,23 +19,34 @@
 package mzd
 
 @Grab('org.yaml:snakeyaml:1.17')
+@Grab('com.google.guava:guava:19.0')
 import groovy.transform.AutoClone
 import groovy.transform.Synchronized
+import groovyx.gpars.dataflow.DataflowChannel
 import groovyx.gpars.dataflow.DataflowQueue
 import java.nio.file.Path
 import java.io.File
 import java.io.Writer
+import java.nio.file.Files
 import nextflow.Channel
 import nextflow.Nextflow
 import nextflow.util.KryoHelper
 import org.yaml.snakeyaml.Yaml
 import org.yaml.snakeyaml.TypeDescription
 import org.yaml.snakeyaml.constructor.Constructor
+import com.google.common.hash.Hashing
+import com.google.common.hash.Hasher
+import com.google.common.hash.HashFunction
+import com.google.common.hash.Funnels
 
 /**
  * Utility methods used in the construction of meta-sweep workflows.
  */
-class Helper {
+class MetaSweeper {
+    public Map<String, Object> variables
+    public Map<String, Object> options
+    public sweep
+
     static String SEPARATOR = '-+-'
     static def delimiters = /[ ,\t]/
 
@@ -68,7 +79,6 @@ class Helper {
         }
 
         List.metaClass.addKey = {
-            println "Ran addKey()"
             Key key = new Key()
             delegate.each { key.put(it) }
             [key, *delegate]
@@ -82,14 +92,40 @@ class Helper {
 
     }
 
-    static List makeList(Collection col) {
-        col.collect()
+    static MetaSweeper fromFile(File config) {
+        ConfigLoader.read(config)
+    }
+
+    public String describeSweep() {
+        ConfigLoader.write(this)
+    }
+
+    public MetaSweeper createSweep() {
+        sweep = new Sweep()
+        return this
+    }
+
+    public DataflowChannel extend(DataflowQueue df, Object... varNames) {
+        sweep.extendChannel(df, varNames)
+    }
+
+    public MetaSweeper withVariable(String name, Boolean stepInto=false) {
+        if (stepInto) {
+            sweep[name] = variables[name].collect()
+        }
+        else {
+            sweep[name] = variables[name]
+        }
+        return this
+    }
+
+    public DataflowQueue permute() {
+        sweep.permutedChannel()
     }
 
 
     @AutoClone
     static class NamedValue {
-        private static final int HASH_PRIME = 7
         String name
         Object value
 
@@ -152,7 +188,6 @@ class Helper {
     }
 
     static class Key {
-        private static final int HASH_PRIME = 37
         LinkedHashMap varMap = [:]
 
         /**
@@ -301,54 +336,214 @@ class Helper {
         }
     }
 
-    /*static class Community {
-        private List clades;
+    /**
+     * Community represents a collection of clades/groups of related genomes.
+     * Together it can be regarded as a simulated community.
+     */
+    static class Community implements Iterable {
+        // just a human centric name for a community
+        public String name
+        // the list of clades/groups to generate
+        public List<Clade> clades
 
-    }*/
+        public Iterator iterator() {
+            clades.iterator()
+        }
 
-    static class Clade {
-        private String ancestor
-        private String donor
-        private Integer ntaxa
-        private Map<String, Float> tree
-        private Map<String, Float> profile
+        /**
+         * Hash file content from file name
+         * @param hasher
+         * @param fileName
+         * @return
+         */
+        static private Hasher hashFileContent(Hasher hasher, String fileName) {
+            hashFileContent(hasher, new File(fileName))
+        }
+
+        /**
+         * Hash file content. Appropriated from nextflow.util.CacheHelper as it
+         * has been defined private. (removed further nextflow specific helper
+         * classes)
+         *
+         * @param hasher
+         * @param file
+         * @return
+         */
+        static private Hasher hashFileContent(Hasher hasher, File file) {
+            OutputStream output = Funnels.asOutputStream(hasher);
+            try {
+                Files.copy(file.toPath(), output);
+            }
+            catch( IOException e ) {
+                throw new IllegalStateException("Unable to hash content: ${file}", e);
+            }
+            finally {
+                if (output) {
+                    output.close()
+                }
+            }
+            return hasher;
+        }
+
+        /**
+         * Create a hash for a given community definition. This is used
+         * as a shorthand identifier when naming files. Everything involved
+         * in the definition of a community is used except the name -- which would
+         * play no role in structure.
+         *
+         * Both ancestor and donor sequences are deeply hashed.
+         *
+         * Only mumur3_32 is used since we do not desire an enormously long
+         * string and we doubt that there would be clashes for any realistic
+         * range of communities in a given experiment.
+         *
+         * @return String representation of community hash
+         */
+        public String hash() {
+
+            HashFunction hf = Hashing.murmur3_32()
+            Hasher hshr = hf.newHasher()
+
+            // hash clades definitions
+            clades.each { cl ->
+                // deeply hash ancestor and donor
+                hashFileContent(hshr, cl.ancestor)
+                hashFileContent(hshr, cl.donor)
+
+                hshr.putInt(cl.ntaxa)
+
+                // include the definition of tree and profile
+                cl.tree.collect { e ->
+                    hshr.putUnencodedChars(e.getKey())
+                            .putFloat(e.getValue())
+                }
+                cl.profile.collect { e ->
+                    hshr.putUnencodedChars(e.getKey())
+                            .putFloat(e.getValue())
+                }
+            }
+            hshr.hash().toString()
+        }
+
+        /**
+         * Represented by the name and hash
+         * @return String
+         */
+        @Override
+        String toString() {
+            "${name}-${hash()}".toString()
+        }
+
     }
 
-    static class Config {
+    /**
+     * A Clade represents set of related genomes evolved from
+     * a common ancestor. How these sequences are different
+     * is dictated by a phylogenetic tree and how they would
+     * manifest in a ecosystem by an abundance profile.
+     *
+     * Both trees and profiles are expected to be generated
+     * through simulation -- which itself is defined by a set
+     * of parameters. These simulation parameters are stored
+     * as a map for either property and intended simulation
+     * tool/algorithm.
+     *
+     * How many taxa in exist in the clade is defined by ntaxa.
+     */
+    static class Clade {
+        // common ancestor
+        public File ancestor
+        // donor used for htg
+        public File donor
+        // number of leaves/tips.
+        public Integer ntaxa
+        // parameters involved in generating the tree
+        public Map<String, Float> tree
+        // parameters involved in generating the profile
+        public Map<String, Float> profile
 
-        private static ThreadLocal<Yaml> threadLocal;
+        /**
+         * String representation of the Clade as a concatenated set of its parameters
+         * @return String
+         */
+        @Override
+        public String toString() {
+            def l = [simpleSafeString(ancestor), simpleSafeString(donor), ntaxa] + mapString(tree) + mapString(profile)
+            l.flatten().join(SEPARATOR)
+        }
+
+        protected static List mapString(Map<?,?> m) {
+            def sorted_keys = m.sort()*.key
+            sorted_keys.collect{ k -> "${m[k]}" }
+        }
+    }
+
+    /**
+     * Read sweep configurations in YAML format
+     *
+     * Should be threadsafe.
+     */
+    static class ConfigLoader {
+
+        private static ThreadLocal<Yaml> threadLocal
 
         static {
+            /**
+             * ThreadLocal instance of Yaml read/write object
+             */
             threadLocal = new ThreadLocal<Yaml>() {
                 @Override
                 protected Yaml initialValue() {
-                    Constructor cnstr = new Constructor()
-                    TypeDescription commDesc = new TypeDescription(Clade.class)
-                    commDesc.putListPropertyType("community", Clade.class)
-                    cnstr.addTypeDescription(commDesc)
+                    // constructor root is MetaSweeper
+                    Constructor cnstr = new Constructor(MetaSweeper.class)
+                    // two tags are used to instantiate custom classes from
+                    // within the map hierarchy
+                    cnstr.addTypeDescription(new TypeDescription(Community.class, '!com'))
+                    cnstr.addTypeDescription(new TypeDescription(Clade.class, '!clade'))
+                    cnstr.addTypeDescription(new TypeDescription(File.class))
                     new Yaml(cnstr)
                 }
             }
         }
 
-        public static Map read(File file) {
+        /**
+         * Read a configuration from a file.
+         * @param file -- YAML file to read
+         * @return MetaSweeper
+         */
+        public static MetaSweeper read(File file) {
             Yaml yaml = threadLocal.get()
             yaml.load(new FileReader(file))
         }
 
+        /**
+         * Read a configuration from a string
+         * @param doc -- String to read
+         * @return MetaSweeper
+         */
         public static Map read(String doc) {
             Yaml yaml = threadLocal.get()
             yaml.load(doc)
         }
 
-        public static String write(Map config) {
+        /**
+         * Convert MetaSweeper object to a string in YAML syntax
+         * @param ms -- Object to convert
+         * @return String (YAML)
+         */
+        public static String write(MetaSweeper ms) {
             Yaml yaml = threadLocal.get()
-            yaml.dump(config)
+            yaml.dump(ms)
         }
 
-        public static void write(Map config, Writer writer) {
+        /**
+         * Write a YAML representation of a MetaSweeper object to a stream
+         * @param ms - Object to write
+         * @param writer - output writer
+         */
+        public static void write(MetaSweeper ms, Writer writer) {
             Yaml yaml = threadLocal.get()
-            yaml.dump(config, writer)
+            yaml.dump(ms, writer)
         }
     }
 
@@ -382,7 +577,6 @@ class Helper {
         public Collection permuteNames(Object... varNames) {
             def ln = varNames.collect()
             ln = subMap(ln)
-            println "Submap=${ln.values()}"
             permute(ln.values())
         }
 
@@ -418,14 +612,15 @@ class Helper {
             }
         }
 
+        public  DataflowQueue permutedChannel() {
+            List allVars = varRegistry.keySet() as List
+            permutedChannel(*allVars)
+        }
+
         public DataflowQueue permutedChannel(Object... varNames) {
             def pn = permuteNames(varNames)
-            println pn
-            Channel.from(pn)
-                    .map{ it ->
-
+            Channel.from(pn).map{ it ->
                 try {
-                    println "it=$it"
                     it.addKey()
                 }
                 catch (Throwable t) {
@@ -445,17 +640,16 @@ class Helper {
 
             df = df.spread(p)
                     .map { row ->
+                        // create a copy of existing key
                         def key = row[0].copy();
-                        def vars = row[-varNames.size()..-1]
-                        vars.each { key.put(it) }
+                        // get the set of new variables added to each row
+                        def new_vars = row[-varNames.size()..-1]
+                        // add each new variable to the key
+                        new_vars.each { key.put(it) }
 
-                        proc_vars = []
-                        int num_proc_vars = row.size() - varNames.size() - 1
-                        if (num_proc_vars > 0) {
-                            row[1..num_proc_vars].each { proc_vars << it }
-                        }
-
-                        [key, *proc_vars]
+                        def all_vars = row[1..-1].collect() // { acc, it -> acc << it }
+                        //println "ALL $all_vars"
+                        [key, *all_vars]
                     }
 
             return df
@@ -585,9 +779,11 @@ class Helper {
         if (val instanceof java.nio.file.Path) {
             val = val.name - ~/[\.][^\.]+$/
         }
-        else {
-            val = val
+        else if (val instanceof java.io.File) {
+            val = val.toPath()
+            val = val.name - ~/[\.][^\.]+$/
         }
+        else { val = val }
         return safe ? safeString(val) : val.toString()
     }
 
