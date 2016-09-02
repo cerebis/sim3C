@@ -54,11 +54,9 @@ process TreeGen {
         """
     }
 }
-
 tree_out = tree_out.map{ it.nameify(1, 'tree_file') }
 
 (tree_out, evo_in) = tree_out.into(2)
-
 // add abundance profile and wgs coverage to initial sweep
 evo_in = ms.withVariable('alpha')
             .extend(evo_in, 'alpha')
@@ -94,76 +92,120 @@ process Evolve {
 }
 
 // add a name to new output
-evo_out = evo_out.map { it.nameify(1, 'ref_seq') }
+evo_out = evo_out.map { it.nameify(1, 'clade_seq') }
 
-(evo_out, merge_in) = evo_out.into(2)
-merge_in = merge_in.groupBy{ it[0].selectedKey('seed','alpha') }
-        .flatMap{ it.collect { k,v -> [k] +  v.flatten()[1..-1] } }
-        .map{ it.pickWithoutKeys('ref_seq') }
-        .map{ it ->
-            List l = it as List;
-            [l[0], l[1..-1]*.value] }
-//        .map{println it[1]*.getClass()}
+(evo_out, prof_in) = evo_out.into(2)
+prof_in = prof_in.map{[it[0], it[1].value]}
 
-process Merge {
+process ProfileGen {
     publishDir params.output, mode: 'copy', overwrite: 'true'
 
     input:
-    set key, file('seq') from merge_in
+    set key, file('clade_seq') from prof_in
 
     output:
-    set key, file("${key}.com.fa") into merge_out
+    set key, file("${key}.profile") into prof_out
 
     script:
     if (params.debug) {
         """
-        echo $key > "${key}.com.fa"
+        echo $key > "${key}.profile"
         """
     }
     else {
+        def mu = key['community'].value.profile.mu
+        def sigma = key['community'].value.profile.sigma
         """
-        cat seq* >> ${key}.com.fa
+        profile_generator.py --seed ${key['seed']} --dist lognormal --lognorm-mu $mu \
+            --lognorm-sigma $sigma clade_seq ${key}.profile
         """
     }
 }
 
-/**
- *  Make WGS reads
- */
-/*(evo_out, wgs_in) = evo_out.into(2)
+//(evo_out, merge_in) = evo_out.into(2)
 
-// add abundance profile and wgs coverage to initial sweep
-wgs_in = sweep.extendChannel(wgs_in, 'profile', 'xfold')
+// TODO
+// - this needs to be cleaned up. We have to expose the underlying Path
+// type to the Processor. Currently NamedValue gets in the way of this
+// happening and we're forced to unwrap the objects.
+// Either figure work-around or we should consider removing NamedValue
 
-process WGS_Reads {
+/*merge_in = merge_in.groupBy{ it[0].selectedKey('seed','alpha') }
+        .flatMap{
+            it.collect { k,v -> [k] +  v.collect{cl -> [cl[1],cl[3]]}.flatten() }
+        }
+        .map{ [it[0], [it[2],it[4]], [it[1],it[3]]*.value] }
+
+process MergeClades {
     publishDir params.output, mode: 'copy', overwrite: 'true'
 
     input:
-    set key, ref_seq from wgs_in
+    set key, clades, file('seq') from merge_in
 
     output:
-    set key, file("${key}.wgs.r*.fq.gz"), ref_seq into wgs_out
+    set key, clades, file("${key}.community.fa") into merge_out
 
     script:
     if (params.debug) {
         """
-        echo "metaART.py -C gzip -t ${key['profile']} -z 1 -M ${key['xfold']} -S ${params.seed} -s ${params.wgs_ins_std} \
-                -m ${params.wgs_ins_len} -l ${params.wgs_read_len} -n ${key}.wgs $ref_seq ." > ${key}.wgs.r1.fq.gz
-        echo "metaART.py -C gzip -t ${key['profile']} -z 1 -M ${key['xfold']} -S ${params.seed} -s ${params.wgs_ins_std} \
-                -m ${params.wgs_ins_len} -l ${params.wgs_read_len} -n ${key}.wgs $ref_seq ." > ${key}.wgs.r2.fq.gz
+        echo $key > "${key}.community.fa"
+        """
+    }
+    else {
+        """
+        cat seq* >> ${key}.community.fa
+        """
+    }
+}
+
+merge_out = merge_out.map { it.nameify(2, 'ref_seq') }
+
+//
+//Make WGS reads
+///
+(merge_out, wgs_in) = merge_out.into(2)
+
+// TODO
+// another example where we are exposing Path objects so that we can utilise the symlinks
+// facility (file('xxx')) in processes.
+wgs_in = ms.withVariable('xfold').extend(wgs_in, 'xfold')
+        //.map{ [it[0..1], it[2].value, it[3]] }
+        .subscribe{println it}
+*/
+/*process WGS_Reads {
+    publishDir params.output, mode: 'copy', overwrite: 'true'
+
+    input:
+    set key, file('ref_seq'), xfold from wgs_in
+
+    output:
+    set key, file("${key}.wgs.r*.fq.gz"), ref_seq, xfold into wgs_out
+
+    script:
+    if (params.debug) {
+        """
+        echo "metaART.py -C gzip -t ${key['profile']} -z 1 -M $xfold -S ${key['seed']} \
+                -s ${ms.options['wgs']['ins_std']} -m ${ms.options['wgs']['ins_len']} \
+                -l ${ms.options['wgs']['read_len']} -n ${key}.wgs ref_seq ." > ${key}.wgs.r1.fq.gz
+
+        echo "metaART.py -C gzip -t ${key['profile']} -z 1 -M $xfold -S ${key['seed']} \
+                -s ${ms.options['wgs']['ins_std']} -m ${ms.options['wgs']['ins_len']} \
+                -l ${ms.options['wgs']['read_len']} -n ${key}.wgs ref_seq ." > ${key}.wgs.r2.fq.gz
         """
     }
     else {
         """
         export PATH=\$EXT_BIN/art:\$PATH
-        metaART.py -C gzip -t ${key['profile']} -z 1 -M ${key['xfold']} -S ${params.seed} -s ${params.wgs_ins_std} \
-                -m ${params.wgs_ins_len} -l ${params.wgs_read_len} -n "${key}.wgs" $ref_seq .
+        metaART.py -C gzip -t ${key['profile']} -z 1 -M $xfold -S ${key['seed']} \
+                -s ${ms.options['wgs']['ins_std']} -m ${ms.options['wgs']['ins_len']} \
+                -l ${ms.options['wgs']['read_len']} -n "${key}.wgs" ref_seq .
         wait_on_openfile.sh ${key}.wgs.r1.fq.gz
         wait_on_openfile.sh ${key}.wgs.r2.fq.gz
         """
     }
-}
+}*/
 
+/*
 // add a name to new output
 wgs_out = wgs_out.map { it.nameify(1, 'wgs_reads') }
 

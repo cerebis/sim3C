@@ -68,7 +68,6 @@ class MetaSweeper {
             else {
                 picks = picks.unique()
             }
-            println 'yo'
             picks.inject([] as Set){acc, pi -> pi
                 owner.delegate.each {
                     if (!(it instanceof NamedValue) || it.name == pi) {
