@@ -126,7 +126,7 @@ prof_out = prof_out.map { it.nameify(1, 'clade_profile') }
 
 (prof_out, merge_prof_in) = prof_out.into(2)
 merge_prof_in = merge_prof_in.groupBy{ it[0].selectedKey('seed','alpha') }
-        .flatMap{ it.collect { k,v -> [k] +  v.collect().flatten() } }
+        .flatMap{ it.collect { k,v -> [k] +  v.flatten() } }
         .map{ [it[0], [it[2],it[4]]*.value] }
 
 process ProfileMerge {
@@ -150,7 +150,7 @@ process ProfileMerge {
     }
 }
 
-//(evo_out, merge_in) = evo_out.into(2)
+(evo_out, merge_seq_in) = evo_out.into(2)
 
 // TODO
 // - this needs to be cleaned up. We have to expose the underlying Path
@@ -158,20 +158,18 @@ process ProfileMerge {
 // happening and we're forced to unwrap the objects.
 // Either figure work-around or we should consider removing NamedValue
 
-/*merge_in = merge_in.groupBy{ it[0].selectedKey('seed','alpha') }
-        .flatMap{
-            it.collect { k,v -> [k] +  v.collect{cl -> [cl[1],cl[3]]}.flatten() }
-        }
-        .map{ [it[0], [it[2],it[4]], [it[1],it[3]]*.value] }
+merge_seq_in = merge_seq_in.groupBy{ it[0].selectedKey('seed','alpha') }
+        .flatMap{it.collect { k,v -> [k] +  v.collect{cl -> [cl[1],cl[3]]}.flatten() } }
+        .map{ [it[0], [it[1],it[3]]*.value] }
 
 process MergeClades {
     publishDir params.output, mode: 'copy', overwrite: 'true'
 
     input:
-    set key, clades, file('seq') from merge_in
+    set key, file('clade_seq') from merge_seq_in
 
     output:
-    set key, clades, file("${key}.community.fa") into merge_out
+    set key, file("${key}.community.fa") into merge_seq_out
 
     script:
     if (params.debug) {
@@ -181,57 +179,55 @@ process MergeClades {
     }
     else {
         """
-        cat seq* >> ${key}.community.fa
+        cat clade_seq* >> ${key}.community.fa
         """
     }
 }
 
-merge_out = merge_out.map { it.nameify(2, 'ref_seq') }
+merge_seq_out = merge_seq_out.map { it.nameify(1, 'comm_seq') }
 
 //
 //Make WGS reads
-///
-(merge_out, wgs_in) = merge_out.into(2)
+//
 
-// TODO
-// another example where we are exposing Path objects so that we can utilise the symlinks
-// facility (file('xxx')) in processes.
+(merge_seq_out, wgs_in) = merge_seq_out.into(2)
+(merge_prof_out, tmp) = merge_prof_out.into(2)
+
+wgs_in = wgs_in.map{ [it[0], it[1].value]}.phase(tmp).map{ [*it[0], it[1][1]]}
 wgs_in = ms.withVariable('xfold').extend(wgs_in, 'xfold')
-        //.map{ [it[0..1], it[2].value, it[3]] }
-        .subscribe{println it}
-*/
-/*process WGS_Reads {
+
+process WGS_Reads {
     publishDir params.output, mode: 'copy', overwrite: 'true'
 
     input:
-    set key, file('ref_seq'), xfold from wgs_in
+    set key, file('comm_seq'), file('comm_prof'), xfold from wgs_in
 
     output:
-    set key, file("${key}.wgs.r*.fq.gz"), ref_seq, xfold into wgs_out
+    set key, file("${key}.wgs.r*.fq.gz") into wgs_out
 
     script:
     if (params.debug) {
         """
-        echo "metaART.py -C gzip -t ${key['profile']} -z 1 -M $xfold -S ${key['seed']} \
+        echo "metaART.py -C gzip -t comm_prof -z 1 -M $xfold -S ${key['seed']} \
                 -s ${ms.options['wgs']['ins_std']} -m ${ms.options['wgs']['ins_len']} \
-                -l ${ms.options['wgs']['read_len']} -n ${key}.wgs ref_seq ." > ${key}.wgs.r1.fq.gz
+                -l ${ms.options['wgs']['read_len']} -n ${key}.wgs comm_seq ." > ${key}.wgs.r1.fq.gz
 
-        echo "metaART.py -C gzip -t ${key['profile']} -z 1 -M $xfold -S ${key['seed']} \
+        echo "metaART.py -C gzip -t comm_prof -z 1 -M $xfold -S ${key['seed']} \
                 -s ${ms.options['wgs']['ins_std']} -m ${ms.options['wgs']['ins_len']} \
-                -l ${ms.options['wgs']['read_len']} -n ${key}.wgs ref_seq ." > ${key}.wgs.r2.fq.gz
+                -l ${ms.options['wgs']['read_len']} -n ${key}.wgs comm_seq ." > ${key}.wgs.r2.fq.gz
         """
     }
     else {
         """
         export PATH=\$EXT_BIN/art:\$PATH
-        metaART.py -C gzip -t ${key['profile']} -z 1 -M $xfold -S ${key['seed']} \
+        metaART.py -C gzip -t comm_prof -z 1 -M $xfold -S ${key['seed']} \
                 -s ${ms.options['wgs']['ins_std']} -m ${ms.options['wgs']['ins_len']} \
-                -l ${ms.options['wgs']['read_len']} -n "${key}.wgs" ref_seq .
+                -l ${ms.options['wgs']['read_len']} -n "${key}.wgs" comm_seq .
         wait_on_openfile.sh ${key}.wgs.r1.fq.gz
         wait_on_openfile.sh ${key}.wgs.r2.fq.gz
         """
     }
-}*/
+}
 
 /*
 // add a name to new output
