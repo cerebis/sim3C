@@ -104,12 +104,12 @@ process ProfileGen {
     set key, file('clade_seq') from prof_in
 
     output:
-    set key, file("${key}.profile") into prof_out
+    set key, file("${key}.prf") into prof_out
 
     script:
     if (params.debug) {
         """
-        echo $key > "${key}.profile"
+        echo $key > "${key}.prf"
         """
     }
     else {
@@ -117,7 +117,35 @@ process ProfileGen {
         def sigma = key['community'].value.profile.sigma
         """
         profile_generator.py --seed ${key['seed']} --dist lognormal --lognorm-mu $mu \
-            --lognorm-sigma $sigma clade_seq ${key}.profile
+            --lognorm-sigma $sigma clade_seq ${key}.prf
+        """
+    }
+}
+
+prof_out = prof_out.map { it.nameify(1, 'clade_profile') }
+
+(prof_out, merge_prof_in) = prof_out.into(2)
+merge_prof_in = merge_prof_in.groupBy{ it[0].selectedKey('seed','alpha') }
+        .flatMap{ it.collect { k,v -> [k] +  v.collect().flatten() } }
+        .map{ [it[0], [it[2],it[4]]*.value] }
+
+process ProfileMerge {
+    publishDir params.output, mode: 'copy', overwrite: 'true'
+
+    input:
+    set key, file('clade_profile') from merge_prof_in
+
+    output:
+    set key, file("${key}.mprf") into merge_prof_out
+
+    script:
+    if (params.debug) {
+        """
+        echo $key > "${key}.mprf"
+        """
+    } else {
+        """
+        profile_merge.py clade_profile* ${key}.mprf
         """
     }
 }
