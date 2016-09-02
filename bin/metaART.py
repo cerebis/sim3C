@@ -43,6 +43,8 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Simulate a metagenomic data set from an abundance profile')
     parser.add_argument('-C', '--compress', choices=['gzip', 'bzip2'], default=None, help='Compress output files')
     parser.add_argument('-n', '--output-name', metavar='PATH', help='Output file base name', required=True)
+    parser.add_argument('-t', '--community-table', dest='comm_table', required=False,
+                        help='Community profile table', metavar='FILE')
     parser.add_argument('-M', '--max-coverage', metavar='INT', type=int, required=True,
                         help='Coverage of must abundant taxon')
     parser.add_argument('-S', '--seed', metavar='INT', type=int, required=True, help='Random seed')
@@ -87,12 +89,28 @@ if __name__ == '__main__':
     RANDOM_STATE = numpy.random.RandomState(args.seed)
     child_seeds = RANDOM_STATE.randint(LOW_SEED_VALUE, HIGH_SEED_VALUE, args.num_samples).tolist()
 
+    # if specified, read the static profile table from disk rather than
+    # calculate at runtime.
+    if args.comm_table:
+        profile = {}
+        with open(args.comm_table, 'r') as h_table:
+            for line in h_table:
+                line = line.rstrip().lstrip()
+                if line.startswith('#') or len(line) == 0:
+                    continue
+                field = line.split()
+                if len(field) != 3:
+                    print 'sequence table has missing fields at [', line, ']'
+                    sys.exit(1)
+                profile[field[0]] = float(field[2])
+
     # generate N simulated communities
     for n in xrange(0, args.num_samples):
 
-        # generate abundance profile from global seeded random state.
-        profile = abundance.relative_profile(RANDOM_STATE, seq_index, mode=args.dist,
-                                             lognorm_mu=args.lognorm_mu, lognorm_sigma=args.lognorm_sigma)
+        # generate abundance profile from global seeded random state -- if not using a static table
+        if not args.comm_table:
+            profile = abundance.relative_profile(RANDOM_STATE, seq_index, mode=args.dist,
+                                                 lognorm_mu=args.lognorm_mu, lognorm_sigma=args.lognorm_sigma)
 
         for i, sn in enumerate(profile, start=1):
             coverage_file.write('{0}\t{1}\t{2}\t{3}\n'.format(n+1, i, sn, profile[sn]*args.max_coverage))
