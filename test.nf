@@ -274,31 +274,32 @@ process HIC_Reads {
 // add a name to new output
 hic_out = hic_out.map { it.nameify(1, 'hic_reads') }
 
-/*
+
 //
 // Assemble WGS reads
 //
 (wgs_out, asm_in) = wgs_out.into(2)
+asm_in = asm_in.map{[it[0], it[1].value.sort()]}
 
 process Assemble {
     publishDir params.output, mode: 'copy', overwrite: 'true'
 
     input:
-    set key, reads, ref_seq from asm_in
+    set key, file('reads') from asm_in
 
     output:
-    set key, file("${key}.contigs.fasta"), reads, ref_seq into asm_out
+    set key, file("${key}.contigs.fasta") into asm_out
 
     script:
     if (params.debug) {
         """
-        echo "\$EXT_BIN/a5/bin/a5_pipeline.pl --threads=1 --metagenome $reads $key" > ${key}.contigs.fasta
+        echo "\$EXT_BIN/a5/bin/a5_pipeline.pl --threads=1 --metagenome reads1 reads2 $key" > ${key}.contigs.fasta
         """
     }
     else {
         """
         export PATH=\$EXT_BIN/a5/bin:\$PATH
-        a5_pipeline.pl --threads=1 --metagenome $reads $key
+        a5_pipeline.pl --threads=1 --metagenome reads1 reads2 $key
         bwa index ${key}.contigs.fasta
         """
     }
@@ -307,7 +308,7 @@ process Assemble {
 // add a name to new output
 asm_out = asm_out.map { it.nameify(1, 'contigs') }
 
-
+/*
 //
 // Make Truth Tables
 //
