@@ -229,7 +229,7 @@ process WGS_Reads {
     }
 }
 
-/*
+
 // add a name to new output
 wgs_out = wgs_out.map { it.nameify(1, 'wgs_reads') }
 
@@ -237,40 +237,44 @@ wgs_out = wgs_out.map { it.nameify(1, 'wgs_reads') }
 //
 // Make HiC reads
 //
-(evo_out, hic_in) = evo_out.into(2)
 
 // add abundance profile and 3c depth to initial sweep
-hic_in = sweep.extendChannel(hic_in, 'profile', 'n3c')
+(merge_seq_out, hic_in) = merge_seq_out.into(2)
+(merge_prof_out, tmp) = merge_prof_out.into(2)
+
+hic_in = hic_in.map{ [it[0], it[1].value]}.phase(tmp).map{ [*it[0], it[1][1]]}
+hic_in = ms.withVariable('n3c').extend(hic_in, 'n3c')
 
 process HIC_Reads {
     publishDir params.output, mode: 'copy', overwrite: 'true'
 
     input:
-    set key, ref_seq from hic_in
+    set key, file('comm_seq'), file('comm_prof'), n3c from hic_in
 
     output:
-    set key, file("${key}.hic.fa.gz"), ref_seq into hic_out
+    set key, file("${key}.hic.fa.gz") into hic_out
 
     script:
     if (params.debug) {
         """
-        echo "simForward.py -C gzip -r ${params.seed} -n ${key['n3c']} -l ${params.hic_read_len} -p ${params.hic_inter_prob} \\
-               -t ${key['profile']} $ref_seq ${key}.hic.fa.gz" > ${key}.hic.fa.gz
+        echo "simForward.py -C gzip -r ${key['seed']} -n $n3c -l ${ms.options['n3c']['read_len']} \
+            -p ${ms.options['n3c']['inter_prob']} --profile comm_prof comm_seq ${key}.hic.fa.gz" > ${key}.hic.fa.gz
         """
     }
     else {
         """
-        simForward.py -C gzip -r ${params.seed} -n ${key['n3c']} -l ${params.hic_read_len} -p ${params.hic_inter_prob} \
-               -t ${key['profile']} $ref_seq "${key}.hic.fa.gz"
+        simForward.py -C gzip -r ${key['seed']} -n $n3c -l ${ms.options['n3c']['read_len']}
+            -p ${ms.options['n3c']['inter_prob']} --profile comm_prof comm_seq "${key}.hic.fa.gz"
         wait_on_openfile.sh ${key}.hic.fa.gz
         """
     }
 }
 
+
 // add a name to new output
 hic_out = hic_out.map { it.nameify(1, 'hic_reads') }
 
-
+/*
 //
 // Assemble WGS reads
 //

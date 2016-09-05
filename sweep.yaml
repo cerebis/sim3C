@@ -37,7 +37,7 @@ options:
     read_len: 150
     ins_len: 450
     ins_std: 100
-  hic:
+  n3c:
     inter_prob: 0.9
     read_len: 150
   output: out
