@@ -113,7 +113,7 @@ class ChromAbundance:
         return not self.__eq__(other)
 
     def __cmp__(self, other):
-        return self.cell + self.name > other.cell + other.chrom
+        return self.cell + self.name > other.cell + other.name
 
     def __str__(self):
         return repr(self)
@@ -162,7 +162,7 @@ class Profile(OrderedDict):
         t = []
         keys = sorted(self.keys()) if sort else self.keys()
         for n, k in enumerate(keys):
-            t.append([self[k].chrom, self[k].cell, self[k].val])
+            t.append([self[k].name, self[k].cell, self[k].val])
         return t
 
     def write_table(self, hndl, sort=True):
