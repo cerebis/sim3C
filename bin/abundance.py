@@ -99,6 +99,10 @@ class Abundance:
         except ValueError:
             ValueError('Error: abundance value was not a number [{0}]'.format(val))
 
+    @property
+    def long_name(self):
+        return '{0}-{1}'.format(self.cell, self.chrom)
+    
     def __hash__(self):
         return hash(self.chrom)
 
@@ -114,7 +118,7 @@ class Abundance:
         return self.cell + self.chrom > other.cell + other.chrom
 
     def __str__(self):
-        return '{0}.{1}: {2:.2f}'.format(self.chrom, self.cell, self.val)
+        return repr(self)
 
     def __repr__(self):
         return self.chrom

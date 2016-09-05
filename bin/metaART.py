@@ -121,17 +121,16 @@ if __name__ == '__main__':
         try:
 
             # iteratively call ART for each taxon, accumulate the results
-            for seq_id in profile:
+            for abn in profile:
 
-                coverage = profile[seq_id].val * args.max_coverage
-                print '\tRequesting {0:.4f} coverage for {1}'.format(coverage, seq_id)
+                coverage = abn.val * args.max_coverage
+                print '\tRequesting {0:.4f} coverage for {1}'.format(coverage, abn.long_name)
 
                 # iteration target for ART
-                ref_seq = seq_index[seq_id]
-                ref_len = len(ref_seq)
-                SeqIO.write([ref_seq], seq_tmp, 'fasta')
-
                 try:
+                    ref_seq = seq_index[abn.chrom]
+                    ref_len = len(ref_seq)
+                    SeqIO.write([ref_seq], seq_tmp, 'fasta')
 
                     subprocess.check_call([args.art_path,
                                            '-p',   # paired-end sequencing
@@ -163,7 +162,7 @@ if __name__ == '__main__':
                     r2_n += 1
 
                 effective_cov = args.read_len * (r1_n + r2_n) / float(ref_len)
-                print '\tGenerated {0} paired-end reads for {1}, {2:.3f} coverage'.format(r1_n, seq_id, effective_cov)
+                print '\tGenerated {0} paired-end reads for {1}, {2:.3f} coverage'.format(r1_n, abn.long_name, effective_cov)
                 if r1_n != r2_n:
                     print 'Error: paired-end counts do not match {0} vs {1}'.format(r1_n, r2_n)
                     sys.exit(1)
