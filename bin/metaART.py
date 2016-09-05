@@ -102,9 +102,9 @@ if __name__ == '__main__':
             profile = abundance.generate_profile(RANDOM_STATE, seq_index, mode=args.dist,
                                                  lognorm_mu=args.lognorm_mu, lognorm_sigma=args.lognorm_sigma)
 
-        for i, abn in enumerate(profile.values(), start=1):
+        for i, chr_abn in enumerate(profile.values(), start=1):
             coverage_file.write('{0}\t{1}\t{2}\t{3}\t{4}\n'.format(
-                n+1, i, abn.chrom, abn.cell, abn.val * args.max_coverage))
+                n + 1, i, chr_abn.name, chr_abn.cell, chr_abn.val * args.max_coverage))
 
         print 'Sample {0} Relative Abundances:'.format(n)
         profile.write_table(sys.stdout)
@@ -120,15 +120,15 @@ if __name__ == '__main__':
 
         try:
 
-            # iteratively call ART for each taxon, accumulate the results
-            for abn in profile:
+            # iteratively call ART for each chromosome in profile, accumulate the results
+            for chr_abn in profile:
 
-                coverage = abn.val * args.max_coverage
-                print '\tRequesting {0:.4f} coverage for {1}'.format(coverage, abn.long_name)
+                coverage = chr_abn.val * args.max_coverage
+                print '\tRequesting {0:.4f} coverage for {1}'.format(coverage, chr_abn.name)
 
                 # iteration target for ART
                 try:
-                    ref_seq = seq_index[abn.chrom]
+                    ref_seq = seq_index[chr_abn.name]
                     ref_len = len(ref_seq)
                     SeqIO.write([ref_seq], seq_tmp, 'fasta')
 
@@ -162,7 +162,8 @@ if __name__ == '__main__':
                     r2_n += 1
 
                 effective_cov = args.read_len * (r1_n + r2_n) / float(ref_len)
-                print '\tGenerated {0} paired-end reads for {1}, {2:.3f} coverage'.format(r1_n, abn.long_name, effective_cov)
+                print '\tGenerated {0} pairs for {1}, {2:.3f} coverage'.format(r1_n, chr_abn.name, effective_cov)
+
                 if r1_n != r2_n:
                     print 'Error: paired-end counts do not match {0} vs {1}'.format(r1_n, r2_n)
                     sys.exit(1)

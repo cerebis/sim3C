@@ -18,8 +18,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """
 from collections import OrderedDict
 
-import io
-
 import numpy as np
 
 
@@ -68,15 +66,15 @@ def generate_profile(random_state, taxa, mode, **kwargs):
         # names to be inserted in alphabetical order
         ordered_names = sorted(taxa)
         profile = Profile()
-        for n, (chrom, cell) in enumerate(ordered_names):
-            profile.add(chrom, abn_val[n], cell)
+        for n, (chr_name, cell) in enumerate(ordered_names):
+            profile.add(chr_name, abn_val[n], cell)
         return profile
     else:
         # otherwise just return a plain list of values
         return abn_val.tolist()
 
 
-class Abundance:
+class ChromAbundance:
     """
     An entry in a profile, where object identity is keyed by both chromosome and cell name. Cell names are explicit
     and important for supporting multi-chromosomal genome definitions in simulations of 3C read-pairs, where inter
@@ -85,15 +83,15 @@ class Abundance:
 
     The abundance 'value' is expected to be a number.
     """
-    def __init__(self, chrom, val, cell=None):
+    def __init__(self, name, val, cell=None):
         """
 
-        :param chrom: chromsome name
+        :param name: chromsome name
         :param val: abundance value [0,1]
         :param cell: cell/species name. If none, takes on the name of the chromosome
         """
-        self.chrom = chrom
-        self.cell = chrom if not cell else cell
+        self.name = name
+        self.cell = name if not cell else cell
         try:
             self.val = float(val)
         except ValueError:
@@ -101,27 +99,27 @@ class Abundance:
 
     @property
     def long_name(self):
-        return '{0}-{1}'.format(self.cell, self.chrom)
+        return '{0}-{1}'.format(self.cell, self.name)
     
     def __hash__(self):
-        return hash(self.chrom)
+        return hash(self.name)
 
     def __eq__(self, other):
         if not isinstance(other, self.__class__):
             return False
-        return self.chrom == other.chrom
+        return self.name == other.name
 
     def __ne__(self, other):
         return not self.__eq__(other)
 
     def __cmp__(self, other):
-        return self.cell + self.chrom > other.cell + other.chrom
+        return self.cell + self.name > other.cell + other.chrom
 
     def __str__(self):
         return repr(self)
 
     def __repr__(self):
-        return self.chrom
+        return self.name
 
 
 class Profile(OrderedDict):
@@ -136,24 +134,24 @@ class Profile(OrderedDict):
     def __init__(self, *args, **kwargs):
         super(Profile, self).__init__(*args, **kwargs)
 
-    def add(self, chrom, val, cell=None):
+    def add(self, chr_name, val, cell=None):
         """
         Convenience method adding an entry to the profile. The Abundance object
         is created internally.
-        :param chrom: chromosome name
+        :param chr_name: chromosome name
         :param val: abundance value
         :param cell: cell/species name, defaults to chrom if not specified
         """
-        self.addAbundance(Abundance(chrom, val, cell))
+        self.addAbundance(ChromAbundance(chr_name, val, cell))
 
-    def addAbundance(self, abdn):
+    def addAbundance(self, abn):
         """
         Add an abundance object to the Profile.
-        :param abdn: abundance object to add
+        :param abn: abundance object to add
         """
-        if abdn in self:
-            raise RuntimeError('Error: duplicate abundances with identity [{0}] in profile'.format(abdn._id()))
-        self[abdn] = abdn
+        if abn in self:
+            raise RuntimeError('Error: duplicate abundances with identity [{0}] in profile'.format(abn))
+        self[abn] = abn
 
     def to_table(self, sort=True):
         """

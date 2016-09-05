@@ -420,9 +420,9 @@ class Community:
         sequences = SeqIO.to_dict(SeqIO.parse(open(seq_filename), 'fasta', Alphabet.generic_dna))
 
         # build the registries from the defined community profile
-        for abn in profile.values():
-            parent_cell = self.register_cell(abn.cell, abn.val)
-            self.build_register_replicon(abn.chrom, parent_cell, sequences.get(abn.chrom))
+        for chr_abn in profile:
+            parent_cell = self.register_cell(chr_abn.cell, chr_abn.val)
+            self.build_register_replicon(chr_abn.name, parent_cell, sequences.get(chr_abn.name))
 
         # init community wide probs
         self.__init_prob()
