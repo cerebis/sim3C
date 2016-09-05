@@ -18,6 +18,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """
 from collections import OrderedDict
 
+import io
+
 import numpy as np
 
 
@@ -184,19 +186,31 @@ class Profile(OrderedDict):
 def read_profile(hndl):
     """
     Read a profile from an input stream.
-    :param hndl: the input stream to read
+    :param hndl: the input file name or file object
     :return: Profile object
     """
-    profile = Profile()
-    for n, line in enumerate(hndl, start=1):
-        line = line.strip()
-        if len(line) <= 0:
-            continue
-        if line.startswith('#'):
-            continue
-        try:
-            (chrom, cell, val) = line.split('\t')
-            profile.add(Abundance(chrom, val, cell))
-        except:
-            raise IOError('Error: invalid table at line {0} [{0}]'.format(n, line))
-    return profile
+
+    close_handle = False
+    try:
+        if isinstance(hndl, basestring):
+            hndl = open(hndl, 'r')
+            close_handle = True
+
+        profile = Profile()
+        n = 1
+        for line in hndl:
+            line = line.strip()
+            if len(line) <= 0:
+                continue
+            if line.startswith('#'):
+                continue
+            try:
+                chrom, cell, val = line.split('\t')
+                profile.add(chrom, val, cell)
+            except:
+                raise IOError('Error: invalid table at line {0} [{0}]'.format(n, line))
+            n += 1
+        return profile
+    finally:
+        if close_handle:
+            hndl.close()
