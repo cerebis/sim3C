@@ -100,24 +100,24 @@ class Abundance:
             ValueError('Error: abundance value was not a number [{0}]'.format(val))
 
     def __hash__(self):
-        return hash(repr(self))
+        return hash(self.chrom)
 
     def __eq__(self, other):
         if not isinstance(other, self.__class__):
             return False
-        return self.chrom == other.chrom and self.cell == other.cell
+        return self.chrom == other.chrom
 
     def __ne__(self, other):
         return not self.__eq__(other)
 
     def __cmp__(self, other):
-        return repr(self) > repr(other)
+        return self.cell + self.chrom > other.cell + other.chrom
 
     def __str__(self):
-        return '{0}: {1:.2f}'.format(repr(self), self.val)
+        return '{0}.{1}: {2:.2f}'.format(self.chrom, self.cell, self.val)
 
     def __repr__(self):
-        return self.cell + '.' + self.chrom
+        return self.chrom
 
 
 class Profile(OrderedDict):
