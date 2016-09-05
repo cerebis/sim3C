@@ -106,7 +106,7 @@ if __name__ == '__main__':
             coverage_file.write('{0}\t{1}\t{2}\t{3}\t{4}\n'.format(
                 n+1, i, abn.chrom, abn.cell, abn.val * args.max_coverage))
 
-        print "Sample {0} Relative Abundances:"
+        print 'Sample {0} Relative Abundances:'.format(n)
         profile.write_table(sys.stdout)
 
         r1_final = '{0}.{1}.r1.fq'.format(base_name, n+1)
@@ -123,7 +123,7 @@ if __name__ == '__main__':
             # iteratively call ART for each taxon, accumulate the results
             for seq_id in profile:
 
-                coverage = profile.get(seq_id) * args.max_coverage
+                coverage = profile[seq_id].val * args.max_coverage
                 print '\tRequesting {0:.4f} coverage for {1}'.format(coverage, seq_id)
 
                 # iteration target for ART
