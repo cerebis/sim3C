@@ -24,7 +24,7 @@ variables:
   # level 3
   xfold: [1, 2]
   # level 4
-  n3c: [50000, 100000]
+  n3c: [5000, 10000]
 
 options:
   num_samples: 1

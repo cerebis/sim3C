@@ -25,14 +25,26 @@ import bz2
 DEF_BUFFER = 16384
 
 
-def open_output(fname, mode, compress=None):
+def open_output(fname, mode, compress=None, gzlevel=6):
+    """
+    Open a text stream for reading or writing. Compression can be enabled
+    with either 'bzip2' or 'gzip'. Additional option for gzip compression
+    level. Compressed filenames are only appended with suffix if not included.
 
+    :param fname: file name of output
+    :param mode: read or write
+    :param compress: gzip, bzip2
+    :param gzlevel: gzip level (default 6)
+    :return:
+    """
     if compress == 'bzip2':
-        fh = bz2.BZ2File(fname + '.bz2', mode)
+        if not fname.endswith('.bz2'):
+            fname += '.bz2'
+        fh = bz2.BZ2File(fname, mode)
     elif compress == 'gzip':
-        # fix compression level to 6 since this is the norm on Unix. The default
-        # of 9 is slow and is still often worse than bzip2.
-        fh = gzip.GzipFile(fname + '.gz', mode, compresslevel=6)
+        if not fname.endswith('.gz'):
+            fname += '.gz'
+        fh = gzip.GzipFile(fname, mode, compresslevel=gzlevel)
     else:
         fh = open(fname, mode)
 
