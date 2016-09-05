@@ -161,6 +161,8 @@ if __name__ == '__main__':
                 for seq in SeqIO.parse(r2_tmp, 'fastq'):
                     r2_n += 1
 
+                assert r1_n == r2_n, 'Error: failed to generate an equal number of fwd and rev reads'
+
                 effective_cov = args.read_len * (r1_n + r2_n) / float(ref_len)
                 print '\tGenerated {0} pairs for {1}, {2:.3f} coverage'.format(r1_n, chr_abn.name, effective_cov)
 
@@ -169,7 +171,7 @@ if __name__ == '__main__':
                     sys.exit(1)
 
                 io_utils.multicopy_tostream(r1_tmp, all_R1, output_R1)
-                io_utils.multicopy_tostream(r1_tmp, all_R2, output_R2)
+                io_utils.multicopy_tostream(r2_tmp, all_R2, output_R2)
 
                 os.remove(r1_tmp)
                 os.remove(r2_tmp)
