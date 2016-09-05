@@ -38,6 +38,7 @@ def generate_profile(random_state, taxa, mode, **kwargs):
         ntax = taxa
     elif isinstance(taxa, (list, tuple)):
         ntax = len(taxa)
+        print ntax
         # use the first element to determine if we've been passed a list of scalars
         if not isinstance(taxa[0], (list, tuple)):
             # convert single chrom names to (chrom, None) explicit tuples with no cell name.
@@ -46,6 +47,8 @@ def generate_profile(random_state, taxa, mode, **kwargs):
                 tx.append((ti, None))
             taxa = tx
         is_named = True
+    else:
+        raise RuntimeError('taxa parameter must be a integer or a list/tuple of names')
 
     # obtain the set of values from the chosen distribution
     if mode == 'equal':

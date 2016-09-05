@@ -50,7 +50,7 @@ if __name__ == '__main__':
         if len(seq_index) <= 0:
             raise IOError('Input file contained no sequences')
 
-        profile = abundance.generate_profile(RANDOM_STATE, seq_index, mode=args.dist,
+        profile = abundance.generate_profile(RANDOM_STATE, list(seq_index), mode=args.dist,
                                              lognorm_mu=args.lognorm_mu, lognorm_sigma=args.lognorm_sigma)
 
         with open(args.output, 'w') as out_h:
