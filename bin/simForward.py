@@ -605,7 +605,7 @@ parser.add_argument('-P', '--profile', dest='profile', metavar='FILE',
 parser.add_argument('--profile-out', metavar='FILE', default='profile.tsv',
                     help='Output file when generating community profile', required=False)
 
-parser.add_argument('--dist', metavar='DISTNAME', choices=['equal', 'uniform', 'lognormal'], required=True,
+parser.add_argument('--dist', metavar='DISTNAME', choices=['equal', 'uniform', 'lognormal'],
                     help='Abundance profile distribution [equal, uniform, lognormal]')
 parser.add_argument('--lognorm-mu', metavar='FLOAT', type=float, default='1', required=False,
                     help='Log-normal relative abundance mu parameter')
