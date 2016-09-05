@@ -17,17 +17,17 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """
+import argparse
+import atexit
+import os
+import subprocess
+import sys
+
+import numpy
 from Bio import SeqIO
 
 import abundance
 import io_utils
-
-import argparse
-import os
-import subprocess
-import sys
-import numpy
-import atexit
 
 
 TMP_INPUT = 'seq.tmp'
@@ -43,8 +43,8 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Simulate a metagenomic data set from an abundance profile')
     parser.add_argument('-C', '--compress', choices=['gzip', 'bzip2'], default=None, help='Compress output files')
     parser.add_argument('-n', '--output-name', metavar='PATH', help='Output file base name', required=True)
-    parser.add_argument('-t', '--community-table', dest='comm_table', required=False,
-                        help='Community profile table', metavar='FILE')
+    parser.add_argument('-P', '--profile', dest='profile', required=False,
+                        help='Community abundance profile', metavar='FILE')
     parser.add_argument('-M', '--max-coverage', metavar='INT', type=int, required=True,
                         help='Coverage of must abundant taxon')
     parser.add_argument('-S', '--seed', metavar='INT', type=int, required=True, help='Random seed')
@@ -57,7 +57,7 @@ if __name__ == '__main__':
                         help='Output file for simulated genome coverage table', required=False)
     parser.add_argument('-z', '--num-samples', metavar='INT', type=int, default='1', required=True,
                         help='Number of transect samples')
-    parser.add_argument('--dist', metavar='DISTNAME', choices=['equal', 'uniform', 'lognormal'], required=True,
+    parser.add_argument('--dist', metavar='DISTNAME', choices=['equal', 'uniform', 'lognormal'],
                         help='Abundance profile distribution [equal, uniform, lognormal]')
     parser.add_argument('--lognorm-mu', metavar='FLOAT', type=float, default='1', required=False,
                         help='Log-normal relative abundance mu parameter')
@@ -89,34 +89,25 @@ if __name__ == '__main__':
     RANDOM_STATE = numpy.random.RandomState(args.seed)
     child_seeds = RANDOM_STATE.randint(LOW_SEED_VALUE, HIGH_SEED_VALUE, args.num_samples).tolist()
 
-    # if specified, read the static profile table from disk rather than
-    # calculate at runtime.
-    if args.comm_table:
-        profile = {}
-        with open(args.comm_table, 'r') as h_table:
-            for line in h_table:
-                line = line.rstrip().lstrip()
-                if line.startswith('#') or len(line) == 0:
-                    continue
-                field = line.split()
-                if len(field) != 3:
-                    print 'sequence table has missing fields at [', line, ']'
-                    sys.exit(1)
-                profile[field[0]] = float(field[2])
+    if args.profile:
+        # if specified, read the static profile table from disk rather than calculate at runtime.
+        # this will meant the same abundance profile is used in each sample -- in multisample mode.
+        profile = abundance.read_profile(args.profile)
 
     # generate N simulated communities
     for n in xrange(0, args.num_samples):
 
         # generate abundance profile from global seeded random state -- if not using a static table
-        if not args.comm_table:
-            profile = abundance.relative_profile(RANDOM_STATE, seq_index, mode=args.dist,
+        if not args.profile:
+            profile = abundance.generate_profile(RANDOM_STATE, seq_index, mode=args.dist,
                                                  lognorm_mu=args.lognorm_mu, lognorm_sigma=args.lognorm_sigma)
 
-        for i, sn in enumerate(profile, start=1):
-            coverage_file.write('{0}\t{1}\t{2}\t{3}\n'.format(n+1, i, sn, profile[sn]*args.max_coverage))
+        for i, abn in enumerate(profile.values(), start=1):
+            coverage_file.write('{0}\t{1}\t{2}\t{3}\t{4}\n'.format(
+                n+1, i, abn.chrom, abn.cell, abn.val * args.max_coverage))
 
-        print "Sample {0} Relative Abundances {1}".format(n, ", ".join(
-            map(lambda v: '{0}:{1:.4f}'.format(v[0], v[1]), profile.items())))
+        print "Sample {0} Relative Abundances:"
+        profile.write_table(sys.stdout)
 
         r1_final = '{0}.{1}.r1.fq'.format(base_name, n+1)
         r2_final = '{0}.{1}.r2.fq'.format(base_name, n+1)
@@ -132,7 +123,7 @@ if __name__ == '__main__':
             # iteratively call ART for each taxon, accumulate the results
             for seq_id in profile:
 
-                coverage = profile[seq_id] * args.max_coverage
+                coverage = profile.get(seq_id) * args.max_coverage
                 print '\tRequesting {0:.4f} coverage for {1}'.format(coverage, seq_id)
 
                 # iteration target for ART

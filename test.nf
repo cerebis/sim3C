@@ -208,11 +208,11 @@ process WGS_Reads {
     script:
     if (params.debug) {
         """
-        echo "metaART.py -C gzip -t comm_prof -z 1 -M $xfold -S ${key['seed']} \
+        echo "metaART.py -C gzip --profile comm_prof -z 1 -M $xfold -S ${key['seed']} \
                 -s ${ms.options['wgs']['ins_std']} -m ${ms.options['wgs']['ins_len']} \
                 -l ${ms.options['wgs']['read_len']} -n ${key}.wgs comm_seq ." > ${key}.wgs.r1.fq.gz
 
-        echo "metaART.py -C gzip -t comm_prof -z 1 -M $xfold -S ${key['seed']} \
+        echo "metaART.py -C gzip --profile comm_prof -z 1 -M $xfold -S ${key['seed']} \
                 -s ${ms.options['wgs']['ins_std']} -m ${ms.options['wgs']['ins_len']} \
                 -l ${ms.options['wgs']['read_len']} -n ${key}.wgs comm_seq ." > ${key}.wgs.r2.fq.gz
         """
@@ -220,7 +220,7 @@ process WGS_Reads {
     else {
         """
         export PATH=\$EXT_BIN/art:\$PATH
-        metaART.py -C gzip -t comm_prof -z 1 -M $xfold -S ${key['seed']} \
+        metaART.py -C gzip --profile comm_prof -z 1 -M $xfold -S ${key['seed']} \
                 -s ${ms.options['wgs']['ins_std']} -m ${ms.options['wgs']['ins_len']} \
                 -l ${ms.options['wgs']['read_len']} -n "${key}.wgs" comm_seq .
         wait_on_openfile.sh ${key}.wgs.r1.fq.gz

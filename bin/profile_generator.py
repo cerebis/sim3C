@@ -17,11 +17,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """
-from Bio import SeqIO
-import abundance
 import argparse
-import numpy
 
+import numpy
+from Bio import SeqIO
+
+import abundance
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Generate random abundance profiles for a given multifasta file')
@@ -43,23 +44,18 @@ if __name__ == '__main__':
     else:
         RANDOM_STATE = numpy.random.RandomState(args.seed)
 
-    comm_table = []
     seq_index = None
     try:
         seq_index = SeqIO.index(args.input, 'fasta')
         if len(seq_index) <= 0:
             raise IOError('Input file contained no sequences')
 
-        profile = abundance.relative_profile(RANDOM_STATE, seq_index, mode=args.dist,
+        profile = abundance.generate_profile(RANDOM_STATE, seq_index, mode=args.dist,
                                              lognorm_mu=args.lognorm_mu, lognorm_sigma=args.lognorm_sigma)
 
-        for si, pi in profile.iteritems():
-            comm_table.append([si, si, pi])
-
         with open(args.output, 'w') as out_h:
-            out_h.write('#\treplicon\tcell\tabundance\n')
-            for n, sn in enumerate(profile, start=1):
-                out_h.write('{0}\t{1}\t{2}\t{3}\n'.format(n, sn, sn, profile[sn]))
+            profile.write_table(out_h)
+
     finally:
         if seq_index:
             seq_index.close()
