@@ -299,7 +299,7 @@ process Assemble {
     else {
         """
         export PATH=\$EXT_BIN/a5/bin:\$PATH
-        a5_pipeline.pl --threads=1 --metagenome reads1.gz ${reads[0]} ${reads[1]} $key
+        a5_pipeline.pl --threads=1 --metagenome ${reads[0]} ${reads[1]} $key
         bwa index ${key}.contigs.fasta
         """
     }
