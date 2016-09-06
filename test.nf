@@ -202,7 +202,7 @@ process WGS_Reads {
     set key, file(comm_seq), file(comm_prof), xfold from wgs_in
 
     output:
-    set key, file("${key}.wgs.r*.fq.gz"), file(comm_seq) into wgs_out
+    set key, file("${key}.wgs.r1.fq.gz"), file("${key}.wgs.r2.fq.gz"), file(comm_seq) into wgs_out
 
     script:
     if (params.debug) {
@@ -229,8 +229,8 @@ process WGS_Reads {
 }
 
 
-// add a name to new output
-wgs_out = wgs_out.map { it.nameify(1, 'wgs_reads') }
+// name reads
+wgs_out = wgs_out.map{ it.nameify(1, 'wgs_reads1'); it.nameify(2, 'wgs_reads2') }
 
 
 
@@ -278,27 +278,27 @@ hic_out = hic_out.map { it.nameify(1, 'hic_reads') }
 // Assemble WGS reads
 //
 (wgs_out, asm_in) = wgs_out.into(2)
-asm_in = asm_in.map{[it[0], it[1].value.sort(), it[2]]}
+asm_in = asm_in.map{[it[0], it[1].value, it[2].value, it[3]]}
 
 process Assemble {
     publishDir params.output, mode: 'copy', overwrite: 'true'
 
     input:
-    set key, file(reads), file(comm_seq) from asm_in
+    set key, file(reads1), file(reads2), file(comm_seq) from asm_in
 
     output:
-    set key, file("${key}.contigs.fasta"), reads, file(comm_seq) into asm_out
+    set key, file("${key}.contigs.fasta"), file(reads1), file(reads2), file(comm_seq) into asm_out
 
     script:
     if (params.debug) {
         """
-        echo "\$EXT_BIN/a5/bin/a5_pipeline.pl --threads=1 --metagenome ${reads[0]} ${reads[1]} $key" > ${key}.contigs.fasta
+        echo "\$EXT_BIN/a5/bin/a5_pipeline.pl --threads=1 --metagenome $reads1 $reads2 $key" > ${key}.contigs.fasta
         """
     }
     else {
         """
         export PATH=\$EXT_BIN/a5/bin:\$PATH
-        a5_pipeline.pl --threads=1 --metagenome ${reads[0]} ${reads[1]} $key
+        a5_pipeline.pl --threads=1 --metagenome $reads1 $reads2 $key
         bwa index ${key}.contigs.fasta
         """
     }
@@ -312,8 +312,7 @@ asm_out = asm_out.map { it.nameify(1, 'contigs') }
 // Make Truth Tables
 //
 (asm_out, truth_in) = asm_out.into(2)
-
-truth_in = truth_in.map{ [it[0], it[1].value, it[3]] }
+truth_in = truth_in.map{ [it[0], it[1].value, it[4]] }
 
 process Truth {
     publishDir params.output, mode: 'copy', overwrite: 'true'
@@ -345,9 +344,9 @@ process Truth {
 
 }
 
-
 // add a name to new output
 truth_out = truth_out.map { it.nameify(1, 'truth') }
+
 
 //
 // Map HiC reads to assembled contigs
@@ -431,16 +430,16 @@ graph_out = graph_out.map { it.nameify(1, 'graph') }
 // Map WGS reads to contigs
 //
 (asm_out, wgsmap_in) = asm_out.into(2)
-wgsmap_in = wgsmap_in.map{ [it[0], it[1].value, it[2]]}
+wgsmap_in = wgsmap_in.map{ [it[0], it[1].value, it[2], it[3]]}
 
 process WGSMap {
     publishDir params.output, mode: 'copy', overwrite: 'true'
 
     input:
-    set key, file(contigs), file(reads) from wgsmap_in
+    set key, file(contigs), file(reads1), file(reads2) from wgsmap_in
 
     output:
-    set key, file("${key}.wgs2ctg.bam"), file(contigs), reads into wgsmap_out
+    set key, file("${key}.wgs2ctg.bam"), file(contigs) into wgsmap_out
 
     script:
     if (params.debug) {
@@ -455,7 +454,7 @@ process WGSMap {
         then
             bwa index $contigs
         fi
-        bwa mem -t 1 $contigs ${reads[0]} ${reads[1]} | samtools view -bS - | samtools sort -l 9 - "${key}.wgs2ctg"
+        bwa mem -t 1 $contigs $reads1 $reads2 | samtools view -bS - | samtools sort -l 9 - "${key}.wgs2ctg"
         """
     }
 }
@@ -468,16 +467,16 @@ wgsmap_out = wgsmap_out.map { it.nameify(1, 'wgs2ctg') }
 // Calculate assembly contig coverage
 //
 (wgsmap_out, cov_in) = wgsmap_out.into(2)
-
+cov_in = cov_in.map{[it[0], it[1].value, it[2]]}
 
 process InferReadDepth {
     publishDir params.output, mode: 'copy', overwrite: 'true'
 
     input:
-    set key, file(wgs2ctg), file(contigs), file(reads) from cov_in
+    set key, file(wgs2ctg), file(contigs) from cov_in
 
     output:
-    set key, file("${key}.wgs2ctg.cov"), file(wgs2ctg), file(contigs), reads into cov_out
+    set key, file("${key}.wgs2ctg.cov"), file(wgs2ctg), file(contigs) into cov_out
 
     script:
     if (params.debug) {
