@@ -20,7 +20,6 @@
 import MetaSweeper
 
 MetaSweeper ms = MetaSweeper.fromFile(new File('sweep.yaml'))
-//println ms.describeSweep()
 
 gen_in = ms.createSweep()
         .withVariable('seed')
@@ -193,26 +192,26 @@ merge_seq_out = merge_seq_out.map { it.nameify(1, 'comm_seq') }
 (merge_seq_out, wgs_in) = merge_seq_out.into(2)
 (merge_prof_out, tmp) = merge_prof_out.into(2)
 
-wgs_in = wgs_in.map{ [it[0], it[1].value]}.phase(tmp).map{ [*it[0], it[1][1]]}
+wgs_in = wgs_in.map{ [it[0], it[1].value] }.phase(tmp).map{ [*it[0], it[1][1]]}
 wgs_in = ms.withVariable('xfold').extend(wgs_in, 'xfold')
 
 process WGS_Reads {
     publishDir params.output, mode: 'copy', overwrite: 'true'
 
     input:
-    set key, file(comm_seq), file('comm_prof'), xfold from wgs_in
+    set key, file(comm_seq), file(comm_prof), xfold from wgs_in
 
     output:
-    set key, file("${key}.wgs.r*.fq.gz"), comm_seq into wgs_out
+    set key, file("${key}.wgs.r*.fq.gz"), file(comm_seq) into wgs_out
 
     script:
     if (params.debug) {
         """
-        echo "metaART.py -C gzip --profile comm_prof -z 1 -M $xfold -S ${key['seed']} \
+        echo "metaART.py -C gzip --profile $comm_prof -z 1 -M $xfold -S ${key['seed']} \
                 -s ${ms.options['wgs']['ins_std']} -m ${ms.options['wgs']['ins_len']} \
                 -l ${ms.options['wgs']['read_len']} -n ${key}.wgs $comm_seq ." > ${key}.wgs.r1.fq.gz
 
-        echo "metaART.py -C gzip --profile comm_prof -z 1 -M $xfold -S ${key['seed']} \
+        echo "metaART.py -C gzip --profile $comm_prof -z 1 -M $xfold -S ${key['seed']} \
                 -s ${ms.options['wgs']['ins_std']} -m ${ms.options['wgs']['ins_len']} \
                 -l ${ms.options['wgs']['read_len']} -n ${key}.wgs $comm_seq ." > ${key}.wgs.r2.fq.gz
         """
@@ -220,7 +219,7 @@ process WGS_Reads {
     else {
         """
         export PATH=\$EXT_BIN/art:\$PATH
-        metaART.py -C gzip --profile comm_prof -z 1 -M $xfold -S ${key['seed']} \
+        metaART.py -C gzip --profile $comm_prof -z 1 -M $xfold -S ${key['seed']} \
                 -s ${ms.options['wgs']['ins_std']} -m ${ms.options['wgs']['ins_len']} \
                 -l ${ms.options['wgs']['read_len']} -n "${key}.wgs" $comm_seq .
         wait_on_openfile.sh ${key}.wgs.r1.fq.gz
@@ -234,7 +233,7 @@ process WGS_Reads {
 wgs_out = wgs_out.map { it.nameify(1, 'wgs_reads') }
 
 
-//
+
 // Make HiC reads
 //
 
@@ -288,7 +287,7 @@ process Assemble {
     set key, file(reads), file(comm_seq) from asm_in
 
     output:
-    set key, file("${key}.contigs.fasta"), reads, comm_seq into asm_out
+    set key, file("${key}.contigs.fasta"), reads, file(comm_seq) into asm_out
 
     script:
     if (params.debug) {
@@ -299,7 +298,7 @@ process Assemble {
     else {
         """
         export PATH=\$EXT_BIN/a5/bin:\$PATH
-        a5_pipeline.pl --threads=1 --metagenome reads1.gz ${reads[0]} ${reads[1]} $key
+        a5_pipeline.pl --threads=1 --metagenome ${reads[0]} ${reads[1]} $key
         bwa index ${key}.contigs.fasta
         """
     }
@@ -323,7 +322,7 @@ process Truth {
     set key, file(contigs), file(comm_seq) from truth_in
 
     output:
-    set key, file("${key}.truth"), contigs, comm_seq into truth_out
+    set key, file("${key}.truth"), file(contigs), file(comm_seq) into truth_out
 
     script:
     if (params.debug) {
@@ -365,7 +364,7 @@ process HiCMap {
     set key, file(hic_reads), file(contigs) from hicmap_in
 
     output:
-    set key, file("${key}.hic2ctg.bam"), hic_reads, contigs into hicmap_out
+    set key, file("${key}.hic2ctg.bam"), file(hic_reads), file(contigs) into hicmap_out
 
     script:
     if (params.debug) {
@@ -401,7 +400,7 @@ process Graph {
     set key, file(hic2ctg), file(hic_reads), file(contigs) from graph_in
 
     output:
-    set key, file("${key}.graphml"), hic_reads, contigs into graph_out
+    set key, file("${key}.graphml"), file(hic_reads), file(contigs) into graph_out
 
     script:
     if (params.debug) {
@@ -433,7 +432,7 @@ process WGSMap {
     set key, file(contigs), file(reads) from wgsmap_in
 
     output:
-    set key, file("${key}.wgs2ctg.bam"), contigs, reads into wgsmap_out
+    set key, file("${key}.wgs2ctg.bam"), file(contigs), reads into wgsmap_out
 
     script:
     if (params.debug) {
@@ -466,7 +465,7 @@ process InferReadDepth {
     set key, file(wgs2ctg), file(contigs), file(reads) from cov_in
 
     output:
-    set key, file("${key}.wgs2ctg.cov"), wgs2ctg, contigs, reads into cov_out
+    set key, file("${key}.wgs2ctg.cov"), file(wgs2ctg), file(contigs), reads into cov_out
 
     script:
     if (params.debug) {
