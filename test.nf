@@ -200,21 +200,21 @@ process WGS_Reads {
     publishDir params.output, mode: 'copy', overwrite: 'true'
 
     input:
-    set key, file('comm_seq'), file('comm_prof'), xfold from wgs_in
+    set key, file(comm_seq), file('comm_prof'), xfold from wgs_in
 
     output:
-    set key, file("${key}.wgs.r*.fq.gz") into wgs_out
+    set key, file("${key}.wgs.r*.fq.gz"), comm_seq into wgs_out
 
     script:
     if (params.debug) {
         """
         echo "metaART.py -C gzip --profile comm_prof -z 1 -M $xfold -S ${key['seed']} \
                 -s ${ms.options['wgs']['ins_std']} -m ${ms.options['wgs']['ins_len']} \
-                -l ${ms.options['wgs']['read_len']} -n ${key}.wgs comm_seq ." > ${key}.wgs.r1.fq.gz
+                -l ${ms.options['wgs']['read_len']} -n ${key}.wgs $comm_seq ." > ${key}.wgs.r1.fq.gz
 
         echo "metaART.py -C gzip --profile comm_prof -z 1 -M $xfold -S ${key['seed']} \
                 -s ${ms.options['wgs']['ins_std']} -m ${ms.options['wgs']['ins_len']} \
-                -l ${ms.options['wgs']['read_len']} -n ${key}.wgs comm_seq ." > ${key}.wgs.r2.fq.gz
+                -l ${ms.options['wgs']['read_len']} -n ${key}.wgs $comm_seq ." > ${key}.wgs.r2.fq.gz
         """
     }
     else {
@@ -222,7 +222,7 @@ process WGS_Reads {
         export PATH=\$EXT_BIN/art:\$PATH
         metaART.py -C gzip --profile comm_prof -z 1 -M $xfold -S ${key['seed']} \
                 -s ${ms.options['wgs']['ins_std']} -m ${ms.options['wgs']['ins_len']} \
-                -l ${ms.options['wgs']['read_len']} -n "${key}.wgs" comm_seq .
+                -l ${ms.options['wgs']['read_len']} -n "${key}.wgs" $comm_seq .
         wait_on_openfile.sh ${key}.wgs.r1.fq.gz
         wait_on_openfile.sh ${key}.wgs.r2.fq.gz
         """
@@ -249,7 +249,7 @@ process HIC_Reads {
     publishDir params.output, mode: 'copy', overwrite: 'true'
 
     input:
-    set key, file('comm_seq'), file('comm_prof'), n3c from hic_in
+    set key, file(comm_seq), file(comm_prof), n3c from hic_in
 
     output:
     set key, file("${key}.hic.fa.gz") into hic_out
@@ -258,13 +258,13 @@ process HIC_Reads {
     if (params.debug) {
         """
         echo "simForward.py -C gzip -r ${key['seed']} -n $n3c -l ${ms.options['n3c']['read_len']} \
-            -p ${ms.options['n3c']['inter_prob']} --profile comm_prof comm_seq ${key}.hic.fa.gz" > ${key}.hic.fa.gz
+            -p ${ms.options['n3c']['inter_prob']} --profile $comm_prof $comm_seq ${key}.hic.fa.gz" > ${key}.hic.fa.gz
         """
     }
     else {
         """
         simForward.py -C gzip -r ${key['seed']} -n $n3c -l ${ms.options['n3c']['read_len']} \
-            -p ${ms.options['n3c']['inter_prob']} --profile comm_prof comm_seq "${key}.hic.fa.gz"
+            -p ${ms.options['n3c']['inter_prob']} --profile $comm_prof $comm_seq "${key}.hic.fa.gz"
         wait_on_openfile.sh ${key}.hic.fa.gz
         """
     }
@@ -279,27 +279,27 @@ hic_out = hic_out.map { it.nameify(1, 'hic_reads') }
 // Assemble WGS reads
 //
 (wgs_out, asm_in) = wgs_out.into(2)
-asm_in = asm_in.map{[it[0], it[1].value.sort()]}
+asm_in = asm_in.map{[it[0], it[1].value.sort(), it[2]]}
 
 process Assemble {
     publishDir params.output, mode: 'copy', overwrite: 'true'
 
     input:
-    set key, file('reads') from asm_in
+    set key, file(reads), file(comm_seq) from asm_in
 
     output:
-    set key, file("${key}.contigs.fasta") into asm_out
+    set key, file("${key}.contigs.fasta"), reads, comm_seq into asm_out
 
     script:
     if (params.debug) {
         """
-        echo "\$EXT_BIN/a5/bin/a5_pipeline.pl --threads=1 --metagenome reads1 reads2 $key" > ${key}.contigs.fasta
+        echo "\$EXT_BIN/a5/bin/a5_pipeline.pl --threads=1 --metagenome ${reads[0]} ${reads[1]} $key" > ${key}.contigs.fasta
         """
     }
     else {
         """
         export PATH=\$EXT_BIN/a5/bin:\$PATH
-        a5_pipeline.pl --threads=1 --metagenome reads1 reads2 $key
+        a5_pipeline.pl --threads=1 --metagenome reads1.gz ${reads[0]} ${reads[1]} $key
         bwa index ${key}.contigs.fasta
         """
     }
@@ -308,20 +308,22 @@ process Assemble {
 // add a name to new output
 asm_out = asm_out.map { it.nameify(1, 'contigs') }
 
-/*
+
 //
 // Make Truth Tables
 //
 (asm_out, truth_in) = asm_out.into(2)
 
+truth_in = truth_in.map{ [it[0], it[1].value, it[3]] }
+
 process Truth {
     publishDir params.output, mode: 'copy', overwrite: 'true'
 
     input:
-    set key, contigs, reads, ref_seq from truth_in
+    set key, file(contigs), file(comm_seq) from truth_in
 
     output:
-    set key, file("${key}.truth"), contigs, reads, ref_seq into truth_out
+    set key, file("${key}.truth"), contigs, comm_seq into truth_out
 
     script:
     if (params.debug) {
@@ -334,7 +336,7 @@ process Truth {
         export PATH=\$EXT_BIN/last:\$PATH
         if [ ! -e db.prj ]
         then
-            lastdb db $ref_seq
+            lastdb db $comm_seq
         fi
 
         lastal -P 1 db $contigs | maf-convert psl > ctg2ref.psl
@@ -344,6 +346,7 @@ process Truth {
 
 }
 
+
 // add a name to new output
 truth_out = truth_out.map { it.nameify(1, 'truth') }
 
@@ -352,16 +355,17 @@ truth_out = truth_out.map { it.nameify(1, 'truth') }
 //
 (asm_out, hicmap_in) = asm_out.into(2)
 // combine results of hic and assembly processes, reduce to unique columns and select those relevant
-hicmap_in = sweep.joinChannels(hic_out, hicmap_in, 5).map{ it.unique() }.map{ it.pick('contigs', 'hic_reads') }
+hicmap_in = ms.sweep.joinChannels(hic_out, hicmap_in, 2)
+        .map{ [it[0], it[1].value, it[2].value] }
 
 process HiCMap {
     publishDir params.output, mode: 'copy', overwrite: 'true'
 
     input:
-    set key, contigs, hic_reads from hicmap_in
+    set key, file(hic_reads), file(contigs) from hicmap_in
 
     output:
-    set key, file("${key}.hic2ctg.bam"), contigs, hic_reads into hicmap_out
+    set key, file("${key}.hic2ctg.bam"), hic_reads, contigs into hicmap_out
 
     script:
     if (params.debug) {
@@ -387,16 +391,17 @@ hicmap_out = hicmap_out.map { it.nameify(1, 'hic2ctg') }
 // Generate contig graphs
 //
 (hicmap_out, graph_in) = hicmap_out.into(2)
+graph_in = graph_in.map{[it[0], it[1].value, it[2], it[3]]}
 
 process Graph {
 
     publishDir params.output, mode: 'copy', overwrite: 'true'
 
     input:
-    set key, hic2ctg, contigs, hic_reads from graph_in
+    set key, file(hic2ctg), file(hic_reads), file(contigs) from graph_in
 
     output:
-    set key, file("${key}.graphml"), contigs, hic_reads into graph_out
+    set key, file("${key}.graphml"), hic_reads, contigs into graph_out
 
     script:
     if (params.debug) {
@@ -414,19 +419,21 @@ process Graph {
 // add a name to new output
 graph_out = graph_out.map { it.nameify(1, 'graph') }
 
+
 //
 // Map WGS reads to contigs
 //
 (asm_out, wgsmap_in) = asm_out.into(2)
+wgsmap_in = wgsmap_in.map{ [it[0], it[1].value, it[2]]}
 
 process WGSMap {
     publishDir params.output, mode: 'copy', overwrite: 'true'
 
     input:
-    set key, contigs, reads, ref_seq from wgsmap_in
+    set key, file(contigs), file(reads) from wgsmap_in
 
     output:
-    set key, file("${key}.wgs2ctg.bam"), contigs, reads, ref_seq into wgsmap_out
+    set key, file("${key}.wgs2ctg.bam"), contigs, reads into wgsmap_out
 
     script:
     if (params.debug) {
@@ -437,13 +444,14 @@ process WGSMap {
     else {
         """
         export PATH=\$EXT_BIN/a5/bin:\$PATH
-        bwa mem -t 1 $contigs $reads | samtools view -bS - | samtools sort -l 9 - "${key}.wgs2ctg"
+        bwa mem -t 1 $contigs ${reads[0]} ${reads[1]} | samtools view -bS - | samtools sort -l 9 - "${key}.wgs2ctg"
         """
     }
 }
 
 // add a name to new output
 wgsmap_out = wgsmap_out.map { it.nameify(1, 'wgs2ctg') }
+
 
 //
 // Calculate assembly contig coverage
@@ -455,10 +463,10 @@ process InferReadDepth {
     publishDir params.output, mode: 'copy', overwrite: 'true'
 
     input:
-    set key, wgs2ctg, contigs, reads, ref_seq from cov_in
+    set key, file(wgs2ctg), file(contigs), file(reads) from cov_in
 
     output:
-    set key, file("${key}.wgs2ctg.cov"), wgs2ctg, contigs, reads, ref_seq into cov_out
+    set key, file("${key}.wgs2ctg.cov"), wgs2ctg, contigs, reads into cov_out
 
     script:
     if (params.debug) {
@@ -494,4 +502,3 @@ process InferReadDepth {
 
 // add a name to new output
 cov_out = cov_out.map { it.nameify(1, 'coverage') }
-*/
