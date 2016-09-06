@@ -375,6 +375,10 @@ process HiCMap {
     else {
         """
         export PATH=\$EXT_BIN/a5/bin:\$PATH
+        if [ ! -e "${contigs}.bwt" ]
+        then
+            bwa index $contigs
+        fi
         bwa mem -t 1 $contigs $hic_reads | samtools view -bS - | samtools sort -l 9 - "${key}.hic2ctg"
         samtools index "${key}.hic2ctg.bam"
         samtools idxstats "${key}.hic2ctg.bam" > "${key}.hic2ctg.idxstats"
@@ -410,6 +414,10 @@ process Graph {
     }
     else {
         """
+        if [ ! -e "${hic2ctg}.bai" ]
+        then
+            samtools index $hic2ctg
+        fi
         bamToEdges_mod2.py --sim --afmt bam --strong 150 --graphml "${key}.graphml" --merged $hic2ctg hic2ctg.e hic2ctg.n
         """
     }
@@ -443,6 +451,10 @@ process WGSMap {
     else {
         """
         export PATH=\$EXT_BIN/a5/bin:\$PATH
+        if [ ! -e "${contigs}.bwt" ]
+        then
+            bwa index $contigs
+        fi
         bwa mem -t 1 $contigs ${reads[0]} ${reads[1]} | samtools view -bS - | samtools sort -l 9 - "${key}.wgs2ctg"
         """
     }
