@@ -55,8 +55,10 @@ class MetaSweeper {
         // For Nextflow caching to function, we must register our custom classes
         // with the chosen serialization library (Kryo). We do not provide any
         // custom Serializer implementation.
-        KryoHelper.register(Key);
-        KryoHelper.register(NamedValue);
+        KryoHelper.register(Key)
+        KryoHelper.register(NamedValue)
+        KryoHelper.register(Community)
+        KryoHelper.register(Clade)
 
         List.metaClass.pick = { ... picks ->
             if (picks instanceof Object[]) {
@@ -114,25 +116,57 @@ class MetaSweeper {
 
     }
 
+    /**
+     * Read a configuration from file and return an instance of MetaSweeper
+     * @param config -- YAML format configuration file.
+     * @return new MetaSweeper instance
+     */
     static MetaSweeper fromFile(File config) {
         ConfigLoader.read(config)
     }
 
-    public String describeSweep() {
-        ConfigLoader.write(this)
+    /**
+     * Print a table describing the current sweep.
+     * @param msg -- an additional message to include
+     */
+    public void describeSweep(String msg=null) {
+        if (msg) {
+            println msg
+        }
+        println this.sweep.description()
     }
 
+    /**
+     * Initialize the sweep.
+     * @return This MetaSweeper instance
+     */
     public MetaSweeper createSweep() {
         sweep = new Sweep()
         return this
     }
 
-    public DataflowChannel extend(DataflowQueue df, Object... varNames) {
-        sweep.extendChannel(df, varNames)
+    /**
+     * Extend a channel by adding the named configuration variable to the sweep and
+     * then permute the passed Channel.
+     *
+     * @param df -- the existing channel to extend
+     * @param varName -- the named variable with which to extend the channel
+     * @return the extended Channel
+     */
+    public DataflowChannel extend(DataflowQueue df, String... varName) {
+        sweep.extendChannel(df, varName)
     }
 
+    /**
+     * Add a configuration variable to sweep of this MetaSweeper instance.
+     * @param name - the configuration variable to add
+     * @param stepInto - for non-collections which are iterable, step into the object and retrieve
+     * the elements instead
+     * @return MetaSweeper instance
+     */
     public MetaSweeper withVariable(String name, Boolean stepInto=false) {
         if (stepInto) {
+            // step into a variable which itself iterable but not a plain collection
             sweep[name] = variables[name].collect()
         }
         else {
@@ -145,7 +179,9 @@ class MetaSweeper {
         sweep.permutedChannel()
     }
 
-
+    /**
+     * NamedValue wrap objects with a name.
+     */
     @AutoClone
     static class NamedValue {
         String name
@@ -158,8 +194,8 @@ class MetaSweeper {
 
         /**
          * Basic constructor.
-         * @param name
-         * @param value
+         * @param name - variable name
+         * @param value - value to wrap
          */
         NamedValue(name, value) {
             this.name = name
@@ -468,6 +504,11 @@ class MetaSweeper {
             "${name}-${hash()}".toString()
         }
 
+        @Override
+        public int hashCode() {
+            Objects.hash(hash())
+        }
+
     }
 
     /**
@@ -533,10 +574,16 @@ class MetaSweeper {
             prefix
         }
 
+        @Override
+        public int hashCode() {
+            return Objects.hash(this.prefix)
+        }
+
         protected static List mapString(Map<?,?> m) {
             def sorted_keys = m.sort()*.key
             sorted_keys.collect{ k -> "${m[k]}" }
         }
+
     }
 
     /**
@@ -622,12 +669,19 @@ class MetaSweeper {
             }
 
             StringBuffer desc = new StringBuffer()
-            def spc = '\nName '.padRight(width+1)
-            desc.append("Variations defined for this sweep\n${spc} Values\n")
-            varRegistry.collect{ k, v ->
+            def colnames = 'Name '.padRight(width+1) + 'Values '
+            def hline = ''.padRight(colnames.size(),'-')
+            desc.append(hline + '\n')
+            desc.append(colnames + '\n')
+            desc.append(hline + '\n')
+            int num = varRegistry.inject(1){ acc, k, v ->
                 def label = "${k}:"
                 desc.append("${label.padRight(width+1)} $v\n")
+                acc *= v.size()
+                acc
             }
+            desc.append(hline + '\n')
+            desc.append("Total combinations: $num\n")
             return desc.toString()
         }
 

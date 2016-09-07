@@ -21,15 +21,19 @@ import MetaSweeper
 
 MetaSweeper ms = MetaSweeper.fromFile(new File('sweep.yaml'))
 
-gen_in = ms.createSweep()
-        .withVariable('seed')
-        .withVariable('community',true)
-        .permute()
-
 /**
- * Generate reference genomes from ancestor
+ * Tree Generation
  */
 
+// Initial sweep begins with seeds and community's clades
+gen_in = ms.createSweep()
+        .withVariable('seed')
+        .withVariable('community', true)
+        .permute()
+
+ms.describeSweep('Tree Generation')
+
+// a newick tree is generated for each seed and clade def.
 process TreeGen {
     publishDir params.output, mode: 'copy', overwrite: 'true'
 
@@ -53,13 +57,20 @@ process TreeGen {
         """
     }
 }
+
 tree_out = tree_out.map{ it.nameify(1, 'tree_file') }
 
-(tree_out, evo_in) = tree_out.into(2)
-// add abundance profile and wgs coverage to initial sweep
-evo_in = ms.withVariable('alpha')
-            .extend(evo_in, 'alpha')
 
+/**
+ * Evolve Clade Sequences
+ */
+
+(tree_out, evo_in) = tree_out.into(2)
+// add alpha to the sweep and extend the channel
+evo_in = ms.withVariable('alpha').extend(evo_in, 'alpha')
+ms.describeSweep('Evolve Clades')
+
+// sequences are produced for all taxa in the clade
 process Evolve {
     publishDir params.output, mode: 'copy', overwrite: 'true'
 
@@ -90,12 +101,17 @@ process Evolve {
 
 }
 
-// add a name to new output
-evo_out = evo_out.map { it.nameify(1, 'clade_seq') }
+evo_out = evo_out.map{ it.nameify(1, 'clade_seq') }
+
+
+/**
+ * Profile Generation
+ */
 
 (evo_out, prof_in) = evo_out.into(2)
 prof_in = prof_in.map{[it[0], it[1].value]}
 
+// generate an abundance profile for each clade
 process ProfileGen {
     publishDir params.output, mode: 'copy', overwrite: 'true'
 
@@ -121,13 +137,18 @@ process ProfileGen {
     }
 }
 
-prof_out = prof_out.map { it.nameify(1, 'clade_profile') }
+prof_out = prof_out.map{ it.nameify(1, 'clade_profile') }
 
+
+/**
+ * Profile Merging
+ */
 (prof_out, merge_prof_in) = prof_out.into(2)
 merge_prof_in = merge_prof_in.groupBy{ it[0].selectedKey('seed','alpha') }
         .flatMap{ it.collect { k,v -> [k] +  v.flatten() } }
         .map{ [it[0], [it[2],it[4]]*.value] }
 
+// merge the clade profiles together
 process ProfileMerge {
     publishDir params.output, mode: 'copy', overwrite: 'true'
 
@@ -149,18 +170,17 @@ process ProfileMerge {
     }
 }
 
+merge_prof_out = merge_prof_out.map{ it.nameify(1, 'comm_profile') }
+
+/**
+ * Merge clades into communities
+ */
 (evo_out, merge_seq_in) = evo_out.into(2)
-
-// TODO
-// - this needs to be cleaned up. We have to expose the underlying Path
-// type to the Processor. Currently NamedValue gets in the way of this
-// happening and we're forced to unwrap the objects.
-// Either figure work-around or we should consider removing NamedValue
-
 merge_seq_in = merge_seq_in.groupBy{ it[0].selectedKey('seed','alpha') }
         .flatMap{it.collect { k,v -> [k] +  v.collect{cl -> [cl[1],cl[3]]}.flatten() } }
         .map{ [it[0], [it[1],it[3]]*.value] }
 
+// the sequences for all clades are concatenated together
 process MergeClades {
     publishDir params.output, mode: 'copy', overwrite: 'true'
 
@@ -183,18 +203,23 @@ process MergeClades {
     }
 }
 
-merge_seq_out = merge_seq_out.map { it.nameify(1, 'comm_seq') }
+merge_seq_out = merge_seq_out.map{ it.nameify(1, 'comm_seq') }
 
-//
-//Make WGS reads
-//
 
+/**
+ * Make WGS reads
+ */
+
+// join the results of both sequence and profile generation
+// pick out just the required variables.
 (merge_seq_out, wgs_in) = merge_seq_out.into(2)
 (merge_prof_out, tmp) = merge_prof_out.into(2)
-
-wgs_in = wgs_in.map{ [it[0], it[1].value] }.phase(tmp).map{ [*it[0], it[1][1]]}
+wgs_in = wgs_in.map{ [it[0], it[1].value] }.phase(tmp).map{ [*it[0], it[1][1].value]}
+// add WGS coverage to the sweep, extend our channel
 wgs_in = ms.withVariable('xfold').extend(wgs_in, 'xfold')
+ms.describeSweep('WGS Read Generation')
 
+// from community sequences, generate simulated WGS reads
 process WGS_Reads {
     publishDir params.output, mode: 'copy', overwrite: 'true'
 
@@ -228,22 +253,22 @@ process WGS_Reads {
     }
 }
 
-
-// name reads
 wgs_out = wgs_out.map{ it.nameify(1, 'wgs_reads1'); it.nameify(2, 'wgs_reads2') }
 
 
-
-// Make HiC reads
-//
-
-// add abundance profile and 3c depth to initial sweep
+/**
+ * Make 3C reads
+ */
+// join the results of both sequence and profile generation
+// pick out just the required variables.
 (merge_seq_out, hic_in) = merge_seq_out.into(2)
 (merge_prof_out, tmp) = merge_prof_out.into(2)
-
-hic_in = hic_in.map{ [it[0], it[1].value]}.phase(tmp).map{ [*it[0], it[1][1]]}
+hic_in = hic_in.map{ [it[0], it[1].value]}.phase(tmp).map{ [*it[0], it[1][1].value]}
+// add 3C coverage to the sweep, extend our channel
 hic_in = ms.withVariable('n3c').extend(hic_in, 'n3c')
+ms.describeSweep('HiC Read Generation')
 
+// from community sequences, generate 3C sequence
 process HIC_Reads {
     publishDir params.output, mode: 'copy', overwrite: 'true'
 
@@ -269,17 +294,16 @@ process HIC_Reads {
     }
 }
 
-
-// add a name to new output
-hic_out = hic_out.map { it.nameify(1, 'hic_reads') }
+hic_out = hic_out.map{ it.nameify(1, 'hic_reads') }
 
 
-//
-// Assemble WGS reads
-//
+/**
+ * Assemble WGS reads
+ */
 (wgs_out, asm_in) = wgs_out.into(2)
 asm_in = asm_in.map{[it[0], it[1].value, it[2].value, it[3]]}
 
+// assemble each metagenome
 process Assemble {
     publishDir params.output, mode: 'copy', overwrite: 'true'
 
@@ -304,16 +328,16 @@ process Assemble {
     }
 }
 
-// add a name to new output
-asm_out = asm_out.map { it.nameify(1, 'contigs') }
+asm_out = asm_out.map{ it.nameify(1, 'contigs') }
 
 
-//
-// Make Truth Tables
-//
+/**
+ * Make Truth Tables
+ */
 (asm_out, truth_in) = asm_out.into(2)
 truth_in = truth_in.map{ [it[0], it[1].value, it[4]] }
 
+// generate ground-truth tables by aligning assembly contigs to community references
 process Truth {
     publishDir params.output, mode: 'copy', overwrite: 'true'
 
@@ -344,18 +368,18 @@ process Truth {
 
 }
 
-// add a name to new output
-truth_out = truth_out.map { it.nameify(1, 'truth') }
+truth_out = truth_out.map{ it.nameify(1, 'truth') }
 
 
-//
-// Map HiC reads to assembled contigs
-//
+/**
+ * Map HiC reads to assembled contigs
+ */
 (asm_out, hicmap_in) = asm_out.into(2)
-// combine results of hic and assembly processes, reduce to unique columns and select those relevant
+// join 3C reads and assembly results
 hicmap_in = ms.sweep.joinChannels(hic_out, hicmap_in, 2)
         .map{ [it[0], it[1].value, it[2].value] }
 
+// map 3C reads to assembly contigs
 process HiCMap {
     publishDir params.output, mode: 'copy', overwrite: 'true'
 
@@ -386,15 +410,16 @@ process HiCMap {
     }
 }
 
-// add a name to new output
-hicmap_out = hicmap_out.map { it.nameify(1, 'hic2ctg') }
+hicmap_out = hicmap_out.map{ it.nameify(1, 'hic2ctg') }
 
-//
-// Generate contig graphs
-//
+
+/**
+ * Generate contig graphs
+ */
 (hicmap_out, graph_in) = hicmap_out.into(2)
 graph_in = graph_in.map{[it[0], it[1].value, it[2], it[3]]}
 
+// contig graphs are generated from 3C mappings
 process Graph {
 
     publishDir params.output, mode: 'copy', overwrite: 'true'
@@ -422,16 +447,16 @@ process Graph {
     }
 }
 
-// add a name to new output
-graph_out = graph_out.map { it.nameify(1, 'graph') }
+graph_out = graph_out.map{ it.nameify(1, 'graph') }
 
 
-//
-// Map WGS reads to contigs
-//
+/**
+ * Map WGS reads to contigs
+ */
 (asm_out, wgsmap_in) = asm_out.into(2)
 wgsmap_in = wgsmap_in.map{ [it[0], it[1].value, it[2], it[3]]}
 
+// map WGS reads to contigs
 process WGSMap {
     publishDir params.output, mode: 'copy', overwrite: 'true'
 
@@ -459,16 +484,16 @@ process WGSMap {
     }
 }
 
-// add a name to new output
-wgsmap_out = wgsmap_out.map { it.nameify(1, 'wgs2ctg') }
+wgsmap_out = wgsmap_out.map{ it.nameify(1, 'wgs2ctg') }
 
 
-//
-// Calculate assembly contig coverage
-//
+/**
+ * Calculate assembly contig coverage
+ */
 (wgsmap_out, cov_in) = wgsmap_out.into(2)
 cov_in = cov_in.map{[it[0], it[1].value, it[2]]}
 
+// depth inferred from WGS2CTG mapping
 process InferReadDepth {
     publishDir params.output, mode: 'copy', overwrite: 'true'
 
@@ -510,5 +535,4 @@ process InferReadDepth {
     }
 }
 
-// add a name to new output
-cov_out = cov_out.map { it.nameify(1, 'coverage') }
+cov_out = cov_out.map{ it.nameify(1, 'coverage') }
