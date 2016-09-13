@@ -6,7 +6,7 @@ sweep['ancestor'] = files(params.ancestor)
 sweep['donor'] = files(params.donor)
 sweep['alpha'] = stringToList(params.alpha)
 sweep['tree'] = absPath(params.trees)
-sweep['timepoints'] = absPath(params.num_samples)
+sweep['timepoints'] = stringToList(params.num_samples)
 sweep['profile'] = absPath(params.profiles)
 sweep['xfold'] = stringToList(params.xfold)
 
