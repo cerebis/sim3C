@@ -6,6 +6,7 @@ sweep['ancestor'] = files(params.ancestor)
 sweep['donor'] = files(params.donor)
 sweep['alpha'] = stringToList(params.alpha)
 sweep['tree'] = absPath(params.trees)
+sweep['timepoints'] = absPath(params.num_samples)
 sweep['profile'] = absPath(params.profiles)
 sweep['xfold'] = stringToList(params.xfold)
 
@@ -47,8 +48,8 @@ evo_out = evo_out.map { it.nameify(1, 'ref_seq') }
  *  Make WGS reads
  */
 (evo_out, wgs_in) = evo_out.into(2)
-// add abundance profile and wgs coverage to initial sweep
-wgs_in = sweep.extendChannel(wgs_in, 'profile', 'xfold')
+// add abundance profile, wgs coverage, and timepoints to initial sweep
+wgs_in = sweep.extendChannel(wgs_in, 'profile', 'xfold', 'timepoints')
 
 process WGS_Reads {
     cache 'deep'
@@ -58,7 +59,7 @@ process WGS_Reads {
     set key, ref_seq from wgs_in
 
     output:
-    set key, file("${key}.wgs.*.r1.fq.gz"), file("${key}.wgs.*.r2.fq.gz"), ref_seq into wgs_out
+    set key, file("${key}.wgs.*.r1.fq.gz"), file("${key}.wgs.*.r2.fq.gz"), file("${key}.coverage.tsv"), ref_seq into wgs_out
 
     script:
     if (params.debug) {
@@ -70,10 +71,11 @@ process WGS_Reads {
     else {
         """
         export PATH=\$EXT_BIN/art:\$PATH
-        metaART.py -C gzip -t ${key['profile']} -z ${params.num_samples} -M ${key['xfold']} -S ${params.seed} -s ${params.wgs_ins_std} \
+        metaART.py -C gzip -t ${key['profile']} -z ${key['timepoints']} -M ${key['xfold']} -S ${params.seed} -s ${params.wgs_ins_std} \
                 -m ${params.wgs_ins_len} -l ${params.wgs_read_len} -n "${key}.wgs" $ref_seq .
 	    wait_on_openfile.sh ${key}.wgs.r1.fq.gz
 	    wait_on_openfile.sh ${key}.wgs.r2.fq.gz
+        mv coverage.tsv ${key}.coverage.tsv
         """
     }
 }
@@ -93,7 +95,7 @@ process ReadMap {
     publishDir params.output, mode: 'copy', overwrite: 'true'
 
     input:
-    set key, file(reads1), file(reads2), ref_seq from map_in
+    set key, file(reads1), file(reads2), coverage_file, ref_seq from map_in
 
     output:
     set key, file("*.bam"), reads1, reads2, ref_seq into map_out
