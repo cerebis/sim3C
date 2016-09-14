@@ -29,6 +29,7 @@ from Bio import Alphabet
 from Bio import SeqIO
 from Bio.Restriction import *
 
+import Art
 import abundance
 import io_utils
 
@@ -138,7 +139,7 @@ def make_read(seq, fwd_read, length):
     """From sequence, make a forward or reverse read. If the read is longer than the total sequence
     return the entire sequence."""
 
-    # edge case - return whole sequence of read length > sequence
+    # edge case - return whole sequence of read longer than sequence
     if length >= len(seq):
         read = seq
         if not fwd_read:
@@ -166,9 +167,9 @@ def write_reads(handle, sequences, output_format, dummy_q=False):
 
 
 class Part:
-    """Represents an unligated fragment from one replicon.
     """
-
+    Represents an unligated fragment from one replicon.
+    """
     def __init__(self, seq, pos1, pos2, fwd, replicon):
         self.seq = seq
         self.pos1 = pos1
@@ -406,23 +407,24 @@ class Community:
 
     [replicon name] [cell name] [abundance]
     """
-    def __init__(self, interrep_prob, profile, seq_filename, cutters):
+    def __init__(self, inter_rep_prob, spurious_prob, profile, seq_filename, cutters):
         self.pdf = None
         self.cdf = None
         self.totalRawAbundance = 0
         self.replicon_registry = OrderedDict()
         self.index_to_name = None
         self.cell_registry = OrderedDict()
-        self.interrep_prob = interrep_prob
+        self.inter_rep_prob = inter_rep_prob
+        self.spurious_prob = spurious_prob
         self.cutters = cutters
 
         # Read in the sequences
         sequences = SeqIO.to_dict(SeqIO.parse(open(seq_filename), 'fasta', Alphabet.generic_dna))
 
         # build the registries from the defined community profile
-        for chr_abn in profile:
-            parent_cell = self.register_cell(chr_abn.cell, chr_abn.val)
-            self.build_register_replicon(chr_abn.name, parent_cell, sequences.get(chr_abn.name))
+        for abn in profile.values():
+            parent_cell = self.register_cell(abn.cell, abn.val)
+            self.build_register_replicon(abn.name, parent_cell, sequences.get(abn.name))
 
         # init community wide probs
         self.__init_prob()
@@ -493,11 +495,20 @@ class Community:
                 ri = self.select_replicon(RANDOM_STATE.uniform())
             return ri
 
-    def is_intrarep_event(self):
-        """Choose if the mate is intra or inter replicon associated. This is a simple
+    def is_spurious_event(self):
+        """
+        Spurious events are those which link unrelated fragments together during a 3C ligation
+        protocol. They are effectively noise within the system.
+        :return: True - the next fragment should be constructed as spurious
+        """
+        return RANDOM_STATE.uniform() < self.spurious_prob
+
+    def is_intra_rep_event(self):
+        """
+        Choose if the mate is intra or inter replicon associated. This is a simple
         binary paritioning with a chosen threshold frequency.
         """
-        return RANDOM_STATE.uniform() > self.interrep_prob
+        return RANDOM_STATE.uniform() > self.inter_rep_prob
 
     def get_replicon_by_index(self, index):
         return self.replicon_registry.get(self.index_to_name[index])
@@ -550,6 +561,14 @@ def make_unconstrained_part_a():
     return Part(seq, pos, pos + frag_len, True, repl)
 
 
+def make_any_part_b():
+    """
+    This selection is at random across the community and not reflective of partA or physical
+    organisation. Effectively this is the same as our first selection method.
+    :return: Part
+    """
+    return make_unconstrained_part_a()
+
 def make_unconstrained_part_b(first_part):
     """
     Choose a inter-replicon cut-site. This means, not the same replicon as
@@ -597,8 +616,15 @@ parser.add_argument('-n', '--num-frag', metavar='INT', type=int, required=True,
                     help='Number of Hi-C fragments to generate reads')
 parser.add_argument('-l', '--read-length', metavar='INT', type=int, required=True,
                     help='Length of reads from Hi-C fragments')
-parser.add_argument('-p', '--interrep-prob', dest='inter_prob', metavar='FLOAT', type=float, required=True,
-                    help='Probability that a fragment spans two replicons')
+parser.add_argument('--min-frag', metavar='INT', type=int, default=200,
+                    help='Minimum fragment length [200]')
+parser.add_argument('--max-frag', metavar='INT', type=int, default=1000,
+                    help='Maximum fragment length [1000]')
+
+parser.add_argument('--inter-prob', dest='inter_prob', metavar='FLOAT', type=float, default=0.9,
+                    help='Probability that a fragment spans two replicons within a single genome [0.9]')
+parser.add_argument('--spurious-prob', dest='spur_prob', metavar='FLOAT', type=float, default=0.01,
+                    help='Probability that a spurious fragment is formed [0.01]')
 
 parser.add_argument('-P', '--profile', dest='profile', metavar='FILE',
                     help='Community abundance profile')
@@ -611,6 +637,13 @@ parser.add_argument('--lognorm-mu', metavar='FLOAT', type=float, default='1', re
                     help='Log-normal relative abundance mu parameter')
 parser.add_argument('--lognorm-sigma', metavar='FLOAT', type=float, default='1', required=False,
                     help='Log-normal relative abundance sigma parameter')
+
+parser.add_argument('--read-profile1', help='ART sequencer profile for R1',
+                    default='external/art/Illumina_profiles/EmpMiSeq250R1.txt')
+parser.add_argument('--read-profile2', help='ART sequencer profile for R2',
+                    default='external/art/Illumina_profiles/EmpMiSeq250R1.txt')
+parser.add_argument('--ins-rate', type=float, default=0.00009, help='Insert rate')
+parser.add_argument('--del-rate', type=float, default=0.00011, help='Deletion rate')
 
 
 parser.add_argument(dest='genome_seq', metavar='FASTA',
@@ -641,11 +674,11 @@ if args.dist:
     seq_index = None
     try:
         seq_index = SeqIO.index(args.genome_seq, 'fasta')
-        profile = abundance.generate_profile(RANDOM_STATE, seq_index, mode=args.dist,
+        profile = abundance.generate_profile(RANDOM_STATE, list(seq_index), mode=args.dist,
                                              lognorm_mu=args.lognorm_mu, lognorm_sigma=args.lognorm_sigma)
 
         # present result to console
-        profile.write_table(profile, sys.stdout)
+        profile.write_table(sys.stdout)
 
         # save result to file
         with open(os.path.join(os.path.dirname(args.output_file), args.profile_out), 'w') as prf_h:
@@ -661,7 +694,7 @@ else:
 
 # Initialize community object
 print "Initializing community"
-comm = Community(args.inter_prob, profile, args.genome_seq, [CUTTER_NAME])
+comm = Community(args.inter_prob, args.spur_prob, profile, args.genome_seq, [CUTTER_NAME])
 
 # Junction produced in Hi-C prep
 rb = RestrictionBatch([CUTTER_NAME])
@@ -689,6 +722,11 @@ with io_utils.open_output(args.output_file, mode='w', compress=args.compress) as
     overlap_count = 0
     frag_count = 0
 
+    # initialise ART
+    art = Art.Art(args.read_length,
+                  Art.EmpDist(args.read_profile1, args.read_profile2),
+                  args.ins_rate, args.del_rate, seed=args.seed)
+
     while frag_count < args.num_frag:
         # Fragment creation
 
@@ -704,9 +742,15 @@ with io_utils.open_output(args.output_file, mode='w', compress=args.compress) as
         # 1) choose if intra or inter replicon
         # 2) if intER create partB as above
         # 3) if intRA select from geometric
-        if part_a.replicon.is_alone() or comm.is_intrarep_event():
+
+        if comm.is_spurious_event():
+            # fusion of two randomly chosen fragments -- not reflecting physical organisation
+            part_b = make_any_part_b()
+
+        elif part_a.replicon.is_alone() or comm.is_intra_rep_event():
             # ligation is between two fragments on same replicon
             part_b = make_constrained_part_b(part_a)
+
         else:
             # ligation crosses replicons
             part_b = make_unconstrained_part_b(part_a)
@@ -718,7 +762,7 @@ with io_utils.open_output(args.output_file, mode='w', compress=args.compress) as
             # meta3C does not create duplicated sites
             fragment = part_a.seq + part_b.seq
 
-        if len(fragment) < 200 or len(fragment) > 1000:
+        if len(fragment) < args.min_frag or len(fragment) > args.max_frag:
             # only accept fragments within a size range
             skip_count += 1
             continue
@@ -731,15 +775,15 @@ with io_utils.open_output(args.output_file, mode='w', compress=args.compress) as
             overlap_count += 1
             continue
 
-        read1 = make_read(fragment, True, args.read_length)
-        read1.id = fwd_fmt.format(frag_count)
-        read1.description = '{0} {1}'.format(part_a.seq.id, part_a.seq.description)
+        # create sequencing read pair for fragment
+        pair = art.next_pair_indel_seq(str(fragment.seq))
+        read1 = pair['fwd'].read_record(fwd_fmt.format(frag_count),
+                                        desc='{0} {1}'.format(part_a.seq.id, part_a.seq.description))
+        read2 = pair['rev'].read_record(rev_fmt.format(frag_count),
+                                        desc='{0} {1}'.format(part_b.seq.id, part_b.seq.description))
 
-        read2 = make_read(fragment, False, args.read_length)
-        read2.id = rev_fmt.format(frag_count)
-        read2.description = '{0} {1}'.format(part_b.seq.id, part_b.seq.description)
-
-        write_reads(h_output, [read1, read2], args.output_format, dummy_q=True)
+        # write to interleaved file
+        write_reads(h_output, [read1, read2], args.output_format, dummy_q=False)
 
         frag_count += 1
 
