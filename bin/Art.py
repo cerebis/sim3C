@@ -283,9 +283,9 @@ class SeqRead:
         :return: number of modified bases.
         """
         assert self.quals, 'Quality scores have not been initialized for the read'
-        assert len(self.quals) == len(self.seq_read), \
+        assert len(self.quals) == self.length(), \
             "The number of bases is not equal to the number of quality scores!\n" \
-            "qual size: {0},  read len: {1}".format(len(self.quals), len(self.seq_read))
+            "qual size: {0},  read len: {1}".format(len(self.quals), self.length())
 
         num = 0
         for i in xrange(len(self.quals)):
@@ -435,6 +435,13 @@ class SeqRead:
                 self.seq_read += self.indel[k]
                 k += 1
 
+    def length(self):
+        """
+        Return the actual length of the simulation result. This can be shorter than the requested
+        length "read_len" due to short templates.
+        :return: length of actual simulated sequence
+        """
+        return len(self.seq_read)
 
 class Art:
 
@@ -550,7 +557,7 @@ class Art:
         read.ref2read()
 
         # simulated quality scores from profiles
-        read.quals = self.emp_dist.get_read_qual(self.read_len, read.is_plus_strand)
+        read.quals = self.emp_dist.get_read_qual(read.length(), read.is_plus_strand)
         # the returned quality scores can spawn sequencing errors
         read.parse_error()
 
@@ -582,7 +589,7 @@ class Art:
         read.ref2read()
 
         # simulated quality scores from profiles
-        read.quals = self.emp_dist.get_read_qual(self.read_len, True)
+        read.quals = self.emp_dist.get_read_qual(read.length(), True)
         # the returned quality scores can spawn sequencing errors
         read.parse_error()
 
