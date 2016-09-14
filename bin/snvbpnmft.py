@@ -96,10 +96,6 @@ def run_bpnmf(num_strains):
     bpnmf_cmd = "genotypes3_waic variational output_samples=100 tol_rel_obj=0.001 iter=25000 algorithm=meanfield data file=" + snv_filename + " output file=" + bpnmf_filename + " diagnostic_file=" + diag_filename
     os.system(bpnmf_cmd)
 
-    ##
-    # compute the WAIC
-    waic_cmd = "compute_waic.R " + bpnmf_filename + " " + str(num_sites) + " " + str(num_samples) + " > waic." + str(num_strains)
-    os.system(waic_cmd)
 
 # parse the command-line
 if len(sys.argv)<5:
@@ -239,15 +235,12 @@ for S in range(min_strains,max_strains+1):
     for r in range(1,num_repeats+1):
         run_bpnmf(S)
 
-#        waic_file = open("waic."+str(S))
-#        for line in waic_file:
         diag_file = open("diag."+str(S)+".csv")
         for line in diag_file:
             if line.startswith("#"):
                 continue
             d = line.split(",")
             cur_metric = float(d[2])  # parse out evidence lower bound (ELBO)
-#            cur_metric = float(d[0]) # parse out WAIC
             if(cur_metric>best_metric):
                 best_metric=cur_metric
                 best_strains = S
@@ -255,14 +248,17 @@ for S in range(min_strains,max_strains+1):
                 S_metrics[S] = cur_metric
 
 print "Best strains is " + str(best_strains) + ", ELBO " + str(best_metric)
-#print "Best strains is " + str(best_strains) + ", WAIC " + str(best_metric)
 
 best_strains = 4 ## HACK: hard code this to the correct value so that the rest of the workflow can proceed to measure tree accuracy
 bpnmf_filename = os.path.join(out_dir, "decon.csv")
 os.system("mv " + os.path.join(out_dir, "decon." + str(best_strains) + ".csv") + " " + bpnmf_filename)
 os.system("mv " + os.path.join(out_dir, str(best_strains) + ".snv_file.data.R") + " " + os.path.join(out_dir, "snv_file.data.R"))
+
+# write a file with the ELBOs for each strain count
+elbo_filename = os.path.join(out_dir, "elbos.csv")
+elbo_file = open(elbo_filename, "w")
 for s in range(min_strains,max_strains+1):
-    print str(s) + " strains metric " + str(S_metrics[s])
+    elbo_file.write( str(s) "\t" + str(S_metrics[s])
 
 num_strains = best_strains
 
