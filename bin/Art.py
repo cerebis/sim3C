@@ -25,11 +25,11 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
  License: GPL v3
 """
 import numpy as np
+import string
 import scipy.stats as st
 from Bio.Alphabet import IUPAC
 from Bio.Seq import Seq
 from Bio.SeqRecord import SeqRecord
-
 
 def _clear_list(l):
     del l[:]
@@ -296,7 +296,7 @@ class SeqRead:
 
             # if we draw a number less than prob_err for a base, a substitution occurs there.
             if Art.random_unif() < EmpDist.PROB_ERR[self.quals[i]]:
-                ch = self.seq_read[i].upper()
+                ch = self.seq_read[i]
                 ch = Art.random_base(ch)
                 self.seq_read[i] = ch
                 self.substitution[i] = ch
@@ -443,15 +443,14 @@ class SeqRead:
         """
         return len(self.seq_read)
 
+
 class Art:
 
     RANDOM_STATE = np.random.RandomState()
 
-    COMPLEMENT_MAP = {EmpDist.A_SYMB: EmpDist.T_SYMB,
-                      EmpDist.C_SYMB: EmpDist.G_SYMB,
-                      EmpDist.G_SYMB: EmpDist.C_SYMB,
-                      EmpDist.T_SYMB: EmpDist.A_SYMB,
-                      EmpDist.N_SYMB: EmpDist.N_SYMB}
+    # translation table, non-standard bases become N
+    COMPLEMENT_TABLE = string.maketrans('acgtumrwsykvhdbnACGTUMRWSYKVHDBN',
+                                        'TGCAAnnnnnnnnnnnTGCAANNNNNNNNNNN')
 
     def __init__(self, read_len, emp_dist, ins_prob, del_prob, max_num=2, seed=None, ref_seq=None):
 
@@ -466,13 +465,14 @@ class Art:
         # convert immutable string to list
         if ref_seq:
             self.ref_seq = Art.make_mutable(ref_seq)
-            self.ref_seq_cmp = Art.revcmp(self.ref_seq)
+            self.ref_seq_cmp = list(Art.revcomp(ref_seq))
             self.valid_region = len(ref_seq) - read_len
         else:
             print 'Warning: no reference supplied, calls will have to supply a template'
+            self.ref_seq = None
+            self.ref_seq_cmp = None
 
         self.read_len = read_len
-        self.ref_seq_cmp = []
         self.emp_dist = emp_dist
         self.ins_prob = ins_prob
         self.del_prob = del_prob
@@ -491,20 +491,11 @@ class Art:
     @staticmethod
     def revcomp(seq):
         """
-        Reverse complement list representation of a sequence
-        :param seq: input sequence as a list (any iterable really)
-        :return: revcomp sequence as a list
+        Reverse complement a string representation of a sequence. This uses string.translate.
+        :param seq: input sequence as a string
+        :return: revcomp sequence as a string
         """
-        # complement reference
-        rcseq = []
-        for c in seq:
-            try:
-                rcseq += Art.COMPLEMENT_MAP[c]
-            except KeyError:
-                # unknown characters get assigned N
-                rcseq += EmpDist.N_SYMB
-        rcseq.reverse()
-        return rcseq
+        return seq.translate(Art.COMPLEMENT_TABLE)[::-1]
 
     def _new_read(self, rlen=None, plus_strand=True):
         """
@@ -535,23 +526,23 @@ class Art:
         :return: SeqRead
         """
         read = self._new_read(plus_strand=plus_strand)
-        template = Art.make_mutable(template)
-        if len(template) < read.read_len:
+        mut_temp = Art.make_mutable(template)
+        if len(mut_temp) < read.read_len:
             # for templates shorter than the requested length, we sequence its total extent
-            read.read_len = len(template)
+            read.read_len = len(mut_temp)
 
         # indels
         slen = read.get_indel()
 
         # ensure that this read will fit within the extent of the template
-        if self.read_len - slen > len(template):
+        if self.read_len - slen > len(mut_temp):
             slen = read.get_indel_2()
 
         if read.is_plus_strand:
-            read.seq_ref = template[0: self.read_len - slen]
+            read.seq_ref = mut_temp[0: self.read_len - slen]
         else:
-            rc_template = Art.revcomp(template)
-            read.seq_ref = rc_template[0: self.read_len - slen]
+            rc_temp = Art.revcomp(template)
+            read.seq_ref = list(rc_temp[0: self.read_len - slen])
 
         read.bpos = 0
         read.ref2read()
