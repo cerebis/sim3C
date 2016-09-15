@@ -263,7 +263,7 @@ os.system("mv " + os.path.join(out_dir, str(best_strains) + ".snv_file.data.R") 
 elbo_filename = os.path.join(out_dir, "elbos.csv")
 elbo_file = open(elbo_filename, "w")
 for s in range(min_strains,max_strains+1):
-    elbo_file.write( str(s) + "\t" + str(S_metrics[s])
+    elbo_file.write( str(s) + "\t" + str(S_metrics[s]))
 
 num_strains = best_strains
 
