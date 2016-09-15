@@ -53,6 +53,26 @@ MIXED_GEOM_PROB = 6.0e-6
 SHEARING_MEAN = 400
 SHEARING_SD = 50
 
+
+class Sim3CException(Exception):
+    """Module base exception class"""
+    pass
+
+
+class NoCutSitesException(Sim3CException):
+    """Occurs when a target template contains no cutsites for a specified restriction enzyme"""
+    def __init__(self, seq_name, enz_name):
+        self.message = 'sequence [{0}] had no cutsites for enzyme [{1}]'.format(seq_name, enz_name)
+
+
+class EmptyRegistryException(Sim3CException):
+    pass
+
+
+class MonochromosomalException(Sim3CException):
+    pass
+
+
 def get_enzyme_instance(enzyme_name):
     """ Using RestrictionBatch class, convert an enzyme name to
     a concrete restriction enzyme class instance.
@@ -204,6 +224,8 @@ class Cell:
         """
         # Number of replicons in cell
         n_rep = len(self.replicon_registry)
+        if n_rep <= 0:
+            raise EmptyRegistryException('cell contained no useful replicons')
 
         # Uniform probability initially
         prob = numpy.array([1.0 / n_rep] * n_rep)
@@ -237,7 +259,7 @@ class Cell:
 
     def pick_inter_rep(self, skip_this):
         if self.number_replicons() == 1:
-            raise RuntimeError('cannot pick another in single replicon cell')
+            raise MonochromosomalException('cannot pick another in single replicon cell')
 
         # Keep trying until we pick a different rep.
         rep = skip_this
@@ -260,6 +282,8 @@ class Replicon:
         self.cut_sites = {}
         for cname in cutters:
             self.cut_sites[cname] = numpy.array(find_restriction_sites(cname, sequence.seq))
+            if len(self.cut_sites[cname]) <= 0:
+                raise NoCutSitesException(name, cname)
 
         # initialise an empirical distribution for this sequence.
         self.emp_dist = EmpiricalDistribution(MIXED_GEOM_PROB, self.length())
@@ -269,7 +293,6 @@ class Replicon:
 
     def __str__(self):
         return str(self.parent_cell) + '.' + self.name
-
 
     def length(self):
         return len(self.sequence)
@@ -423,22 +446,38 @@ class Community:
 
         # build the registries from the defined community profile
         for abn in profile.values():
-            parent_cell = self.register_cell(abn.cell, abn.val)
-            self.build_register_replicon(abn.name, parent_cell, sequences.get(abn.name))
+            try:
+                parent_cell = self.register_cell(abn.cell, abn.val)
+                self.build_register_replicon(abn.name, parent_cell, sequences.get(abn.name))
+            except NoCutSitesException as e:
+                print 'Warning: {0}'.format(e.message)
 
         # init community wide probs
-        self.__init_prob()
+        self._init_replicon_prob()
+
         # init individual cell probs
-        for cell in self.cell_registry.values():
-            cell.init_prob()
+        cell_names = self.cell_registry.keys()
+        for cn in cell_names:
+            try:
+                self.cell_registry[cn].init_prob()
+            except EmptyRegistryException as e:
+                print 'Removing [{0}] as {1}'.format(cn, e)
+                del self.cell_registry[cn]
+                # refresh abundance and distributions
+                self._update_total_abundance()
+                self._init_replicon_prob()
+
+        if len(self.cell_registry) <= 0:
+            raise EmptyRegistryException('Community is empty. No genomes were registered')
 
     def build_register_replicon(self, name, parent_cell, sequence):
         """Add a new replicon to a cell type in community"""
-        replicon = self.replicon_registry.get(name)
-        if replicon is None:
-            replicon = Replicon(name, parent_cell, sequence, self.cutters)
-            self.replicon_registry[name] = replicon
-            parent_cell.register_replicon(replicon)
+        if name in self.replicon_registry:
+            raise Sim3CException('Replicon name [{0}] is not unique within the community'.format(name))
+
+        replicon = Replicon(name, parent_cell, sequence, self.cutters)
+        self.replicon_registry[name] = replicon
+        parent_cell.register_replicon(replicon)
         return replicon
 
     def register_cell(self, cell_name, cell_abundance):
@@ -447,18 +486,18 @@ class Community:
         if parent_cell is None:
             parent_cell = Cell(cell_name, cell_abundance)
             self.cell_registry[cell_name] = parent_cell
-            self.__update_total_abundance()
+            self._update_total_abundance()
         return parent_cell
 
     # Total abundance of all cells in registry.
-    def __update_total_abundance(self):
+    def _update_total_abundance(self):
         """Recalculate the total relative abundance specified for the community by referring to the registry"""
         ab = 0
         for ca in self.cell_registry.values():
             ab += ca.abundance
         self.totalRawAbundance = ab
 
-    def __init_prob(self):
+    def _init_replicon_prob(self):
         """Initialize the probabilities for replicon selection, given the abundances, etc.
         Normalization is always applied. Afterwards, produce a CDF which will be used for
         random sampling.
@@ -471,12 +510,22 @@ class Community:
             prob[i] = repA.parent_cell.abundance / self.totalRawAbundance * repA.length()
             i += 1
         tp = sum(prob)
+
+        if len(self.replicon_registry) <= 0 or tp == 0:
+            raise EmptyRegistryException('No replicons passed preprocessing or the set had zero probability density')
+
+        # normalized pdf
         self.pdf = numpy.divide(prob, tp)
-        'Initialize the cumulative distribution function for the community replicons'
+
+        # initialize the cumulative distribution function for the community replicons
         self.cdf = numpy.hstack((0, numpy.cumsum(self.pdf)))
 
     def select_replicon(self, x):
-        """From the entire community, return the index of a replicon by sampling CDF at given value x"""
+        """
+        From the entire community, return the index of a replicon by sampling CDF at given value x
+        :param x: domain of CDF [0..1]
+        :return: nearest corresponding y - (replicon index)
+        """
         idx = numpy.searchsorted(self.cdf, x) - 1
         if idx < 0:  # edge case when sample value is exactly zero.
             return 0
@@ -554,10 +603,12 @@ def make_unconstrained_part_a():
     model a normally distributed DNA fragment length.
     :return: Part
     """
+
     repl = comm.get_replicon_by_index(comm.pick_replicon())
     pos = repl.random_cut_site(CUTTER_NAME)
     frag_len = int(RANDOM_STATE.normal(SHEARING_MEAN, SHEARING_SD) / 2)
     seq = repl.subseq(pos, frag_len)
+
     return Part(seq, pos, pos + frag_len, True, repl)
 
 
@@ -694,98 +745,105 @@ else:
 
 # Initialize community object
 print "Initializing community"
-comm = Community(args.inter_prob, args.spur_prob, profile, args.genome_seq, [CUTTER_NAME])
 
-# Junction produced in Hi-C prep
-rb = RestrictionBatch([CUTTER_NAME])
-en = RestrictionBatch.get(rb, CUTTER_NAME, False)
-hic_junction = en.site + en.site
+try:
+    comm = Community(args.inter_prob, args.spur_prob, profile, args.genome_seq, [CUTTER_NAME])
+
+    # Junction produced in Hi-C prep
+    rb = RestrictionBatch([CUTTER_NAME])
+    en = RestrictionBatch.get(rb, CUTTER_NAME, False)
+    hic_junction = en.site + en.site
 
 
-# Control the style of read names employed. We originally appended the direction
-# or read number (R1=fwd, R2=rev) to the id. This is not what is expected in normal
-# situations. Unfortunately, code still depends on this and needs to be fixed first.
-if args.alt_naming:
-    # direction is just part of the description
-    fwd_fmt = 'frg{0} fwd'
-    rev_fmt = 'frg{0} rev'
-else:
-    # original style, with direction appended
-    fwd_fmt = 'frg{0}fwd'
-    rev_fmt = 'frg{0}rev'
+    # Control the style of read names employed. We originally appended the direction
+    # or read number (R1=fwd, R2=rev) to the id. This is not what is expected in normal
+    # situations. Unfortunately, code still depends on this and needs to be fixed first.
+    if args.alt_naming:
+        # direction is just part of the description
+        fwd_fmt = 'frg{0} fwd'
+        rev_fmt = 'frg{0} rev'
+    else:
+        # original style, with direction appended
+        fwd_fmt = 'frg{0}fwd'
+        rev_fmt = 'frg{0}rev'
 
-# Open output file for writing reads
-with io_utils.open_output(args.output_file, mode='w', compress=args.compress) as h_output:
+    # Open output file for writing reads
+    with io_utils.open_output(args.output_file, mode='w', compress=args.compress) as h_output:
 
-    print "Creating reads"
-    skip_count = 0
-    overlap_count = 0
-    frag_count = 0
+        print "Creating reads"
+        skip_count = 0
+        overlap_count = 0
+        frag_count = 0
 
-    # initialise ART
-    art = Art.Art(args.read_length,
-                  Art.EmpDist(args.read_profile1, args.read_profile2),
-                  args.ins_rate, args.del_rate, seed=args.seed)
+        # initialise ART
+        art = Art.Art(args.read_length,
+                      Art.EmpDist(args.read_profile1, args.read_profile2),
+                      args.ins_rate, args.del_rate, seed=args.seed)
 
-    while frag_count < args.num_frag:
-        # Fragment creation
+        while frag_count < args.num_frag:
+            # Fragment creation
 
-        # Create PartA
-        # Steps
-        # 1) pick a replicon at random
-        # 2) pick a cut-site at random on replicon
-        # 3) flip a coin for strand
-        part_a = make_unconstrained_part_a()
+            # Create PartA
+            # Steps
+            # 1) pick a replicon at random
+            # 2) pick a cut-site at random on replicon
+            # 3) flip a coin for strand
+            part_a = make_unconstrained_part_a()
 
-        # Create PartB
-        # Steps
-        # 1) choose if intra or inter replicon
-        # 2) if intER create partB as above
-        # 3) if intRA select from geometric
+            # Create PartB
+            # Steps
+            # 1) choose if intra or inter replicon
+            # 2) if intER create partB as above
+            # 3) if intRA select from geometric
 
-        if comm.is_spurious_event():
-            # fusion of two randomly chosen fragments -- not reflecting physical organisation
-            part_b = make_any_part_b()
+            if comm.is_spurious_event():
+                # fusion of two randomly chosen fragments -- not reflecting physical organisation
+                part_b = make_any_part_b()
 
-        elif part_a.replicon.is_alone() or comm.is_intra_rep_event():
-            # ligation is between two fragments on same replicon
-            part_b = make_constrained_part_b(part_a)
+            elif part_a.replicon.is_alone() or comm.is_intra_rep_event():
+                # ligation is between two fragments on same replicon
+                part_b = make_constrained_part_b(part_a)
 
-        else:
-            # ligation crosses replicons
-            part_b = make_unconstrained_part_b(part_a)
+            else:
+                # ligation crosses replicons
+                part_b = make_unconstrained_part_b(part_a)
 
-        # Join parts A and B
-        if args.site_dup:
-            fragment = part_a.seq + hic_junction + part_b.seq
-        else:
-            # meta3C does not create duplicated sites
-            fragment = part_a.seq + part_b.seq
+            # Join parts A and B
+            if args.site_dup:
+                fragment = part_a.seq + hic_junction + part_b.seq
+            else:
+                # meta3C does not create duplicated sites
+                fragment = part_a.seq + part_b.seq
 
-        if len(fragment) < args.min_frag or len(fragment) > args.max_frag:
-            # only accept fragments within a size range
-            skip_count += 1
-            continue
+            if len(fragment) < args.min_frag or len(fragment) > args.max_frag:
+                # only accept fragments within a size range
+                skip_count += 1
+                continue
 
-        if part_b.pos1 < part_a.pos2 and part_a.pos2 < part_b.pos2:
-            overlap_count += 1
-            continue
+            if part_b.pos1 < part_a.pos2 and part_a.pos2 < part_b.pos2:
+                overlap_count += 1
+                continue
 
-        if part_a.pos1 < part_b.pos2 and part_b.pos2 < part_a.pos2:
-            overlap_count += 1
-            continue
+            if part_a.pos1 < part_b.pos2 and part_b.pos2 < part_a.pos2:
+                overlap_count += 1
+                continue
 
-        # create sequencing read pair for fragment
-        pair = art.next_pair_indel_seq(str(fragment.seq))
-        read1 = pair['fwd'].read_record(fwd_fmt.format(frag_count),
-                                        desc='{0} {1}'.format(part_a.seq.id, part_a.seq.description))
-        read2 = pair['rev'].read_record(rev_fmt.format(frag_count),
-                                        desc='{0} {1}'.format(part_b.seq.id, part_b.seq.description))
+            # create sequencing read pair for fragment
+            pair = art.next_pair_indel_seq(str(fragment.seq))
+            read1 = pair['fwd'].read_record(fwd_fmt.format(frag_count),
+                                            desc='{0} {1}'.format(part_a.seq.id, part_a.seq.description))
+            read2 = pair['rev'].read_record(rev_fmt.format(frag_count),
+                                            desc='{0} {1}'.format(part_b.seq.id, part_b.seq.description))
 
-        # write to interleaved file
-        write_reads(h_output, [read1, read2], args.output_format, dummy_q=False)
+            # write to interleaved file
+            write_reads(h_output, [read1, read2], args.output_format, dummy_q=False)
 
-        frag_count += 1
+            frag_count += 1
 
-print "Ignored " + str(skip_count) + " fragments due to length restrictions"
-print "Ignored " + str(overlap_count) + " fragments due to overlap"
+    print "Ignored " + str(skip_count) + " fragments due to length restrictions"
+    print "Ignored " + str(overlap_count) + " fragments due to overlap"
+
+except Sim3CException as e:
+    import traceback
+    sys.stderr.write(traceback.format_exception_only(type(e), e)[0])
+    sys.exit(1)
