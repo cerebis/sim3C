@@ -109,6 +109,11 @@ depths = dict()
 variant_sites = dict()
 found = dict()
 
+#
+# HACK: sort BAM alphanumerically to fix the order by timepoints that may be broken by shell glob
+#
+sys.argv[3:-1] = sorted(sys.argv[3:-1])
+
 ##
 # make variant calls on the entire dataset
 # use these calls to identify high quality variant sites
