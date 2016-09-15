@@ -121,8 +121,8 @@ if __name__ == '__main__':
             print "Sample {0} Relative Abundances {1}".format(n, ", ".join(
                 map(lambda v: '{0}:{1:.4f}'.format(v[0],v[1]), profile.items())))
 
-        r1_final = '{0}.{1}.r1.fq'.format(base_name, n)
-        r2_final = '{0}.{1}.r2.fq'.format(base_name, n)
+        r1_final = '{0}.{1:0>3}.r1.fq'.format(base_name, n)
+        r2_final = '{0}.{1:0>3}.r2.fq'.format(base_name, n)
         r1_tmp = os.path.join(args.output_dir, '{0}1.fq'.format(TMP_OUTPUT, n))
         r2_tmp = os.path.join(args.output_dir, '{0}2.fq'.format(TMP_OUTPUT, n))
 
