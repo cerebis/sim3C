@@ -39,15 +39,24 @@ if StrictVersion(np.__version__) < StrictVersion("1.9.0"):
                      "you may need to run with python -S\n")
     sys.exit(1)
 
-#
-# Globals
-#
+"""
+
+GLOBALS
+
+"""
 
 # restriction enzymes used in reaction
 CUTTER_NAME = 'NlaIII'
 
 # Mixed geom/unif model
 MIXED_GEOM_PROB = 6.0e-6
+
+# set state for random number generation
+RANDOM_STATE = None
+
+# Average & SD size that fragments are sheared (or tagmented) to during adapter ligation
+SHEARING_MEAN = 400
+SHEARING_SD = 50
 
 
 """
@@ -227,6 +236,8 @@ class Part:
     def __repr__(self):
         return repr((self.seq, self.pos1, self.pos2, self.fwd, self.replicon))
 
+    def length(self):
+        return self.pos2 - self.pos1 + 1
 
 class Replicon:
     """Represents a replicon which holds a reference to its containing cell"""
@@ -670,213 +681,225 @@ def make_constrained_part_b(first_part):
     return Part(seq, pos, pos+frag_len, True, first_part.replicon)
 
 
-#
-# Commandline interface
-#
-parser = argparse.ArgumentParser(description='Simulate HiC read pairs')
-parser.add_argument('-C', '--compress', choices=['gzip', 'bzip2'], default=None,
-                    help='Compress output files')
-parser.add_argument('--alt-naming', default=False, action='store_true',
-                    help='Use alternative read names')
-parser.add_argument('--site-dup', default=False, action='store_true',
-                    help='Hi-C style ligation junction site duplication')
-parser.add_argument('-f', '--ofmt', dest='output_format', default='fastq', choices=['fasta', 'fastq'],
-                    help='Output format')
-parser.add_argument('-r', '--seed', metavar='INT', type=int, default=int(time.time()),
-                    help="Random seed for initialising number generator")
+if __name__ == '__main__':
 
-parser.add_argument('-n', '--num-frag', metavar='INT', type=int, required=True,
-                    help='Number of Hi-C fragments to generate reads')
-parser.add_argument('-l', '--read-length', metavar='INT', type=int, required=True,
-                    help='Length of reads from Hi-C fragments')
-parser.add_argument('--frag-mean', metavar='INT', type=int, default=400,
-                    help='Mean fragment size [400]')
-parser.add_argument('--frag-sd', metavar='INT', type=int, default=50,
-                    help='Standard deviation of fragment size [50]')
-parser.add_argument('--min-frag', metavar='INT', type=int, default=200,
-                    help='Minimum fragment length [200]')
-parser.add_argument('--max-frag', metavar='INT', type=int, default=1000,
-                    help='Maximum fragment length [1000]')
+    #
+    # Commandline interface
+    #
+    parser = argparse.ArgumentParser(description='Simulate HiC read pairs')
+    parser.add_argument('-C', '--compress', choices=['gzip', 'bzip2'], default=None,
+                        help='Compress output files')
+    parser.add_argument('--alt-naming', default=False, action='store_true',
+                        help='Use alternative read names')
+    parser.add_argument('--site-dup', default=False, action='store_true',
+                        help='Hi-C style ligation junction site duplication')
+    parser.add_argument('-f', '--ofmt', dest='output_format', default='fastq', choices=['fasta', 'fastq'],
+                        help='Output format')
+    parser.add_argument('-r', '--seed', metavar='INT', type=int, default=int(time.time()),
+                        help="Random seed for initialising number generator")
 
-parser.add_argument('--inter-prob', dest='inter_prob', metavar='FLOAT', type=float, default=0.9,
-                    help='Probability that a fragment spans two replicons within a single genome [0.9]')
-parser.add_argument('--spurious-prob', dest='spur_prob', metavar='FLOAT', type=float, default=0.01,
-                    help='Probability that a spurious fragment is formed [0.01]')
+    parser.add_argument('-n', '--num-frag', metavar='INT', type=int, required=True,
+                        help='Number of Hi-C fragments to generate reads')
+    parser.add_argument('-l', '--read-length', metavar='INT', type=int, required=True,
+                        help='Length of reads from Hi-C fragments')
+    parser.add_argument('--frag-mean', metavar='INT', type=int, default=SHEARING_MEAN,
+                        help='Mean fragment size [400]')
+    parser.add_argument('--frag-sd', metavar='INT', type=int, default=SHEARING_SD,
+                        help='Standard deviation of fragment size [50]')
+    parser.add_argument('--min-frag', metavar='INT', type=int, default=200,
+                        help='Minimum fragment length [200]')
+    parser.add_argument('--max-frag', metavar='INT', type=int, default=1000,
+                        help='Maximum fragment length [1000]')
 
-parser.add_argument('-P', '--profile', dest='profile', metavar='FILE',
-                    help='Community abundance profile')
-parser.add_argument('--profile-out', metavar='FILE', default='profile.tsv',
-                    help='Output file when generating community profile', required=False)
+    parser.add_argument('--inter-prob', dest='inter_prob', metavar='FLOAT', type=float, default=0.9,
+                        help='Probability that a fragment spans two replicons within a single genome [0.9]')
+    parser.add_argument('--spurious-prob', dest='spur_prob', metavar='FLOAT', type=float, default=0.01,
+                        help='Probability that a spurious fragment is formed [0.01]')
 
-parser.add_argument('--dist', metavar='DISTNAME', choices=['equal', 'uniform', 'lognormal'],
-                    help='Abundance profile distribution choices: equal, uniform, lognormal')
-parser.add_argument('--lognorm-mu', metavar='FLOAT', type=float, default='1', required=False,
-                    help='Log-normal relative abundance mu parameter')
-parser.add_argument('--lognorm-sigma', metavar='FLOAT', type=float, default='1', required=False,
-                    help='Log-normal relative abundance sigma parameter')
+    parser.add_argument('-P', '--profile', dest='profile', metavar='FILE',
+                        help='Community abundance profile')
+    parser.add_argument('--profile-out', metavar='FILE', default='profile.tsv',
+                        help='Output file when generating community profile', required=False)
 
-parser.add_argument('--no-read-errors', default=False, action='store_true', help='Simulate sequencing errors')
-parser.add_argument('--read-profile1', help='ART sequencer profile for R1',
-                    default='external/art/Illumina_profiles/EmpMiSeq250R1.txt')
-parser.add_argument('--read-profile2', help='ART sequencer profile for R2',
-                    default='external/art/Illumina_profiles/EmpMiSeq250R1.txt')
-parser.add_argument('--ins-rate', type=float, default=0.00009, help='Insert rate')
-parser.add_argument('--del-rate', type=float, default=0.00011, help='Deletion rate')
+    parser.add_argument('--dist', metavar='DISTNAME', choices=['equal', 'uniform', 'lognormal'],
+                        help='Abundance profile distribution choices: equal, uniform, lognormal')
+    parser.add_argument('--lognorm-mu', metavar='FLOAT', type=float, default='1', required=False,
+                        help='Log-normal relative abundance mu parameter')
+    parser.add_argument('--lognorm-sigma', metavar='FLOAT', type=float, default='1', required=False,
+                        help='Log-normal relative abundance sigma parameter')
+
+    parser.add_argument('--no-read-errors', default=False, action='store_true', help='Simulate sequencing errors')
+    parser.add_argument('--read-profile1', help='ART sequencer profile for R1',
+                        default='external/art/Illumina_profiles/EmpMiSeq250R1.txt')
+    parser.add_argument('--read-profile2', help='ART sequencer profile for R2',
+                        default='external/art/Illumina_profiles/EmpMiSeq250R1.txt')
+    parser.add_argument('--ins-rate', type=float, default=0.00009, help='Insert rate')
+    parser.add_argument('--del-rate', type=float, default=0.00011, help='Deletion rate')
 
 
-parser.add_argument(dest='genome_seq', metavar='FASTA',
-                    help='Genome sequences for the community')
-parser.add_argument(dest='output_file', metavar='OUTPUT',
-                    help='Output Hi-C reads file')
-args = parser.parse_args()
+    parser.add_argument(dest='genome_seq', metavar='FASTA',
+                        help='Genome sequences for the community')
+    parser.add_argument(dest='output_file', metavar='OUTPUT',
+                        help='Output Hi-C reads file')
+    args = parser.parse_args()
 
-if 'community_table' in args and args.dist:
-    raise RuntimeError('Cannot define abundance both explicitly as a table (-t) and a distribution (--dist).')
+    if 'community_table' in args and args.dist:
+        raise RuntimeError('Cannot define abundance both explicitly as a table (-t) and a distribution (--dist).')
 
-#
-# Main routine
-#
+    #
+    # Main routine
+    #
+    RANDOM_STATE = np.random.RandomState(args.seed)
+    SHEARING_MEAN = args.frag_mean
+    SHEARING_SD = args.frag_sd
 
-# set state for random number generation
-RANDOM_STATE = np.random.RandomState(args.seed)
+    #
+    # Prepare community abundance profile, either procedurally or from a file
+    #
+    #   Note: currently, all sequences for a single taxon are
+    #   treated equally.
+    #
+    profile = None
+    if args.dist:
+        # procedural, number of taxa defined by number of sequences (assumes contiguous genomes)
+        seq_index = None
+        try:
+            seq_index = SeqIO.index(args.genome_seq, 'fasta')
+            profile = abundance.generate_profile(np.random.RandomState(args.seed), list(seq_index), mode=args.dist,
+                                                 lognorm_mu=args.lognorm_mu, lognorm_sigma=args.lognorm_sigma)
 
-# Average & SD size that fragments are sheared (or tagmented) to during adapter ligation
-SHEARING_MEAN = args.frag_mean
-SHEARING_SD = args.frag_sd
+            # present result to console
+            profile.write_table(sys.stdout)
 
-#
-# Prepare community abundance profile, either procedurally or from a file
-#
-#   Note: currently, all sequences for a single taxon are
-#   treated equally.
-#
-profile = None
-if args.dist:
-    # procedural, number of taxa defined by number of sequences (assumes contiguous genomes)
-    seq_index = None
-    try:
-        seq_index = SeqIO.index(args.genome_seq, 'fasta')
-        profile = abundance.generate_profile(RANDOM_STATE, list(seq_index), mode=args.dist,
-                                             lognorm_mu=args.lognorm_mu, lognorm_sigma=args.lognorm_sigma)
+            # save result to file
+            with open(os.path.join(os.path.dirname(args.output_file), args.profile_out), 'w') as prf_h:
+                profile.write_table(prf_h)
 
-        # present result to console
-        profile.write_table(sys.stdout)
-
-        # save result to file
-        with open(os.path.join(os.path.dirname(args.output_file), args.profile_out), 'w') as prf_h:
-            profile.write_table(prf_h)
-
-    finally:
-        if seq_index:
-            seq_index.close()
-else:
-    # read pre-existing abundance profile from file
-    with open(args.profile, 'r') as h_table:
-        profile = abundance.read_profile(h_table)
-
-# Initialize community object
-print "Initializing community"
-
-try:
-    comm = Community(args.inter_prob, args.spur_prob, profile, args.genome_seq, [CUTTER_NAME])
-
-    # Junction produced in Hi-C prep
-    rb = RestrictionBatch([CUTTER_NAME])
-    en = RestrictionBatch.get(rb, CUTTER_NAME, False)
-    hic_junction = en.site + en.site
-
-    # Control the style of read names employed. We originally appended the direction
-    # or read number (R1=fwd, R2=rev) to the id. This is not what is expected in normal
-    # situations. Unfortunately, code still depends on this and needs to be fixed first.
-    if args.alt_naming:
-        # direction is just part of the description
-        fwd_fmt = 'frg{0} fwd'
-        rev_fmt = 'frg{0} rev'
+        finally:
+            if seq_index:
+                seq_index.close()
     else:
-        # original style, with direction appended
-        fwd_fmt = 'frg{0}fwd'
-        rev_fmt = 'frg{0}rev'
+        # read pre-existing abundance profile from file
+        with open(args.profile, 'r') as h_table:
+            profile = abundance.read_profile(h_table)
 
-    # Open output file for writing reads
-    with io_utils.open_output(args.output_file, mode='w', compress=args.compress) as h_output:
+    # Initialize community object
+    print "Initializing community"
 
-        print "Creating reads"
-        skip_count = 0
-        overlap_count = 0
-        frag_count = 0
+    try:
+        comm = Community(args.inter_prob, args.spur_prob, profile, args.genome_seq, [CUTTER_NAME])
 
-        # initialise ART
-        art = Art.Art(args.read_length,
-                      Art.EmpDist(args.read_profile1, args.read_profile2),
-                      args.ins_rate, args.del_rate, seed=args.seed)
+        # Junction produced in Hi-C prep
+        cut_site = get_enzyme_instance(CUTTER_NAME).site
+        hic_junction = cut_site + cut_site
 
-        # set the method used to generate reads
-        next_pair = art.next_pair_simple_seq if args.no_read_errors else art.next_pair_indel_seq
+        # Control the style of read names employed. We originally appended the direction
+        # or read number (R1=fwd, R2=rev) to the id. This is not what is expected in normal
+        # situations. Unfortunately, code still depends on this and needs to be fixed first.
+        if args.alt_naming:
+            # direction is just part of the description
+            fwd_fmt = 'frg{0} fwd'
+            rev_fmt = 'frg{0} rev'
+        else:
+            # original style, with direction appended
+            fwd_fmt = 'frg{0}fwd'
+            rev_fmt = 'frg{0}rev'
 
-        while frag_count < args.num_frag:
-            # Fragment creation
+        frag_lengths = {'a': [], 'b': []}
 
-            # Create PartA
-            # Steps
-            # 1) pick a replicon at random
-            # 2) pick a cut-site at random on replicon
-            # 3) flip a coin for strand
-            part_a = make_unconstrained_part_a()
+        # Open output file for writing reads
+        with io_utils.open_output(args.output_file, mode='w', compress=args.compress) as h_output:
 
-            # Create PartB
-            # Steps
-            # 1) choose if intra or inter replicon
-            # 2) if intER create partB as above
-            # 3) if intRA select from geometric
+            print "Creating reads"
+            skip_count = 0
+            overlap_count = 0
+            frag_count = 0
 
-            if comm.is_spurious_event():
-                # fusion of two randomly chosen fragments -- not reflecting physical organisation
-                part_b = make_any_part_b()
+            # initialise ART
+            art = Art.Art(args.read_length,
+                          Art.EmpDist(args.read_profile1, args.read_profile2),
+                          args.ins_rate, args.del_rate, seed=args.seed)
 
-            elif part_a.replicon.is_alone() or comm.is_intra_rep_event():
-                # ligation is between two fragments on same replicon
-                part_b = make_constrained_part_b(part_a)
+            # set the method used to generate reads
+            next_pair = art.next_pair_simple_seq if args.no_read_errors else art.next_pair_indel_seq
 
-            else:
-                # ligation crosses replicons
-                part_b = make_unconstrained_part_b(part_a)
 
-            # Join parts A and B
-            if args.site_dup:
-                fragment = part_a.seq + hic_junction + part_b.seq
-            else:
-                # meta3C does not create duplicated sites
-                fragment = part_a.seq + part_b.seq
+            while frag_count < args.num_frag:
+                # Fragment creation
 
-            if len(fragment) < args.min_frag or len(fragment) > args.max_frag:
-                # only accept fragments within a size range
-                skip_count += 1
-                continue
+                # Create PartA
+                # Steps
+                # 1) pick a replicon at random
+                # 2) pick a cut-site at random on replicon
+                # 3) flip a coin for strand
+                part_a = make_unconstrained_part_a()
 
-            if part_b.pos1 < part_a.pos2 and part_a.pos2 < part_b.pos2:
-                overlap_count += 1
-                continue
+                # Create PartB
+                # Steps
+                # 1) choose if intra or inter replicon
+                # 2) if intER create partB as above
+                # 3) if intRA select from geometric
 
-            if part_a.pos1 < part_b.pos2 and part_b.pos2 < part_a.pos2:
-                overlap_count += 1
-                continue
+                if comm.is_spurious_event():
+                    # fusion of two randomly chosen fragments -- not reflecting physical organisation
+                    part_b = make_any_part_b()
 
-            # create sequencing read pair for fragment
-            pair = next_pair(str(fragment.seq))
-            read1 = pair['fwd'].read_record(fwd_fmt.format(frag_count),
-                                            desc='{0} {1}'.format(part_a.seq.id, part_a.seq.description))
-            read2 = pair['rev'].read_record(rev_fmt.format(frag_count),
-                                            desc='{0} {1}'.format(part_b.seq.id, part_b.seq.description))
+                elif part_a.replicon.is_alone() or comm.is_intra_rep_event():
+                    # ligation is between two fragments on same replicon
+                    part_b = make_constrained_part_b(part_a)
 
-            # write to interleaved file
-            write_reads(h_output, [read1, read2], args.output_format, dummy_q=False)
+                else:
+                    # ligation crosses replicons
+                    part_b = make_unconstrained_part_b(part_a)
 
-            frag_count += 1
+                frag_lengths['a'].append(part_a.length())
+                frag_lengths['b'].append(part_b.length())
 
-    print "Ignored " + str(skip_count) + " fragments due to length restrictions"
-    print "Ignored " + str(overlap_count) + " fragments due to overlap"
+                # Join parts A and B
+                if args.site_dup:
+                    fragment = part_a.seq + hic_junction + part_b.seq
+                else:
+                    # meta3C does not create duplicated sites
+                    fragment = part_a.seq + part_b.seq
 
-except Sim3CException as e:
-    import traceback
-    sys.stderr.write(traceback.format_exception_only(type(e), e)[0])
-    sys.exit(1)
+                if len(fragment) < args.min_frag or len(fragment) > args.max_frag:
+                    # only accept fragments within a size range
+                    skip_count += 1
+                    continue
+
+                if part_b.pos1 < part_a.pos2 and part_a.pos2 < part_b.pos2:
+                    overlap_count += 1
+                    continue
+
+                if part_a.pos1 < part_b.pos2 and part_b.pos2 < part_a.pos2:
+                    overlap_count += 1
+                    continue
+
+                # create sequencing read pair for fragment
+                pair = next_pair(str(fragment.seq))
+                read1 = pair['fwd'].read_record(fwd_fmt.format(frag_count),
+                                                desc='{0} {1}'.format(part_a.seq.id, part_a.seq.description))
+                read2 = pair['rev'].read_record(rev_fmt.format(frag_count),
+                                                desc='{0} {1}'.format(part_b.seq.id, part_b.seq.description))
+
+                # write to interleaved file
+                write_reads(h_output, [read1, read2], args.output_format, dummy_q=False)
+
+                frag_count += 1
+
+        print "Ignored " + str(skip_count) + " fragments due to length restrictions"
+        print "Ignored " + str(overlap_count) + " fragments due to overlap"
+
+        print 'Fragment stats:'
+        d = np.array(frag_lengths.values())
+        print 'Parts:   means: {0} std: {1}'.format(d.mean(1), d.std(1))
+        print 'Overall: means: {0} std: {1}'.format(d.sum(0).mean(), d.sum(0).std())
+        rt_fwd = np.count_nonzero(d[0, :] < args.read_length)
+        rt_rev = np.count_nonzero(d[1, :] < args.read_length)
+        if rt_fwd > 0 or rt_rev > 0:
+            print 'Warning!! Read-through occurred on: {0} forward and {1} reverse reads'.format(rt_fwd, rt_rev)
+
+    except Sim3CException as e:
+        import traceback
+        sys.stderr.write(traceback.format_exception_only(type(e), e)[0])
+        sys.exit(1)
