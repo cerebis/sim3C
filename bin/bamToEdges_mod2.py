@@ -436,8 +436,9 @@ if __name__ == '__main__':
 
                 paired += 1
 
-    # prune self-loops edges from ligation products
-    g.remove_edges_from(g.selfloop_edges())
+    # prune self-loops edges from ligation products if self-loops were not requested
+    if not args.add_selfloops:
+        g.remove_edges_from(g.selfloop_edges())
 
     print 'paired={0} order={1} size={2}'.format(paired, g.order(), g.size())
 
