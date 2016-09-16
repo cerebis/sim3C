@@ -509,6 +509,42 @@ class Art:
         else:
             return SeqRead(rlen, self.ins_prob, self.del_prob, self.max_num, plus_strand=plus_strand)
 
+    def next_pair_simple_seq(self, template):
+        """
+        Get a fwd/rev pair of simple error-free reads for a template, where each read is sequenced off the ends.
+        :param template: the target tempalte to sequencing fwd/rev
+        :return: a dict {'fwd': SeqRead, 'rev': SeqRead}
+        """
+        return {'fwd': self.next_read_simple_seq(template, True),
+                'rev': self.next_read_simple_seq(template, False)}
+
+    def next_read_simple_seq(self, template, plus_strand, qual_val=40):
+        """
+        Generate a simple error-free read and constant quality values.
+        :param template: the target template to sequence
+        :param plus_strand: forward: True, reverse: False
+        :param qual_val: value of constant quality scores
+        :return: SeqRead
+        """
+        read = self._new_read(plus_strand=plus_strand)
+        if len(template) < read.read_len:
+            # for templates shorter than the requested length, we sequence its total extent
+            read.read_len = len(template)
+
+        if read.is_plus_strand:
+            read.seq_ref = template[0: self.read_len]
+        else:
+            rc_temp = Art.revcomp(template)
+            read.seq_ref = rc_temp[0: self.read_len]
+
+        read.bpos = 0
+        read.ref2read()
+
+        # constant quality scores
+        read.quals = [qual_val] * read.read_len
+
+        return read
+
     def next_pair_indel_seq(self, template):
         """
         Get a fwd/rev pair of reads for a template, where each read is sequenced off the ends.

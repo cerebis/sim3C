@@ -689,6 +689,7 @@ parser.add_argument('--lognorm-mu', metavar='FLOAT', type=float, default='1', re
 parser.add_argument('--lognorm-sigma', metavar='FLOAT', type=float, default='1', required=False,
                     help='Log-normal relative abundance sigma parameter')
 
+parser.add_argument('--read-errors', default=True, action='store_true', help='Simulate sequencing errors')
 parser.add_argument('--read-profile1', help='ART sequencer profile for R1',
                     default='external/art/Illumina_profiles/EmpMiSeq250R1.txt')
 parser.add_argument('--read-profile2', help='ART sequencer profile for R2',
@@ -780,6 +781,9 @@ try:
                       Art.EmpDist(args.read_profile1, args.read_profile2),
                       args.ins_rate, args.del_rate, seed=args.seed)
 
+        # set the method used to generate reads
+        next_pair = art.next_pair_indel_seq if args.read_error else art.next_pair_simple_seq
+
         while frag_count < args.num_frag:
             # Fragment creation
 
@@ -829,7 +833,7 @@ try:
                 continue
 
             # create sequencing read pair for fragment
-            pair = art.next_pair_indel_seq(str(fragment.seq))
+            pair = next_pair(str(fragment.seq))
             read1 = pair['fwd'].read_record(fwd_fmt.format(frag_count),
                                             desc='{0} {1}'.format(part_a.seq.id, part_a.seq.description))
             read2 = pair['rev'].read_record(rev_fmt.format(frag_count),
