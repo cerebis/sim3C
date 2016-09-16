@@ -24,7 +24,7 @@ import time
 from collections import OrderedDict
 from distutils.version import StrictVersion
 
-import numpy
+import numpy as np
 from Bio import Alphabet
 from Bio import SeqIO
 from Bio.Restriction import *
@@ -33,7 +33,7 @@ import Art
 import abundance
 import io_utils
 
-if StrictVersion(numpy.__version__) < StrictVersion("1.9.0"):
+if StrictVersion(np.__version__) < StrictVersion("1.9.0"):
     sys.stderr.write("Error: numpy version 1.9.0 or later required\n")
     sys.stderr.write("If numpy is installed in both your home & system directory, "
                      "you may need to run with python -S\n")
@@ -49,9 +49,12 @@ CUTTER_NAME = 'NlaIII'
 # Mixed geom/unif model
 MIXED_GEOM_PROB = 6.0e-6
 
-# Average & SD size that fragments are sheared (or tagmented) to during adapter ligation
-SHEARING_MEAN = 400
-SHEARING_SD = 50
+
+"""
+
+Exception classes
+
+"""
 
 
 class Sim3CException(Exception):
@@ -73,16 +76,6 @@ class MonochromosomalException(Sim3CException):
     pass
 
 
-def get_enzyme_instance(enzyme_name):
-    """ Using RestrictionBatch class, convert an enzyme name to
-    a concrete restriction enzyme class instance.
-    :param enzyme_name:
-    :return: class instance (AbstractCut -- maybe)
-    """
-    rb = RestrictionBatch([enzyme_name])
-    enz = RestrictionBatch.get(rb, enzyme_name, add=False)
-    return enz
-
 class EmpiricalDistribution:
     """
     Defining an empirical distribution, we can then use it to draw random
@@ -90,11 +83,17 @@ class EmpiricalDistribution:
     """
 
     def __init__(self, shape, length, bins=1000):
+        """
+
+        :param shape: distribution shape parameter
+        :param length:
+        :param bins:
+        """
         self.shape = shape
         self.length = length
         self.scale = 1.0 / length
         self.bins = bins
-        self.xsample = numpy.linspace(0, self.length, self.bins, endpoint=True, dtype=numpy.float64)
+        self.xsample = np.linspace(0, self.length, self.bins, endpoint=True, dtype=np.float64)
         self.ysample = self._cdf(self.xsample)
 
     def _cdf(self, x):
@@ -119,7 +118,7 @@ class EmpiricalDistribution:
         xv = self.ysample
         yv = self.xsample
         x = RANDOM_STATE.uniform()
-        ix = numpy.searchsorted(xv, x)
+        ix = np.searchsorted(xv, x)
         if ix >= self.bins:
             ix -= 1
         elif ix == 0:
@@ -128,11 +127,22 @@ class EmpiricalDistribution:
         return yv[ix - 1] + (yv[ix] - yv[ix - 1]) * ((x - xv[ix - 1]) / (xv[ix] - xv[ix - 1]))
 
 
+def get_enzyme_instance(enzyme_name):
+    """
+    Using RestrictionBatch class, convert an enzyme name to
+    a concrete restriction enzyme class instance.
+    :param enzyme_name:
+    :return: class instance (AbstractCut -- maybe)
+    """
+    rb = RestrictionBatch([enzyme_name])
+    enz = RestrictionBatch.get(rb, enzyme_name, add=False)
+    return enz
+
+
 def find_restriction_sites(enzyme_name, seq):
     """
     For supplied enzyme, find all restriction sites in a given sequence
     returns list of sites.
-
     :param enzyme_name: name of enzyme to use in digestion
     :param seq: sequence to digest
     :return: list of genomic coordinates
@@ -142,8 +152,12 @@ def find_restriction_sites(enzyme_name, seq):
 
 
 def find_priming_sites(oligo, seq):
-    """For supplied priming sequence, find positions of all matches in a given sequence
+    """
+    For supplied priming sequence, find positions of all matches in a given sequence
     returns list of sites.
+    :param oligo: Bio.Seq primer sequence
+    :param seq: Bio.Seq template to search
+    :return: list of sites
     """
     array = []
     for m in re.finditer(oligo, str(seq)):
@@ -156,8 +170,14 @@ def find_priming_sites(oligo, seq):
 
 
 def make_read(seq, fwd_read, length):
-    """From sequence, make a forward or reverse read. If the read is longer than the total sequence
-    return the entire sequence."""
+    """
+    From sequence, make a forward or reverse read. If the read is longer than the total sequence
+    return the entire sequence.
+    :param seq: Bio.Seq template from which to generate a read
+    :param fwd_read: True if this is on the forward strand
+    :param length: read length
+    :return: Bio.Seq object representing the read
+    """
 
     # edge case - return whole sequence of read longer than sequence
     if length >= len(seq):
@@ -188,9 +208,16 @@ def write_reads(handle, sequences, output_format, dummy_q=False):
 
 class Part:
     """
-    Represents an unligated fragment from one replicon.
+    Represents one part of the two-piece 3C ligation fragment.
     """
     def __init__(self, seq, pos1, pos2, fwd, replicon):
+        """
+        :param seq: template sequence
+        :param pos1: beginning
+        :param pos2: end
+        :param fwd: strand True = forward
+        :param replicon: from which this part derives
+        """
         self.seq = seq
         self.pos1 = pos1
         self.pos2 = pos2
@@ -199,75 +226,6 @@ class Part:
 
     def __repr__(self):
         return repr((self.seq, self.pos1, self.pos2, self.fwd, self.replicon))
-
-
-class Cell:
-    """Represents a cell in the community"""
-
-    def __init__(self, name, abundance):
-        self.name = name
-        self.abundance = float(abundance)
-        self.replicon_registry = {}
-        self.index_to_name = {}
-        self.cdf = None
-        self.pdf = None
-
-    def __repr__(self):
-        return repr((self.name, self.abundance))
-
-    def __str__(self):
-        return self.name
-
-    def init_prob(self):
-        """Initialize the probabilities for replicon selection from within a cell.
-        Afterwards, produce a CDF which will be used for random sampling.
-        """
-        # Number of replicons in cell
-        n_rep = len(self.replicon_registry)
-        if n_rep <= 0:
-            raise EmptyRegistryException('cell contained no useful replicons')
-
-        # Uniform probability initially
-        prob = numpy.array([1.0 / n_rep] * n_rep)
-
-        # Scale prob by replicon length
-        i = 0
-        for repA in self.replicon_registry.values():
-            self.index_to_name[i] = repA.name
-            prob[i] = prob[i] * repA.length()
-            i += 1
-
-        # Normalize
-        total_prob = sum(prob)
-        self.pdf = numpy.divide(prob, total_prob)
-
-        # Initialize the cumulative distribution
-        self.cdf = numpy.hstack((0, numpy.cumsum(self.pdf)))
-
-    def register_replicon(self, replicon):
-        self.replicon_registry[replicon.name] = replicon
-
-    def number_replicons(self):
-        return len(self.replicon_registry)
-
-    def select_replicon(self, x):
-        """From a cell, return the index of a replicon by sampling CDF at given value x"""
-        idx = numpy.searchsorted(self.cdf, x) - 1
-        if idx < 0:  # edge case when sample value is exactly zero.
-            return 0
-        return idx
-
-    def pick_inter_rep(self, skip_this):
-        if self.number_replicons() == 1:
-            raise MonochromosomalException('cannot pick another in single replicon cell')
-
-        # Keep trying until we pick a different rep.
-        rep = skip_this
-        while rep is skip_this:
-            ri = self.select_replicon(RANDOM_STATE.uniform())
-            rep = self.replicon_registry.get(self.index_to_name[ri])
-
-        return rep
 
 
 class Replicon:
@@ -281,7 +239,7 @@ class Replicon:
         # for each enzyme, pre-digest the replicon sequence
         self.cut_sites = {}
         for cname in cutters:
-            self.cut_sites[cname] = numpy.array(find_restriction_sites(cname, sequence.seq))
+            self.cut_sites[cname] = np.array(find_restriction_sites(cname, sequence.seq))
             if len(self.cut_sites[cname]) <= 0:
                 raise NoCutSitesException(name, cname)
 
@@ -359,7 +317,7 @@ class Replicon:
         :return:
         """
         cs = self.cut_sites[cutter_name]
-        idx = numpy.searchsorted(cs, pos)
+        idx = np.searchsorted(cs, pos)
         if idx == len(cs):
             return cs[0]
         else:
@@ -367,7 +325,7 @@ class Replicon:
 
     def nearest_cut_site_below(self, cutter_name, pos):
         cs = self.cut_sites[cutter_name]
-        idx = numpy.searchsorted(cs, pos)
+        idx = np.searchsorted(cs, pos)
         if idx == 0:
             return cs[-1]
         else:
@@ -378,7 +336,7 @@ class Replicon:
         returns genomic position of nearest cut site"""
 
         cs = self.cut_sites[cutter_name]
-        idx = numpy.searchsorted(cs, pos)
+        idx = np.searchsorted(cs, pos)
 
         # edge cases when insertion point between be before or after
         # beginning or end of linear sequence
@@ -417,6 +375,89 @@ class Replicon:
             loc -= self.length()
 
         return loc
+
+
+class Cell:
+    """Represents a cell in the community, that is a container of one or more replicons."""
+
+    def __init__(self, name, abundance):
+        """
+        :param name: a unique name for this cell
+        :param abundance: relative abundance of this cell type within the community
+        """
+        self.name = name
+        self.abundance = float(abundance)
+        self.replicon_registry = {}
+        self.index_to_name = {}
+        self.cdf = None
+        self.pdf = None
+
+    def __repr__(self):
+        return repr((self.name, self.abundance))
+
+    def __str__(self):
+        return self.name
+
+    def init_prob(self):
+        """
+        Initialize the probabilities for replicon selection from within a cell and
+        afterwards, produce a CDF which will be used for random sampling.
+
+        Note: this method should be called after all replicons for a cell have been
+        registered.
+        """
+        # Number of replicons in cell
+        n_rep = len(self.replicon_registry)
+        if n_rep <= 0:
+            raise EmptyRegistryException('cell contained no useful replicons')
+
+        # Uniform probability initially
+        prob = np.array([1.0 / n_rep] * n_rep)
+
+        # Scale prob by replicon length and initialise index to name table.
+        for n, repA in enumerate(self.replicon_registry.values()):
+            self.index_to_name[n] = repA.name
+            prob[n] = prob[n] * repA.length()
+
+        # Normalised, this becomes the piece-wise PDF
+        self.pdf = prob / prob.sum()
+
+        # Initialize the piece-wise cdf from the pdf, but include leading 0 bin.
+        self.cdf = np.hstack((-np.inf, np.cumsum(self.pdf)))
+
+    def register_replicon(self, replicon):
+        """
+        Add a Replicon to the cell's registry
+        :param replicon: Replicon to add
+        """
+        self.replicon_registry[replicon.name] = replicon
+
+    def number_replicons(self):
+        """
+        Count the number of replicons known to this cell.
+        :return: integer count of replicons
+        """
+        return len(self.replicon_registry)
+
+    def _select_replicon_index(self, x):
+        """
+        From a cell, return the index of a replicon by sampling CDF at given value x
+        :param x: domain of CDF
+        :return: index of replicon
+        """
+        return np.searchsorted(self.cdf, x, side='right') - 1
+
+    def pick_inter_rep(self, skip_this):
+        if self.number_replicons() == 1:
+            raise MonochromosomalException('cannot pick another in single replicon cell')
+
+        # Keep trying until we pick a different rep.
+        rep = skip_this
+        while rep is skip_this:
+            ri = self._select_replicon_index(RANDOM_STATE.uniform())
+            rep = self.replicon_registry.get(self.index_to_name[ri])
+
+        return rep
 
 
 class Community:
@@ -503,33 +544,31 @@ class Community:
         random sampling.
         """
         self.index_to_name = {}
-        prob = numpy.zeros(len(self.replicon_registry))
+        prob = np.zeros(len(self.replicon_registry))
         i = 0
         for repA in self.replicon_registry.values():
             self.index_to_name[i] = repA.name
             prob[i] = repA.parent_cell.abundance / self.totalRawAbundance * repA.length()
             i += 1
-        tp = sum(prob)
 
-        if len(self.replicon_registry) <= 0 or tp == 0:
+        tot_prob = prob.sum()
+
+        if len(self.replicon_registry) <= 0 or tot_prob == 0:
             raise EmptyRegistryException('No replicons passed preprocessing or the set had zero probability density')
 
-        # normalized pdf
-        self.pdf = numpy.divide(prob, tp)
+        # normalized piece-wise pdf
+        self.pdf = prob / tot_prob
 
-        # initialize the cumulative distribution function for the community replicons
-        self.cdf = numpy.hstack((0, numpy.cumsum(self.pdf)))
+        # initialize the piece-wise cdf from the pdf, adding a 0 element to the beginning
+        self.cdf = np.hstack((-np.inf, np.cumsum(self.pdf)))
 
-    def select_replicon(self, x):
+    def _select_replicon_index(self, x):
         """
         From the entire community, return the index of a replicon by sampling CDF at given value x
         :param x: domain of CDF [0..1]
         :return: nearest corresponding y - (replicon index)
         """
-        idx = numpy.searchsorted(self.cdf, x) - 1
-        if idx < 0:  # edge case when sample value is exactly zero.
-            return 0
-        return idx
+        return np.searchsorted(self.cdf, x, side='right') - 1
 
     def pick_replicon(self, skip_index=None):
         """Random selection of replicon from community. If skipIndex supplied, do not return
@@ -537,11 +576,11 @@ class Community:
 
         return the index"""
         if skip_index is None:
-            return self.select_replicon(RANDOM_STATE.uniform())
+            return self._select_replicon_index(RANDOM_STATE.uniform())
         else:
             ri = skip_index
             while ri == skip_index:
-                ri = self.select_replicon(RANDOM_STATE.uniform())
+                ri = self._select_replicon_index(RANDOM_STATE.uniform())
             return ri
 
     def is_spurious_event(self):
@@ -574,29 +613,11 @@ class Community:
         replicon = self.get_replicon_by_index(replicon_index)
         return int(RANDOM_STATE.uniform() * replicon.length()), True
 
-        # def constrained_read_location(self, replicon_index, first_location, forward):
-        # """Return a location (position and strand) on a replicon where the position is
-        #     constrained to follow a prescribed distribution relative to the position of the
-        #     first location.
-        #
-        #     Strand is always same as first.
-        #
-        #     return location (pos=int, strand=bool)
-        #     """
-        #     replicon = self.get_replicon_by_index(replicon_index)
-        #     delta = draw_delta(500, replicon.length() - 500)
-        #     if forward:
-        #         # TODO The edge cases might have off-by-one errors, does it matter?'
-        #         loc = first_location + delta
-        #         if loc > replicon.length() - 1:
-        #             loc -= replicon.length()
-        #     else:
-        #         loc = first_location - delta
-        #         if loc < 0:
-        #             loc = replicon.length() - loc
-        #     return loc, forward
+"""
 
+Fragment creation methods
 
+"""
 def make_unconstrained_part_a():
     """
     Choose a cut site at random across a randomly selected replicon. Further,
@@ -620,12 +641,13 @@ def make_any_part_b():
     """
     return make_unconstrained_part_a()
 
+
 def make_unconstrained_part_b(first_part):
     """
-    Choose a inter-replicon cut-site. This means, not the same replicon as
-    was first picked. The genomic coordinate is unconstrained in this case.
-    :param first_part: first part, already selected on a particular replicon
-    :return: another part, not on the same replicon as first part.
+    Choose a inter-replicon cut-site, meaning not the same replicon as was first picked but
+    from the same cell. The genomic coordinate on this new part is thus unconstrained.
+    :param first_part: part A, the already chosen piece of the ligation fragment from a particular replicon.
+    :return: another part B, which is not from the same replicon as part A.
     """
     diff_repl = first_part.replicon.parent_cell.pick_inter_rep(first_part.replicon)
     pos = diff_repl.random_cut_site(CUTTER_NAME)
@@ -636,10 +658,10 @@ def make_unconstrained_part_b(first_part):
 
 def make_constrained_part_b(first_part):
     """
-    Choose a coordinate on the same replicon as the first part. This will follow
-    a particular distribution as a function of genomic separation.
-    :param first_part: first part, already selected on a particular replicon
-    :return: another part, on the same replicon following a distribution of separation.
+    Choose a coordinate on the same replicon as the first part, part A. As such, the coordinates
+    follow a particular distribution dependent on genomic separation.
+    :param first_part: part A, the already chosen piece of the ligation fragment from a particular replicon.
+    :return: another part B, on the same replicon which follows the distribution of separation.
     """
     loc = first_part.replicon.constrained_upstream_location(first_part.pos1)
     pos = first_part.replicon.nearest_cut_site_by_distance(CUTTER_NAME, loc)
@@ -667,6 +689,10 @@ parser.add_argument('-n', '--num-frag', metavar='INT', type=int, required=True,
                     help='Number of Hi-C fragments to generate reads')
 parser.add_argument('-l', '--read-length', metavar='INT', type=int, required=True,
                     help='Length of reads from Hi-C fragments')
+parser.add_argument('--frag-mean', metavar='INT', type=int, default=400,
+                    help='Mean fragment size [400]')
+parser.add_argument('--frag-sd', metavar='INT', type=int, default=50,
+                    help='Standard deviation of fragment size [50]')
 parser.add_argument('--min-frag', metavar='INT', type=int, default=200,
                     help='Minimum fragment length [200]')
 parser.add_argument('--max-frag', metavar='INT', type=int, default=1000,
@@ -683,7 +709,7 @@ parser.add_argument('--profile-out', metavar='FILE', default='profile.tsv',
                     help='Output file when generating community profile', required=False)
 
 parser.add_argument('--dist', metavar='DISTNAME', choices=['equal', 'uniform', 'lognormal'],
-                    help='Abundance profile distribution [equal, uniform, lognormal]')
+                    help='Abundance profile distribution choices: equal, uniform, lognormal')
 parser.add_argument('--lognorm-mu', metavar='FLOAT', type=float, default='1', required=False,
                     help='Log-normal relative abundance mu parameter')
 parser.add_argument('--lognorm-sigma', metavar='FLOAT', type=float, default='1', required=False,
@@ -712,7 +738,11 @@ if 'community_table' in args and args.dist:
 #
 
 # set state for random number generation
-RANDOM_STATE = numpy.random.RandomState(args.seed)
+RANDOM_STATE = np.random.RandomState(args.seed)
+
+# Average & SD size that fragments are sheared (or tagmented) to during adapter ligation
+SHEARING_MEAN = args.frag_mean
+SHEARING_SD = args.frag_sd
 
 #
 # Prepare community abundance profile, either procedurally or from a file
@@ -754,7 +784,6 @@ try:
     rb = RestrictionBatch([CUTTER_NAME])
     en = RestrictionBatch.get(rb, CUTTER_NAME, False)
     hic_junction = en.site + en.site
-
 
     # Control the style of read names employed. We originally appended the direction
     # or read number (R1=fwd, R2=rev) to the id. This is not what is expected in normal
