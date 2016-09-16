@@ -689,7 +689,7 @@ parser.add_argument('--lognorm-mu', metavar='FLOAT', type=float, default='1', re
 parser.add_argument('--lognorm-sigma', metavar='FLOAT', type=float, default='1', required=False,
                     help='Log-normal relative abundance sigma parameter')
 
-parser.add_argument('--read-errors', default=True, action='store_true', help='Simulate sequencing errors')
+parser.add_argument('--no-read-errors', default=False, action='store_true', help='Simulate sequencing errors')
 parser.add_argument('--read-profile1', help='ART sequencer profile for R1',
                     default='external/art/Illumina_profiles/EmpMiSeq250R1.txt')
 parser.add_argument('--read-profile2', help='ART sequencer profile for R2',
@@ -782,7 +782,7 @@ try:
                       args.ins_rate, args.del_rate, seed=args.seed)
 
         # set the method used to generate reads
-        next_pair = art.next_pair_indel_seq if args.read_error else art.next_pair_simple_seq
+        next_pair = art.next_pair_simple_seq if args.no_read_errors else art.next_pair_indel_seq
 
         while frag_count < args.num_frag:
             # Fragment creation
