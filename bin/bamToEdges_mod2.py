@@ -278,6 +278,7 @@ if __name__ == '__main__':
                         if args.strong and not strong_match(mr, args.strong, True, args.mapq):
                             reject += 1
                             continue
+
                     except Exception as e:
                         exc_info = sys.exc_info()
                         traceback.print_exception(*exc_info)
