@@ -113,7 +113,7 @@ process HIC_Reads {
     set file("${oname}.hic.fa.gz") into hic_reads
 
     """
-    simForward.py -C gzip -r ${params.seed} -n $nh -l ${params.hic_read_len} -p ${params.hic_inter_prob} \
+    sim3C.py -C gzip -r ${params.seed} -n $nh -l ${params.hic_read_len} -p ${params.hic_inter_prob} \
            -t $profile descendent.fa "${oname}.hic.fa.gz"
     """
 }

@@ -281,13 +281,13 @@ process HIC_Reads {
     script:
     if (params.debug) {
         """
-        echo "simForward.py -C gzip -r ${key['seed']} -n $n3c -l ${ms.options['n3c']['read_len']} \
+        echo "sim3C.py -C gzip -r ${key['seed']} -n $n3c -l ${ms.options['n3c']['read_len']} \
             -p ${ms.options['n3c']['inter_prob']} --profile $comm_prof $comm_seq ${key}.hic.fa.gz" > ${key}.hic.fa.gz
         """
     }
     else {
         """
-        simForward.py -C gzip -r ${key['seed']} -n $n3c -l ${ms.options['n3c']['read_len']} \
+        sim3C.py -C gzip -r ${key['seed']} -n $n3c -l ${ms.options['n3c']['read_len']} \
             -p ${ms.options['n3c']['inter_prob']} --profile $comm_prof $comm_seq "${key}.hic.fa.gz"
         wait_on_openfile.sh ${key}.hic.fa.gz
         """
