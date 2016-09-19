@@ -129,26 +129,6 @@ class EmpiricalDistribution:
         yv = self.xsample
         return np.interp(RANDOM_STATE.uniform(), xv, yv)
 
-    def rand_old(self):
-        """
-        Using the inverse CDF method, draw a random number for the distribution. This
-        method looks up the nearest value of random value x in a sampled representation
-        and then interpolates between bin edges. Edge case for the first and last bin
-        is to merely use that bin.
-
-        :return: random value following distribution
-        """
-        xv = self.ysample
-        yv = self.xsample
-        x = RANDOM_STATE.uniform()
-        ix = np.searchsorted(xv, x)
-        if ix >= self.bins:
-            ix -= 1
-        elif ix == 0:
-            ix += 1
-        # interp value
-        return yv[ix - 1] + (yv[ix] - yv[ix - 1]) * ((x - xv[ix - 1]) / (xv[ix] - xv[ix - 1]))
-
 
 def get_enzyme_instance(enzyme_name):
     """
