@@ -104,6 +104,7 @@ class EmpiricalDistribution:
         self.bins = bins
         self.xsample = np.linspace(0, self.length, self.bins, endpoint=True, dtype=np.float64)
         self.ysample = self._cdf(self.xsample)
+        self.ysample /= self.ysample.max()
 
     def _cdf(self, x):
         """
@@ -116,6 +117,19 @@ class EmpiricalDistribution:
         return 0.5 * (1.0 - (1.0 - self.shape) ** x + self.scale * x)
 
     def rand(self):
+        """
+        Using the inverse CDF method, draw a random number for the distribution. This
+        method looks up the nearest value of random value x in a sampled representation
+        and then interpolates between bin edges. Edge case for the first and last bin
+        is to merely use that bin.
+
+        :return: random value following distribution
+        """
+        xv = self.ysample
+        yv = self.xsample
+        return np.interp(RANDOM_STATE.uniform(), xv, yv)
+
+    def rand_old(self):
         """
         Using the inverse CDF method, draw a random number for the distribution. This
         method looks up the nearest value of random value x in a sampled representation
@@ -293,21 +307,6 @@ class Replicon:
 
         return ss
 
-
-    # def subseq(self, pos1, pos2, fwd):
-    #     """Create a subsequence from replicon where positions are strand relative.
-    #     Those with fwd=False will be reverse complemented.
-    #     """
-    #     # Likely to have a off-by-one error in this code.
-    #     if fwd:
-    #         ss = self.sequence[pos1:pos2]
-    #         ss.description = str(pos1) + "..." + str(pos2) + ":" + str(fwd)
-    #     else:
-    #         ss = self.sequence[pos2:pos1]
-    #         ss.description = str(pos2) + "..." + str(pos1) + ":" + str(fwd)
-    #         ss = ss.reverse_complement(id=True, description=True)
-    #     return ss
-
     def random_cut_site(self, cutter_name):
         """
         Draw a cut-site at random, following a uniform distribution.
@@ -366,25 +365,22 @@ class Replicon:
         else:
             return cs[d1[0]]
 
-    def constrained_upstream_location(self, origin):
-        """Return a location (position and strand) on this replicon where the position is
-        constrained to follow a prescribed distribution relative to the position of the
-        first location.
-
-        return location
+    def constrained_location(self, origin):
         """
-        delta = self.emp_dist.rand()
-        min_len, max_len = 3, self.length() - 3
-        while delta < min_len or delta > max_len:
-            # redraw if too small or large
-            delta = self.emp_dist.rand()
+        Following the defined empirical distribution, return a genonomic coordinate relative
+        to the supplied origin. The origin must be between 0 and the length of the replicon.
 
-        # delta = draw_delta(3, self.length() - 3)
-        # TODO The edge cases might have off-by-one errors, does it matter?'
-        loc = origin + delta
-        if loc > self.length() - 1:
-            loc -= self.length()
-
+        :param origin: location of the first cut-site
+        :return: a location following empirical distribution, relative to origin
+        """
+        delta = int(self.emp_dist.rand())
+        # random positive or negative delta
+        if RANDOM_STATE.uniform() < 0.5:
+            loc = origin - delta
+        else:
+            loc = origin + delta
+        # modulo the replicon length
+        loc %= self.length()
         return loc
 
 
@@ -674,7 +670,11 @@ def make_constrained_part_b(first_part):
     :param first_part: part A, the already chosen piece of the ligation fragment from a particular replicon.
     :return: another part B, on the same replicon which follows the distribution of separation.
     """
-    loc = first_part.replicon.constrained_upstream_location(first_part.pos1)
+    loc = first_part.replicon.constrained_location(first_part.pos1)
+    if np.random.uniform() < ANTIDIAG_RATE:
+        # an anti-diagonal event
+        loc = first_part.replicon.length() - loc
+
     pos = first_part.replicon.nearest_cut_site_by_distance(CUTTER_NAME, loc)
     frag_len = int(RANDOM_STATE.normal(SHEARING_MEAN, SHEARING_SD) / 2)
     seq = first_part.replicon.subseq(pos, frag_len)
@@ -711,6 +711,8 @@ if __name__ == '__main__':
     parser.add_argument('--max-frag', metavar='INT', type=int, default=1000,
                         help='Maximum fragment length [1000]')
 
+    parser.add_argument('--anti-rate', metavar='FLOAT', type=float, default=0.2,
+                        help='Rate of anti-diagonal fragments')
     parser.add_argument('--inter-prob', dest='inter_prob', metavar='FLOAT', type=float, default=0.9,
                         help='Probability that a fragment spans two replicons within a single genome [0.9]')
     parser.add_argument('--spurious-prob', dest='spur_prob', metavar='FLOAT', type=float, default=0.01,
@@ -752,6 +754,7 @@ if __name__ == '__main__':
     RANDOM_STATE = np.random.RandomState(args.seed)
     SHEARING_MEAN = args.frag_mean
     SHEARING_SD = args.frag_sd
+    ANTIDIAG_RATE = args.anti_rate
 
     #
     # Prepare community abundance profile, either procedurally or from a file
