@@ -195,38 +195,45 @@ def strong_match(mr, min_match=None, match_start=True, min_mapq=None):
 if __name__ == '__main__':
 
     parser = argparse.ArgumentParser(description='Create edge and node tables from a HiC bam file')
-    parser.add_argument('--recover-alts', action='store_true', default=False,
-                        help='Recover the alternate alignments from BAM')
+
     parser.add_argument('--sim', default=False, action='store_true', help='Hi-C simulation read names')
-    parser.add_argument('--afmt', choices=['bam', 'psl'], default='bam', help='Alignment file format (bam)')
-    parser.add_argument('--minid', type=float, required=False, default=95.0,
-                        help='Minimum percentage identity for alignment (95)')
+
+    # TODO PSL parsing options unused by BAM
+    # parser.add_argument('--afmt', choices=['bam', 'psl'], default='bam', help='Alignment file format (bam)')
+    # parser.add_argument('--minid', type=float, required=False, default=95.0,
+    #                    help='Minimum percentage identity for alignment (95)')
+    # parser.add_argument('--mincov', type=float, required=False, default=0.5,
+    #                     help='Minimum coverage of query by alignment (0.5)')
+
     parser.add_argument('--minlen', type=int, required=False, default=0,
                         help='Minimum length in bp (1000)')
-    parser.add_argument('--mincov', type=float, required=False, default=0.5,
-                        help='Minimum coverage of query by alignment (0.5)')
-
-    # parser.add_argument('--wgs', dest='wgs2ctg', metavar='WGS_BAM', nargs=1, help='WGS reads to contigs bam file')
-    parser.add_argument('-s', '--add-selfloops', action='store_true', default=False,
-                        help='Add self-loops to nodes')
-    parser.add_argument('--mapq', default=60, type=int, help='Minimum mapping quality [60]')
+    parser.add_argument('--mapq', default=0, type=int, help='Minimum mapping quality [0]')
     parser.add_argument('--strong', default=None, type=int,
                         help='Accept only mapped reads with no disagreements only clipping')
-    parser.add_argument('--graphml', nargs=1, help='Write graphml file')
+
+    parser.add_argument('--remove-selfloops', action='store_true', default=False,
+                        help='Remove self-loops from nodes')
+    parser.add_argument('--preserve-zerodeg', action='store_true', default=False,
+                        help='Preserve nodes of zero degree by adding self-loops of weight 1.')
+    parser.add_argument('--recover-alts', action='store_true', default=False,
+                        help='Recover the alternate alignments from BAM')
+
     parser.add_argument('--split', metavar='BAM', nargs=2, help='Split R1/R2 HiC to contigs bam files')
     parser.add_argument('--merged', metavar='BAM', nargs=1, help='Single merged HiC to contigs bam file')
-    parser.add_argument('edge_csv', metavar='EDGE_CSV', nargs=1, help='Edges csv output file')
-    parser.add_argument('node_csv', metavar='NODE_CSV', nargs=1, help='Nodes csv output file')
+    parser.add_argument('outbase', metavar='OUTPUT_BASE', help='Basis of output name')
     args = parser.parse_args()
 
-    # TODO We dont need to reference this file.
-    # TODO If a scaffold does appear in HiC data then it is not correct to introduce it.
+    if args.remove_selfloops and args.preserve_zerodeg:
+        print 'Error: remove-selfloops and preserve-zerodeg are mutually exclusive'
+        sys.exit(1)
 
     g = nx.Graph()
     linkage_map = {}
 
     # input is a BAM file
-    if args.afmt == 'bam':
+    #  TODO always BAM format at present. PSL out of date
+    if True:
+    #if args.afmt == 'bam':
 
         if args.merged and args.split:
             print 'Error: you must provide either merged OR split bam files'
@@ -249,9 +256,8 @@ if __name__ == '__main__':
         for rdir, fn in enumerate(bam_files, start=1):
             print 'Parsing {0}...'.format(fn)
 
-            # rdir = 'fwd' if R == 1 else 'rev'
-
             print 'Creating contig nodes...'
+
             with pysam.AlignmentFile(fn, 'rb') as bf:
                 g.add_nodes_from(zip(bf.references, [{'length': li} for li in bf.lengths]))
 
@@ -284,13 +290,6 @@ if __name__ == '__main__':
                         traceback.print_exception(*exc_info)
                         print 'alignment object: {0}'.format(mr)
                         sys.exit(1)
-
-                    # else:
-                    #    perid = dict(mr.cigartuples)[0] / float(mr.query_length) * 100.0
-                    #    cov = mr.query_alignment_length / float(mr.query_length)
-                    #    if cov < args.mincov or perid < args.minid:
-                    #        reject += 1
-                    #        continue
 
                     accept += 1
 
@@ -361,53 +360,56 @@ if __name__ == '__main__':
             print 'Recover alts: rejected {0} accepted {1} rate={2:.1f}%'.format(
                     alt_rej, alt_ok, float(alt_rej) / (alt_rej + alt_ok))
 
+    #
+    # TODO: PSL parsing is out of date with changes to interface.
+    #
     # input is a PSL file
-    elif args.afmt == 'psl':
-
-        if args.recover_alts:
-            print 'Recovering alternate alignments is only applicable to BAM file parsing'
-            sys.exit(1)
-
-        # line marks a non-header line
-        psl_dataline = re.compile(r'^[0-9]+\t')
-
-        with open(args.hic2ctg[0], 'r') as h_in:
-            for line in h_in:
-
-                # skip header fields
-                if not psl_dataline.match(line):
-                    continue
-
-                fields = line.rsplit()
-
-                # qname = fields[9]
-                # assumed naming convention of HiC simulated reads.
-                read, rdir = split_name(fields[9])
-
-                contig = fields[13]
-                alen = int(fields[12]) - int(fields[11]) + 1
-                qlen = int(fields[10])
-
-                # Taken from BLAT perl script for calculating percentage identity
-                matches = int(fields[0])
-                mismatches = int(fields[1])
-                repmatches = int(fields[2])
-                q_num_insert = int(fields[4])
-                perid = (1.0 - float(mismatches + q_num_insert) / float(matches + mismatches + repmatches)) * 100.0
-
-                if not g.has_node(contig):
-                    g.add_node(contig, length=int(fields[14]))
-
-                # ignore alignment records which fall below mincov or minid
-                # wrt the length of the alignment vs query sequence.
-                if float(alen) / float(qlen) < args.mincov or perid < args.minid:
-                    continue
-
-                linkage = linkage_map.get(read)
-                if linkage is None:
-                    linkage_map[read] = [(contig, rdir)]
-                else:
-                    linkage.append((contig, rdir))
+    # elif args.afmt == 'psl':
+    #
+    #     if args.recover_alts:
+    #         print 'Recovering alternate alignments is only applicable to BAM file parsing'
+    #         sys.exit(1)
+    #
+    #     # line marks a non-header line
+    #     psl_dataline = re.compile(r'^[0-9]+\t')
+    #
+    #     with open(args.hic2ctg[0], 'r') as h_in:
+    #         for line in h_in:
+    #
+    #             # skip header fields
+    #             if not psl_dataline.match(line):
+    #                 continue
+    #
+    #             fields = line.rsplit()
+    #
+    #             # qname = fields[9]
+    #             # assumed naming convention of HiC simulated reads.
+    #             read, rdir = split_name(fields[9])
+    #
+    #             contig = fields[13]
+    #             alen = int(fields[12]) - int(fields[11]) + 1
+    #             qlen = int(fields[10])
+    #
+    #             # Taken from BLAT perl script for calculating percentage identity
+    #             matches = int(fields[0])
+    #             mismatches = int(fields[1])
+    #             repmatches = int(fields[2])
+    #             q_num_insert = int(fields[4])
+    #             perid = (1.0 - float(mismatches + q_num_insert) / float(matches + mismatches + repmatches)) * 100.0
+    #
+    #             if not g.has_node(contig):
+    #                 g.add_node(contig, length=int(fields[14]))
+    #
+    #             # ignore alignment records which fall below mincov or minid
+    #             # wrt the length of the alignment vs query sequence.
+    #             if float(alen) / float(qlen) < args.mincov or perid < args.minid:
+    #                 continue
+    #
+    #             linkage = linkage_map.get(read)
+    #             if linkage is None:
+    #                 linkage_map[read] = [(contig, rdir)]
+    #             else:
+    #                 linkage.append((contig, rdir))
 
     # From the set of all linkages, convert this information
     # into inter-contig edges, where the nodes are contigs.
@@ -437,36 +439,50 @@ if __name__ == '__main__':
 
                 paired += 1
 
-    # prune self-loops edges from ligation products if self-loops were not requested
-    if not args.add_selfloops:
-        g.remove_edges_from(g.selfloop_edges())
+    print 'Paired count: {0}'.format(paired)
+    print 'Initial graph stats: order {0} size {1}'.format(g.order(), g.size())
 
-    print 'paired={0} order={1} size={2}'.format(paired, g.order(), g.size())
+    # prune self-loops edges from ligation products if self-loops were not requested
+    if args.remove_selfloops:
+        print 'Removing self-loops from all nodes.'
+        g.remove_edges_from(g.selfloop_edges())
+        print 'Post self-loop pruning: order {0} size {1}'.format(g.order(), g.size())
 
     # if requested, add weight=1 self-loop to each node.
     # can be necessary when representing graphs in some formats for isolated nodes.
-    if args.add_selfloops:
+    if args.preserve_zerodeg:
+        print 'Checking for isolated zero-degree nodes'
+        n_sl = 0
         for v in g.nodes():
             if not g.has_edge(v, v):
                 g.add_edge(v, v, weight=1)
+                n_sl += 1
+        print 'Self-loops were added to {0} isolated zero-degree nodes'.format(n_sl)
+        print 'Post node preservation: order {0} size {1}'.format(g.order(), g.size())
 
-    # filter nodes on length
-    nlist = g.nodes()
-    for n in nlist:
-        if g.node[n]['length'] < args.minlen:
-            g.remove_node(n)
+    # filter nodes less than min length
+    if args.minlen > 0:
+        print 'Filtering nodes shorter than {0} bp'.format(args.minlen)
+        nlist = g.nodes()
+        n_rem = 0
+        for n in nlist:
+            if g.node[n]['length'] < args.minlen:
+                g.remove_node(n)
+                n_rem += 1
+        print 'Length filtering removed {0} nodes'.format(n_rem)
+        print 'Post length filtering: order {0} size {1}'.format(g.order(), g.size())
 
-    if args.graphml is not None:
-        nx.write_graphml(g, args.graphml[0])
-
-    with open(args.edge_csv[0], 'w') as h_out:
+    print 'Writing edges'
+    with open('{0}.edges.csv'.format(args.outbase), 'w') as h_out:
         h_out.write("SOURCE TARGET RAWWEIGHT TYPE\n")
         for u, v, dat in g.edges(data=True):
             h_out.write('{0} {1} {2} UNDIRECTED\n'.format(u, v, dat['weight']))
 
-    with open(args.node_csv[0], 'w') as h_out:
+    print 'Writing nodes'
+    with open('{0}.nodes.csv'.format(args.outbase), 'w') as h_out:
         h_out.write('ID LENGTH\n')
         for v, dat in g.nodes(data=True):
             h_out.write('{0} {1[length]}\n'.format(v, dat))
 
-
+    print 'Writing graphml'
+    nx.write_graphml(g, '{0}.graphml'.format(args.outbase))
