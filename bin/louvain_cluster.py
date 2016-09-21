@@ -162,14 +162,14 @@ if __name__ == '__main__':
     parser.add_argument('--ofmt', choices=['mcl', 'graphml'], default='mcl', help='Specify output format [mcl]')
     parser.add_argument('--ragbag', action='store_true', default=False,
                         help='Place isolates in a single ragbag cluster')
-    parser.add_argument('input', nargs=1, help='Input graph (graphml format)')
-    parser.add_argument('output', nargs=1, help='Output file')
+    parser.add_argument('input', help='Input graph (graphml format)')
+    parser.add_argument('output', help='Output file')
     args = parser.parse_args()
 
     if args.otype == 'induced':
         raise RuntimeError('induced option no longer supported')
 
-    g = nx.read_graphml(args.input[0])
+    g = nx.read_graphml(args.input)
     print 'Initial statistics'
 
     print_info(g)
@@ -183,4 +183,4 @@ if __name__ == '__main__':
 
     communities = cluster(g, args.no_isolates, method=method, ragbag=args.ragbag, verbose=args.verbose)
 
-    write_output(communities, args.output[0], args.ofmt)
+    write_output(communities, args.output, args.ofmt)
