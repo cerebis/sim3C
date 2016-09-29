@@ -148,6 +148,14 @@ class TruthTable(object):
         return len(self.asgn_dict.keys())
 
     def degeneracy(self, lengths=None):
+        """
+        Calculate the degeneracy inherent in this truthtable. For non-overlapping assignments (clusterings)
+        this will be 1. If there is overlap (degenerate assignment) (soft-clustering) then this number
+        will be >1. If a dictionary of object lengths (weights) is supplied, the measure is weighted
+        by the size of objects.
+        :param lengths: a dictionary of object lengths/weights
+        :return: a value >= 1.
+        """
         nobj = self.num_objects()
         if nobj == 0:
             return None
@@ -155,7 +163,7 @@ class TruthTable(object):
             s = 0
             l = 0
             for k, v in self.asgn_dict.iteritems():
-                s += len(v) * lengths[k]
+                s += v.num_classes() * lengths[k]
                 l += lengths[k]
             return s/float(l)
         else:
@@ -230,7 +238,7 @@ class TruthTable(object):
 
         return pd.DataFrame(ovl, index=ckeys, columns=ckeys)
 
-    def print_tally(self):
+    def print_tally(self, max_n=None):
         n_symbol = self.num_symbols()
         n_assignments = self.num_assignments()
         n_objects = self.num_objects()
@@ -240,11 +248,13 @@ class TruthTable(object):
             n_symbol, n_assignments, n_objects, degen_ratio)
 
         print 'ext_symb\tint_symb\tcount\tpercentage'
-        for ci in sorted(self.label_count, key=self.label_count.get, reverse=True):
+        for n, ci in enumerate(sorted(self.label_count, key=self.label_count.get, reverse=True), start=1):
             print '{0}\t{1}\t{2}\t{3:5.3f}'.format(ci,
                                                    self.label_map[ci],
                                                    self.label_count[ci],
                                                    self.label_count[ci] / float(n_assignments))
+            if n == max_n:
+                break
 
     def refresh_counter(self):
         self.label_count = Counter()
@@ -273,23 +283,48 @@ class TruthTable(object):
             n50[ci] = desc_len[i]
         return n50
 
-    def filter_extent(self, min_proportion, obj_weights):
-        # make a inverted mapping, to build the deletion collection
-        cl_map = self.invert()
-        cl_keys = cl_map.keys()
-        sum_weight = float(np.sum(obj_weights.values()))
+    def _remove_class(self, cl_id, cl_to_obj=None):
+        """
+        Delete a class from the table.
+        :param cl_id: id of class to delete
+        :param cl_to_obj: class to object dict, if None then it is computed.
+        """
+        if not cl_to_obj:
+            cl_to_obj = self.invert()
 
-        for ci in cl_keys:
-            rw = np.sum([obj_weights[oi] for oi in cl_map[ci]])/sum_weight
-            if rw < min_proportion:
-                for oi in self.asgn_dict.keys():
-                    if ci in self.asgn_dict[oi].mapping:
-                        del self.asgn_dict[oi].mapping[ci]
-                        if len(self.asgn_dict[oi].mapping) == 0:
-                            del self.asgn_dict[oi]
-                del self.label_map[ci]
+        for oi in cl_to_obj[cl_id]:
+            # remove the class assignment from each object
+            del self.asgn_dict[oi].mapping[cl_id]
+            if len(self.asgn_dict[oi].mapping) == 0:
+                # delete the object if it is no longer assigned to any class
+                del self.asgn_dict[oi]
+        del self.label_map[cl_id]
+
+    def filter_extent(self, min_proportion, obj_weights):
+        """
+        Remove classes which represent less than a threshold proportion
+        of the total extent of the objects in the table. Object weights/lengths
+        must be supplied as a dictionary. If an object becomes unassigned, it is removed.
+        :param min_proportion: threshold minimum extent of a class
+        :param obj_weights: dict of object weights/lengths
+        """
+        print '##filter_started_with {0}'.format(len(self.label_count.keys()))
+
+        # make a inverted mapping, to build the deletion collection
+        cl_to_obj = self.invert()
+        sum_weight = float(sum(obj_weights.values()))
+
+        for ci in cl_to_obj:
+            cl_weight = sum(obj_weights[oi] for oi in cl_to_obj[ci])/sum_weight
+            if cl_weight < min_proportion:
+                self._remove_class(ci, cl_to_obj)
 
         self.refresh_counter()
+
+        if len(self.label_count) == 0:
+            raise ValueError('Filtering resulted in an empty table')
+
+        print '##filter_finished_with {0}'.format(len(self.label_count.keys()))
 
     def filter_class(self, min_proportion):
         """
@@ -299,19 +334,17 @@ class TruthTable(object):
         :param min_proportion least significant weight for a class assignment to pass
         """
         print '##filter_started_with {0}'.format(len(self.label_count.keys()))
+
+        cl_to_obj = self.invert()
         n_obj = float(sum(self.label_count.values()))
-        for ci in sorted(self.label_count, key=self.label_count.get, reverse=True):
+        for ci, cl_size in self.label_count.iteritems():
             if self.label_count[ci] / n_obj < min_proportion:
-                # remove assignments to class
-                for k in self.asgn_dict.keys():
-                    if ci in self.asgn_dict[k].mapping:
-                        del self.asgn_dict[k].mapping[ci]
-                        if len(self.asgn_dict[k].mapping) == 0:
-                            del self.asgn_dict[k]
-                # remove class
-                del self.label_map[ci]
+                self._remove_class(ci, cl_to_obj)
 
         self.refresh_counter()
+
+        if len(self.label_count) == 0:
+            raise ValueError('Filtering resulted in an empty table')
 
         print '##filter_finished_with {0}'.format(len(self.label_count.keys()))
 
