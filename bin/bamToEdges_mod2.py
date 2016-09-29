@@ -293,6 +293,7 @@ if __name__ == '__main__':
 
                     accept += 1
 
+                    # TODO Scaling: also here, indexing the linkage map by read-ids is expensive with long string ids.
                     if args.sim:
                         read = mr.query_name[:-3]
                         suffix = mr.query_name[-3:]
@@ -305,6 +306,7 @@ if __name__ == '__main__':
                     else:
                         read = mr.query_name
 
+                    # TODO Scaling: potentially large memory cost to use reference string names rather than integer ids
                     # contig that this alignment line refers to directly
                     contig_set.add(bf.getrname(mr.reference_id))
 
@@ -340,15 +342,18 @@ if __name__ == '__main__':
 
                     # ctg_assocs = [(ctg, rdir) for ctg in contig_set]
                     rdir = 1 if not mr.is_reverse else 2
+                    # TODO Scaling: when not recovering alts, using a set which will only ever have one entry is costly.
+                    # TODO for performance sake, we could use either scale or set and both logical code paths.
                     ctg_assocs = [(ctg, rdir) for ctg in contig_set]
 
+
+                    # TODO Scaling: this conditional is rarely true and perhaps costly.
+                    # TODO instead try: linkage_map.setdefault(read, ctg_assocs).extend(ctg_assocs)
                     linkage = linkage_map.get(read)
                     if linkage is None:
                         linkage_map[read] = ctg_assocs
-                        # linkage_map[read] = [(ctg, 1) for ctg in contig_set]
                     else:
                         linkage.extend(ctg_assocs)
-                        # linkage.extend([(ctg, 2) for ctg in contig_set])
 
                 print 'For {0} -- rejected {1} accepted {2}, rejection rate={3:.1f}%'.format(
                         fn, reject, accept, float(reject) / (reject + accept) * 100.)
@@ -418,6 +423,12 @@ if __name__ == '__main__':
     
     print 'Input paired and unpaired inserts: {0}'.format(len(linkage_map))
 
+    # TODO: Now we make a graph from all the links. This will likely double the memory
+    # TODO footprint and we're in effect copying the information. Can we just build the
+    # TODO graph directly? Why the linkage_map dictionary intermediate?
+    # TODO Answer: easiest, we would need to read-pairs from BAMS. So either interleaved, expecting
+    # TODO successive lines contain pairs, or both files in parallel. Logic needs to deal with
+    # TODO iterations not representing pairs.
     paired = 0
     total = 0
     for insert, linkages in linkage_map.iteritems():
