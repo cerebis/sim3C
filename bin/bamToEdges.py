@@ -215,7 +215,7 @@ if __name__ == '__main__':
                 if args.recover_alts:
 
                     # first, add the main mapped position -- to what will now be a set of positions
-                    contig_set.add(contig)
+                    contig_set = {contig}
 
                     try:
                         # XA field contains alternate alignments for read, semi-colon delimited
@@ -223,25 +223,19 @@ if __name__ == '__main__':
                         hit_list = alts_field.split(';')
 
                         for hit in hit_list:
-                            try:
-                                hrec = hit.rstrip(';').split(',')
-                                if len(hrec) == 1 and not hrec[0]:
-                                    continue
+                            hrec = hit.rstrip(';').split(',')
+                            if len(hrec) == 1 and not hrec[0]:
+                                continue
 
-                                ctg, pos, cig, nm = hrec
+                            ctg, pos, cig, nm = hrec
 
-                                # test confidence of alignment
-                                if int(nm) > 0 or not good_match(cigar_to_tuple(cig), args.strong, True):
-                                    alt_rej += 1
-                                    continue
+                            # test confidence of alignment
+                            if int(nm) > 0 or not good_match(cigar_to_tuple(cig), args.strong, True):
+                                alt_rej += 1
+                                continue
 
-                                contig_set.add(ctg)
-                                alt_ok += 1
-
-                            except Exception as e:
-                                print e
-                                raise IOError('alternate alignment did not contain four fields. [{0}] {1}'.format(
-                                        alts_field, hit))
+                            contig_set.add(ctg)
+                            alt_ok += 1
 
                     except KeyError:
                         # if there was no XA tag, just continue
