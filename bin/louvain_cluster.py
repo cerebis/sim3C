@@ -62,10 +62,17 @@ def cluster(g, no_iso, method='simple', levels=1, ragbag=False):
     # this is effectively a hard clustering answer to the problem
     com_ids = set(partitions.values())
     print 'There were {0} communities in decomposition'.format(len(com_ids))
+
+    print 'Inveriting partition map'
+    revpart = {}
+    for ni, ci in partitions.iteritems():
+        revpart.setdefault(ci, []).append((ni,1.0))
+
     print 'Communities with more than one node:'
     communities = {}
     for ci in com_ids:
-        communities[ci] = dict((n, 1.0) for n, cj in partitions.iteritems() if cj == ci)
+        communities[ci] = dict(revpart[ci])
+#        communities[ci] = dict((n, 1.0) for n, cj in partitions.iteritems() if cj == ci)
         if len(communities[ci]) > 1:
             print '\tcommunity {0}: {1} nodes'.format(ci, len(communities[ci]))
 
