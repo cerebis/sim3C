@@ -31,6 +31,7 @@ from Bio.Restriction import *
 
 import Art
 import abundance
+import empirical_model
 import io_utils
 
 if StrictVersion(np.__version__) < StrictVersion("1.9.0"):
@@ -50,6 +51,7 @@ CUTTER_NAME = 'NlaIII'
 
 # Mixed geom/unif model
 MIXED_GEOM_PROB = 6.0e-6
+CID_GEOM_PROB = 8.0e-6
 
 # set state for random number generation
 RANDOM_STATE = None
@@ -83,51 +85,6 @@ class EmptyRegistryException(Sim3CException):
 
 class MonochromosomalException(Sim3CException):
     pass
-
-
-class EmpiricalDistribution:
-    """
-    Defining an empirical distribution, we can then use it to draw random
-    numbers.
-    """
-
-    def __init__(self, shape, length, bins=1000):
-        """
-
-        :param shape: distribution shape parameter
-        :param length:
-        :param bins:
-        """
-        self.shape = shape
-        self.length = length
-        self.scale = 1.0 / length
-        self.bins = bins
-        self.xsample = np.linspace(0, self.length, self.bins, endpoint=True, dtype=np.float64)
-        self.ysample = self._cdf(self.xsample)
-        self.ysample /= self.ysample.max()
-
-    def _cdf(self, x):
-        """
-        The CDF is the crucial element of this method. Currently, it is hard-coded as
-        a linear combination of geometric and uniform distributions. This could easily
-        be changed or the class made generic by passing CDF as a function.
-        :param x:
-        :return:
-        """
-        return 0.5 * (1.0 - (1.0 - self.shape) ** x + self.scale * x)
-
-    def rand(self):
-        """
-        Using the inverse CDF method, draw a random number for the distribution. This
-        method looks up the nearest value of random value x in a sampled representation
-        and then interpolates between bin edges. Edge case for the first and last bin
-        is to merely use that bin.
-
-        :return: random value following distribution
-        """
-        xv = self.ysample
-        yv = self.xsample
-        return np.interp(RANDOM_STATE.uniform(), xv, yv)
 
 
 def get_enzyme_instance(enzyme_name):
@@ -233,6 +190,7 @@ class Part:
     def length(self):
         return self.pos2 - self.pos1 + 1
 
+
 class Replicon:
     """Represents a replicon which holds a reference to its containing cell"""
 
@@ -248,8 +206,9 @@ class Replicon:
             if len(self.cut_sites[cname]) <= 0:
                 raise NoCutSitesException(name, cname)
 
-        # initialise an empirical distribution for this sequence.
-        self.emp_dist = EmpiricalDistribution(MIXED_GEOM_PROB, self.length())
+        # initialise CID blocked empirical model
+        self.cid_blocks = empirical_model.cids_to_blocks(
+            empirical_model.generate_random_cids(RANDOM_STATE, self.length()))
 
     def __repr__(self):
         return repr((self.name, self.parent_cell, self.sequence))
@@ -345,22 +304,30 @@ class Replicon:
         else:
             return cs[d1[0]]
 
-    def constrained_location(self, origin):
-        """
-        Following the defined empirical distribution, return a genonomic coordinate relative
-        to the supplied origin. The origin must be between 0 and the length of the replicon.
-
-        :param origin: location of the first cut-site
-        :return: a location following empirical distribution, relative to origin
-        """
-        delta = int(self.emp_dist.rand())
-        # random positive or negative delta
+    @staticmethod
+    def get_loc(emp_dist, origin):
+        delta = int(emp_dist.rand())
+        # either +ve/-ve relative to origin
         if RANDOM_STATE.uniform() < 0.5:
-            loc = origin - delta
+            return origin - delta
         else:
-            loc = origin + delta
-        # modulo the replicon length
-        loc %= self.length()
+            return origin + delta
+
+    def constrained_location_cids(self, origin):
+        block = self.cid_blocks[origin].pop()
+        ovl_invs = block.data['inv_list']
+        if len(ovl_invs) == 1:
+            # if only the background distribution governs this block
+            chosen_inv = ovl_invs[0]
+        else:
+            # pick a cid or background from those defined for this block
+            rc = RANDOM_STATE.choice(len(ovl_invs), p=block.data['prob_list'])
+            chosen_inv = ovl_invs[rc]
+
+        loc = Replicon.get_loc(chosen_inv.data['empdist'], origin)
+        loc -= chosen_inv.begin      # remove shift
+        loc %= chosen_inv.length()   # modulo segment size
+        loc += chosen_inv.begin      # replace shift
         return loc
 
 
@@ -600,11 +567,14 @@ class Community:
         replicon = self.get_replicon_by_index(replicon_index)
         return int(RANDOM_STATE.uniform() * replicon.length()), True
 
+
 """
 
 Fragment creation methods
 
 """
+
+
 def make_unconstrained_part_a():
     """
     Choose a cut site at random across a randomly selected replicon. Further,
@@ -650,7 +620,7 @@ def make_constrained_part_b(first_part):
     :param first_part: part A, the already chosen piece of the ligation fragment from a particular replicon.
     :return: another part B, on the same replicon which follows the distribution of separation.
     """
-    loc = first_part.replicon.constrained_location(first_part.pos1)
+    loc = first_part.replicon.constrained_location_cids(first_part.pos1)
     if np.random.uniform() < ANTIDIAG_RATE:
         # an anti-diagonal event
         loc = first_part.replicon.length() - loc
@@ -717,7 +687,6 @@ if __name__ == '__main__':
                         default='external/art/Illumina_profiles/EmpMiSeq250R1.txt')
     parser.add_argument('--ins-rate', type=float, default=0.00009, help='Insert rate')
     parser.add_argument('--del-rate', type=float, default=0.00011, help='Deletion rate')
-
 
     parser.add_argument(dest='genome_seq', metavar='FASTA',
                         help='Genome sequences for the community')
@@ -805,7 +774,6 @@ if __name__ == '__main__':
 
             # set the method used to generate reads
             next_pair = art.next_pair_simple_seq if args.no_read_errors else art.next_pair_indel_seq
-
 
             while frag_count < args.num_frag:
                 # Fragment creation
