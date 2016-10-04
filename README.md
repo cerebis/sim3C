@@ -35,7 +35,6 @@ The workflows depend on the following Python modules, which must be installed pr
 * pysam
 * PyYaml
 * scipy
-* yaml
 
 On ubuntu these can be installed by running:
 ```bash
