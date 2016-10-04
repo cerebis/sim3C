@@ -215,7 +215,7 @@ if __name__ == '__main__':
                 if args.recover_alts:
 
                     # first, add the main mapped position -- to what will now be a set of positions
-                    contig_set.add(contig)
+                    contig_set = {contig}
 
                     try:
                         # XA field contains alternate alignments for read, semi-colon delimited
