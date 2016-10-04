@@ -31,7 +31,6 @@ The workflows depend on the following Python modules, which must be installed pr
 * networkx
 * numpy
 * pandas
-* Phylo
 * python-louvain
 * pysam
 * PyYaml
