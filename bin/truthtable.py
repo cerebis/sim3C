@@ -16,15 +16,15 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """
-from collections import OrderedDict, Iterable, Counter
-import pandas as pd
-import numpy as np
 import copy
-import numpy
-import yaml
 import json
-import io_utils
+from collections import OrderedDict, Iterable, Counter
 
+import numpy as np
+import pandas as pd
+import yaml
+
+import io_utils
 
 YAML_WIDTH = 1000
 
@@ -88,7 +88,7 @@ class Assignment:
         """
         :return: the mean of assignment weights
         """
-        return numpy.mean(self.mapping.values())
+        return np.mean(self.mapping.values())
 
     def num_classes(self):
         """
@@ -594,10 +594,10 @@ def simulate_error(tt, p_mut, p_indel, extra_symb=()):
 
     for o_i in mut_dict.keys():
         others = list(set(symbols) - set(mut_dict[o_i].mapping))
-        if numpy.random.uniform() < p_mut:
+        if np.random.uniform() < p_mut:
             if len(others) > 0:
-                c_mut = numpy.random.choice(others, 1)[0]
-                c_old = numpy.random.choice(mut_dict[o_i].mapping.keys(), 1)[0]
+                c_mut = np.random.choice(others, 1)[0]
+                c_old = np.random.choice(mut_dict[o_i].mapping.keys(), 1)[0]
 
                 # retain the weighting from the original to mutated
                 # we do this pedantically so its easy to read
@@ -605,15 +605,15 @@ def simulate_error(tt, p_mut, p_indel, extra_symb=()):
                 mut_dict[o_i].mapping[c_mut] = weight
                 del mut_dict[o_i].mapping[c_old]
 
-        if numpy.random.uniform() < p_indel:
+        if np.random.uniform() < p_indel:
             # flip a coin, delete or insert
-            if numpy.random.uniform() < 0.5:
+            if np.random.uniform() < 0.5:
                 # delete
-                c_del = numpy.random.choice(mut_dict[o_i].mapping.keys(), 1)[0]
+                c_del = np.random.choice(mut_dict[o_i].mapping.keys(), 1)[0]
                 del mut_dict[o_i].mapping[c_del]
             elif len(others) > 0:
                 # insert from 'others'
-                c_add = numpy.random.choice(others, 1)[0]
+                c_add = np.random.choice(others, 1)[0]
                 num_cl = mut_dict[o_i].num_classes()
                 adj_fac = float(num_cl / (num_cl+1.))
                 ins_prop = mut_dict[o_i].mean_proportion() * adj_fac

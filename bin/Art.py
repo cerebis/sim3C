@@ -17,19 +17,20 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """
-"""
- The following module was transcribed and adapted from the original project's C++ code:
-
- ART -- Artificial Read Transcription, Illumina Q version
- Authors: Weichun Huang 2008-2016
- License: GPL v3
-"""
-import numpy as np
 import string
+
 import scipy.stats as st
 from Bio.Alphabet import IUPAC
 from Bio.Seq import Seq
 from Bio.SeqRecord import SeqRecord
+
+"""
+The following module was transcribed and adapted from the original project's C++ code:
+
+ART -- Artificial Read Transcription, Illumina Q version
+Authors: Weichun Huang 2008-2016
+License: GPL v3
+"""
 
 def _clear_list(l):
     del l[:]

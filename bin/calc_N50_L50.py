@@ -17,8 +17,8 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """
-from Bio import SeqIO
 import numpy as np
+from Bio import SeqIO
 
 
 def calculate_N50_and_L50(lengths):

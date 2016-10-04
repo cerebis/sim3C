@@ -24,19 +24,6 @@ class EmpiricalDistribution:
     nearest two bins.
     """
 
-    def __add__(self, other):
-        """
-        Add two instances together, where they must match in terms of CDF, number of bins and coefficients.
-        Largely, this involves adding their lengths together and recomputing.
-        :param other: an instance of EmpiricalDistribution
-        :return:
-        """
-        assert isinstance(other, EmpiricalDistribution)
-        assert self.cdf == other.cdf
-        assert self.bins == other.bins
-        assert self.coeffs == other.coeffs
-        return EmpiricalDistribution(self.length + other.length, self.bins, self.cdf, **self.coeffs)
-
     def __init__(self, random_state, length, bins, cdf, **coeffs):
         """
         :param random_state: random state from which to draw numbers. If None, then this will be initialized at
@@ -55,6 +42,19 @@ class EmpiricalDistribution:
         self.ysample = self.cdf(self.xsample, length, **self.coeffs)
         self.ysample /= self.ysample.max()
 
+    def __add__(self, other):
+        """
+        Add two instances together, where they must match in terms of CDF, number of bins and coefficients.
+        Largely, this involves adding their lengths together and recomputing.
+        :param other: an instance of EmpiricalDistribution
+        :return:
+        """
+        assert isinstance(other, EmpiricalDistribution)
+        assert self.cdf == other.cdf
+        assert self.bins == other.bins
+        assert self.coeffs == other.coeffs
+        return EmpiricalDistribution(self.length + other.length, self.bins, self.cdf, **self.coeffs)
+
     def rand(self):
         """
         Using the inverse CDF method, draw a random number for the distribution. This
@@ -69,8 +69,8 @@ class EmpiricalDistribution:
 
 def _reducer_cid_data(acc, x):
     """
-    Reducer function for accumulating data fields from Intervals. This then becomes
-    the replacement if IntervalTree.merge_overlaps() is called.
+    IntervalTree merge_overlaps method uses a reducer function to accumulate the Interval data fields. If not
+    included, merge_overlaps default behaviour is to throw-away this information.
     :param acc: the initial data
     :param x:  the next data
     :return: combined data
@@ -80,7 +80,7 @@ def _reducer_cid_data(acc, x):
 
 
 def generate_random_cids(random_state, genome_length, genome_prob=2.0, genome_bins=1000, genome_shape=8.0e-6,
-                         min_cid_len=10000, max_cid_len=250000, num_cid=10, cid_bins=100, cid_shape=6.0e-6,
+                         min_cid_len=20000, max_cid_len=250000, num_cid=10, cid_bins=100, cid_shape=6.0e-6,
                          merge_overlaps=False):
     """
     Generate a random set of CID intervals for a given genome size. Default values have been set for most
@@ -100,24 +100,24 @@ def generate_random_cids(random_state, genome_length, genome_prob=2.0, genome_bi
     :return:
     """
     # create the list of CID intervals as (cid_begin, cid_length) pairs.
-    data = map(lambda _: (np.random.randint(genome_length),
-                          np.random.randint(min_cid_len, max_cid_len)), range(num_cid))
+    data = map(lambda _: (random_state.randint(genome_length),
+                          random_state.randint(min_cid_len, max_cid_len)), range(num_cid))
 
-    # initialise the intervaltree, where we associate a random probability for each CID interval
+    # initialise the interval-tree, where we associate a random probability for each CID interval
     # where we assume their distributions of the same basic type as the full genome.
     cid_tree = IntervalTree(Interval(x, x+y,
-                                     {'prob': np.random.uniform(),
+                                     {'prob': random_state.uniform(),
                                       'empdist': EmpiricalDistribution(random_state, y, cid_bins, cdf_geom_unif, shape=cid_shape)}
                                      ) for x, y in data if y < genome_length)
 
-    # it is possible to simplify the CID tree into non-overlapping regions
+    # if requested, simplify the CID tree into non-overlapping regions
     if merge_overlaps:
         cid_tree.merge_overlaps(data_reducer=_reducer_cid_data)
 
     # add the interval governing the whole genome -- call it the genome-wide CID. mother of all CID? heh
     cid_tree[0:genome_length] = {'prob': genome_prob,
-                                'empdist': EmpiricalDistribution(random_state, genome_length, genome_bins,
-                                                                 cdf_geom_unif, shape=genome_shape)}
+                                 'empdist': EmpiricalDistribution(random_state, genome_length, genome_bins,
+                                                                  cdf_geom_unif, shape=genome_shape)}
 
     return cid_tree
 

@@ -232,7 +232,7 @@ process Graph {
     file("${oname}.graphml") into graphs
 
     """
-    bamToEdges_mod2.py --sim --afmt bam --strong 150 --graphml "${oname}.graphml" --merged hic2ctg.bam hic2ctg.e hic2ctg.n
+    bamToEdges.py --sim --afmt bam --strong 150 --graphml "${oname}.graphml" --merged hic2ctg.bam hic2ctg.e hic2ctg.n
     """
 }
 

@@ -17,10 +17,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """
-import io_utils
-import yaml
 import argparse
 import json
+
+import yaml
+
+import io_utils
 
 parser = argparse.ArgumentParser(description='Aggregate serialized dictionaries')
 parser.add_argument('--fmt', choices=['yaml', 'json'], default='json',
