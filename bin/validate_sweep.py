@@ -1,9 +1,11 @@
 #!/usr/bin/env python
-from collections import Counter
 import fnmatch
-import os
-import numpy
 import json
+import os
+from collections import Counter
+
+import numpy as np
+
 
 def find_files(dir, pattern):
     found = []
@@ -32,7 +34,7 @@ def validate_combinations(counters):
     # predicted number of combinations, as the product of observed values per level
     # obviously, one can predic the total from the specified sweep beforehand
     # this is just a convenience.
-    goal_by_obs = numpy.prod([len(ci.keys()) for ci in counters.values()])
+    goal_by_obs = np.prod([len(ci.keys()) for ci in counters.values()])
     print '  Goal by product of observed: {0}'.format(goal_by_obs)
 
     its = [sum(ci.values()) for ci in counters.values()]

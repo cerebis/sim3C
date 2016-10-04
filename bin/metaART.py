@@ -23,12 +23,11 @@ import os
 import subprocess
 import sys
 
-import numpy
+import numpy as np
 from Bio import SeqIO
 
 import abundance
 import io_utils
-
 
 TMP_INPUT = 'seq.tmp'
 TMP_OUTPUT = 'reads.tmp'
@@ -86,7 +85,7 @@ if __name__ == '__main__':
 
     coverage_file = open(os.path.join(args.output_dir, args.coverage_out), 'w')
 
-    RANDOM_STATE = numpy.random.RandomState(args.seed)
+    RANDOM_STATE = np.random.RandomState(args.seed)
     child_seeds = RANDOM_STATE.randint(LOW_SEED_VALUE, HIGH_SEED_VALUE, args.num_samples).tolist()
 
     if args.profile:

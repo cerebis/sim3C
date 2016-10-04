@@ -17,11 +17,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """
-import Psl
-import truthtable as tt
+import argparse
 
 import numpy as np
-import argparse
+
+import Psl
+import truthtable as tt
 
 
 def parse_psl(psl_file, min_id=0.90, cover_thres=0.96):

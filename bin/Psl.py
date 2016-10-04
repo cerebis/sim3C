@@ -18,6 +18,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """
 import re
 
+
 class Alignment:
     """
     Basic class representing a line from a PSL format file.

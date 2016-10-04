@@ -17,11 +17,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """
-from dendropy.simulate import treesim
-import dendropy
 import argparse
 import random
 import sys
+
+from dendropy import TaxonNamespace
+from dendropy.simulate import treesim
 
 
 def get_taxon_namespace(ntax, label='taxa', prefix='T'):
@@ -35,7 +36,7 @@ def get_taxon_namespace(ntax, label='taxa', prefix='T'):
     :return:
     """
 
-    return dendropy.TaxonNamespace(map(lambda x: '{0}_{1}'.format(prefix, x), range(1, ntax + 1)), label=label)
+    return TaxonNamespace(map(lambda x: '{0}_{1}'.format(prefix, x), range(1, ntax + 1)), label=label)
 
 
 def rescale_tree(tr, max_height):

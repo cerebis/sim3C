@@ -17,13 +17,15 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """
-import io_utils
-import networkx as nx
-import community as com
-import numpy as np
 import argparse
-import sys
 import os
+import sys
+
+import community as com
+import networkx as nx
+import numpy as np
+
+import io_utils
 
 
 def formatter(prog): return argparse.HelpFormatter(prog, width=100, max_help_position=100)
