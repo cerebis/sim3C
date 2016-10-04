@@ -621,7 +621,7 @@ def make_constrained_part_b(first_part):
     :return: another part B, on the same replicon which follows the distribution of separation.
     """
     loc = first_part.replicon.constrained_location_cids(first_part.pos1)
-    if np.random.uniform() < ANTIDIAG_RATE:
+    if RANDOM_STATE.uniform() < ANTIDIAG_RATE:
         # an anti-diagonal event
         loc = first_part.replicon.length() - loc
 
@@ -717,7 +717,7 @@ if __name__ == '__main__':
         seq_index = None
         try:
             seq_index = SeqIO.index(args.genome_seq, 'fasta')
-            profile = abundance.generate_profile(np.random.RandomState(args.seed), list(seq_index), mode=args.dist,
+            profile = abundance.generate_profile(RANDOM_STATE, list(seq_index), mode=args.dist,
                                                  lognorm_mu=args.lognorm_mu, lognorm_sigma=args.lognorm_sigma)
 
             # present result to console
