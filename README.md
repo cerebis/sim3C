@@ -24,15 +24,19 @@ In addition, meta-sweeper expects that the main executable ```nextflow``` is acc
 
 The workflows depend on the following Python modules, which must be installed prior to using it:
 
-* [biopython](http://biopython.org/)
-
-* [pandas](http://pandas.pydata.org/)
-
-* [PyYaml](http://pyyaml.org/)
-
-* [networkx](https://networkx.github.io/)
-
-* [pysam](https://github.com/pysam-developers/pysam)
+* biopython
+* dendropy
+* intervaltree
+* json
+* networkx
+* numpy
+* pandas
+* Phylo
+* python-louvain
+* pysam
+* PyYaml
+* scipy
+* yaml
 
 On ubuntu these can be installed by running:
 ```bash
