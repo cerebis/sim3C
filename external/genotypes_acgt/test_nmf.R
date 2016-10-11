@@ -2,13 +2,14 @@
 library(rstan)
 #
 # define the number of strains, samples, and sites
-strains <- 3
-samples <- 12
-sites <- 300
+strains <- 6
+samples <- 8
+sites <- 50
 
+maxcov <- 100
 #
 # choose random values for strain abundances at all timepoints
-test_abunds<-matrix(runif(strains*samples, 0, 100), strains, samples)
+test_abunds<-matrix(runif(strains*samples, 0, maxcov), strains, samples)
 
 #
 # choose random values for strain genotypes, ensuring at least 1 mutation at all positions
@@ -30,6 +31,25 @@ observation_counts<-matrix(rpois(samples*sites, total),samples,sites)
 #
 # A binomially distributed fraction of the observations are the mutant
 observed_mut<-matrix(rbinom(samples*sites,observation_counts,mixed/total),samples,sites)
+
+bestorder <- function(x,y) { 
+    library(combinat)
+    ppp<-permn(seq(1,nrow(x)))
+    bestgeno <- ""
+    bestscore <- 99999999
+    for(i in 1:length(ppp)){
+        cs <- x[ppp[[i]],]-y
+        cs <- cs * cs
+        cs <- sqrt(sum(cs)/length(cs))
+        if(cs < bestscore){
+            bestgeno <- x[ppp[[i]],]
+            bestscore <- cs
+        }
+    }
+    print(paste("min RMSE ",bestscore))
+    bestgeno
+}
+
 
 #
 # define the stan model as a text string
@@ -74,7 +94,7 @@ model {
 
 sm <- stan_model(model_name="genotypes",model_code=stancode)
 dat <- list(U = sites, T = samples, S = strains, observations = t(observation_counts), mutations=t(observed_mut));
-vbfit <- vb(sm, data = dat, tol_rel_obj=0.005, elbo_samples=200, iter=100000, sample_file = 'geno.csv', algorithm="fullrank")
+vbfit <- vb(sm, data = dat, tol_rel_obj=0.001, elbo_samples=200, iter=20000, sample_file = 'geno.csv', algorithm="meanfield")
 
 
 # print(vbfit)
@@ -86,12 +106,36 @@ test_abunds
 ddest<-matrix(get_posterior_mean(vbfit,pars="depth"),strains,samples)
 "Posterior mean estimates"
 ddest
-"RMSE"
-(sum((ddest-test_abunds)^2)/length(ddest))^0.5
 
+# now compute a factorization with the NMF package
+library("NMF")
+nnn<-nmf(observed_mut / observation_counts,strains,nrun=500)
+
+ccc<-coef(nnn)
+ccc<-bestorder(ccc,test_sites)
 
 geno<-matrix(get_posterior_mean(vbfit,pars="geno"),strains,sites)
-image(z=t(1-geno),col=gray((0:32)/32))
+geno <- bestorder(geno, test_sites)
+
+x11(width=8)
+par(mfrow=c(3,1),mar=c(2,1,2,1))
+image(z=t(test_sites),,col=gray((32:0)/32),main="Truth",xaxt="n")
+image(z=t(1-geno),col=gray((0:32)/32),main="MFVBBPNMF",xaxt="n")
+image(z=t(ccc),,col=gray((32:0)/32),main="R NMF",xaxt="n")
 
 
+
+
+dat <- list(U = sites, T = samples, S = strains-2, observations = t(observation_counts), mutations=t(observed_mut));
+vbfit <- vb(sm, data = dat, tol_rel_obj=0.004, elbo_samples=200, iter=20000, sample_file = 'geno.csv', algorithm="meanfield")
+
+dat <- list(U = sites, T = samples, S = strains-1, observations = t(observation_counts), mutations=t(observed_mut));
+vbfit <- vb(sm, data = dat, tol_rel_obj=0.004, elbo_samples=200, iter=20000, sample_file = 'geno.csv', algorithm="meanfield")
+
+dat <- list(U = sites, T = samples, S = strains, observations = t(observation_counts), mutations=t(observed_mut));
+vbfit <- vb(sm, data = dat, tol_rel_obj=0.004, elbo_samples=200, iter=20000, sample_file = 'geno.csv', algorithm="meanfield")
+
+
+dat <- list(U = sites, T = samples, S = strains+1, observations = t(observation_counts), mutations=t(observed_mut));
+vbfit <- vb(sm, data = dat, tol_rel_obj=0.004, elbo_samples=200, iter=20000, sample_file = 'geno.csv', algorithm="meanfield")
 
