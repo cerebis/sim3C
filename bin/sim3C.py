@@ -639,10 +639,10 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Simulate HiC read pairs')
     parser.add_argument('-C', '--compress', choices=['gzip', 'bzip2'], default=None,
                         help='Compress output files')
-    parser.add_argument('--alt-naming', default=False, action='store_true',
-                        help='Use alternative read names')
+    parser.add_argument('--dir-naming', default=False, action='store_true',
+                        help='Encode direction in read-name (fwd/rev)')
     parser.add_argument('--site-dup', default=False, action='store_true',
-                        help='Hi-C style ligation junction site duplication')
+                        help='HiC style ligation junction site duplication')
     parser.add_argument('-f', '--ofmt', dest='output_format', default='fastq', choices=['fasta', 'fastq'],
                         help='Output format')
     parser.add_argument('-r', '--seed', metavar='INT', type=int, default=int(time.time()),
@@ -747,15 +747,15 @@ if __name__ == '__main__':
 
         # Control the style of read names employed. We originally appended the direction
         # or read number (R1=fwd, R2=rev) to the id. This is not what is expected in normal
-        # situations. Unfortunately, code still depends on this and needs to be fixed first.
-        if args.alt_naming:
-            # direction is just part of the description
-            fwd_fmt = 'frg{0} fwd'
-            rev_fmt = 'frg{0} rev'
-        else:
-            # original style, with direction appended
+        # situations.
+        if args.dir_naming:
+            # original style, encoding direction. This breaks read-pairing convention in normal tools.
             fwd_fmt = 'frg{0}fwd'
             rev_fmt = 'frg{0}rev'
+        else:
+            # direction will just be part of the description
+            fwd_fmt = 'frg{0} fwd'
+            rev_fmt = 'frg{0} rev'
 
         frag_lengths = {'a': [], 'b': []}
 

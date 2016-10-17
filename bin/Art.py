@@ -19,6 +19,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """
 import string
 
+import numpy as np
 import scipy.stats as st
 from Bio.Alphabet import IUPAC
 from Bio.Seq import Seq
