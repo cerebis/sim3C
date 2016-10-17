@@ -747,15 +747,15 @@ if __name__ == '__main__':
 
         # Control the style of read names employed. We originally appended the direction
         # or read number (R1=fwd, R2=rev) to the id. This is not what is expected in normal
-        # situations. Unfortunately, code still depends on this and needs to be fixed first.
+        # situations.
         if args.alt_naming:
-            # direction is just part of the description
-            fwd_fmt = 'frg{0} fwd'
-            rev_fmt = 'frg{0} rev'
-        else:
             # original style, with direction appended
             fwd_fmt = 'frg{0}fwd'
             rev_fmt = 'frg{0}rev'
+        else:
+            # direction is just part of the description
+            fwd_fmt = 'frg{0} fwd'
+            rev_fmt = 'frg{0} rev'
 
         frag_lengths = {'a': [], 'b': []}
 
