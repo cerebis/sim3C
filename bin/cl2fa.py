@@ -8,6 +8,7 @@ import sys
 
 parser = argparse.ArgumentParser(description='Extract clustered sequences')
 parser.add_argument('-v', dest='verbose', default=False, action='store_true', help='Verbose standard output')
+parser.add_argument('-f', '--force', default=False, action='store_true', help='Force overwriting of files')
 parser.add_argument('--cid-list', nargs='*', help='Specific cluster IDs')
 parser.add_argument('--clustering', required=True, metavar='CLUSTERING', help='MCL format clustering file')
 parser.add_argument('--fasta', required=True, metavar='FASTA', help='Fasta sequences supporting clustering')
@@ -29,8 +30,9 @@ if args.verbose:
 tt = ttable.read_mcl(args.clustering)
 cl2seq = tt.invert()
 
+
 if len(args.cid_list) > 0:
-    cid_list = [].extend(args.cid_list)
+    cid_list = args.cid_list
 else:
     cid_list = [ci for ci in cl2seq]
 
@@ -40,10 +42,13 @@ for ci in cid_list:
         print 'Collecting sequences for cluster {0}'.format(ci)
 
     seqs = []
-    for si in cl2seq[ci]:
+    for si in cl2seq[int(ci)]:
         seqs.append(seq_index[si])
 
     if args.verbose:
         print 'Writing {0} sequences for cluster {1}'.format(len(seqs), ci)
 
-    SeqIO.write(seqs, os.path.join(args.out_dir, 'cl{0}.fasta'.format(ci)), 'fasta')
+    opath = os.path.join(args.out_dir, 'cl{0}.fasta'.format(ci))
+    if not args.force and os.path.exists(opath):
+        raise IOError('Path {0} already exists. Use --force to overwrite destination files'.format(opath))
+    SeqIO.write(seqs, opath, 'fasta')
