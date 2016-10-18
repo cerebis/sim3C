@@ -7,11 +7,11 @@ import sys
 
 
 parser = argparse.ArgumentParser(description='Extract clustered sequences')
-parser.add_argument('-o', '--out-dir', help='Output directory')
-parser.add_argument('--cid', nargs='*',  help='Specific cluster IDs')
 parser.add_argument('-v', dest='verbose', default=False, action='store_true', help='Verbose standard output')
-parser.add_argument('clustering', metavar='CLUSTERING', help='MCL format clustering file')
-parser.add_argument('fasta', metavar='FASTA', help='Fasta sequences supporting clustering')
+parser.add_argument('--cid-list', nargs='*', help='Specific cluster IDs')
+parser.add_argument('--clustering', required=True, metavar='CLUSTERING', help='MCL format clustering file')
+parser.add_argument('--fasta', required=True, metavar='FASTA', help='Fasta sequences supporting clustering')
+parser.add_argument('-o', '--out-dir', help='Output directory')
 args = parser.parse_args()
 
 if args.out_dir:
@@ -29,8 +29,8 @@ if args.verbose:
 tt = ttable.read_mcl(args.clustering)
 cl2seq = tt.invert()
 
-if args.cid:
-    cid_list = [].extend(args.cid)
+if len(args.cid_list) > 0:
+    cid_list = [].extend(args.cid_list)
 else:
     cid_list = [ci for ci in cl2seq]
 
