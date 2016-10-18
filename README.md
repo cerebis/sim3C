@@ -3,19 +3,24 @@ meta-sweeper
 
 By expressing microbial community composition and the details of metagenomic experiments in parametric form, meta-sweeper aims to permit the assessment of analytical methods under variation in both community and experiment.
 
+Prerequisites
+-------------
 
-### Prerequisites
-- Nextflow requires Java 7+.
+### Nextflow 
+- Requires Java 7+.
 - Workflows require a *Linux x86-64* runtime environment due to dependence on external statically linked tools.
 
-### Biopython
+### Biopython from Pip
 - GCC or equivalent
 - Python libraries and header files needed for Python development (Debian: python-dev, Redhat: python-devel)
+
+### Pysam from Pip
 - zlib library and headers (Debian: zlib1g-dev, Redhat: zlib-devel)
 
-### Dependencies
+Installation
+------------
 
-#### Nextflow
+### Nextflow
 
 The [Nextflow](http://www.nextflow.io/) framework, which can be installed easily using either of the following:
 
