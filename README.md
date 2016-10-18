@@ -36,14 +36,19 @@ The workflows depend on the following Python modules, which must be installed pr
 * PyYaml
 * scipy
 
-On ubuntu these can be installed by running:
+Some of these dependencies can be installed using distributional package manager, but not all will be found.
+
+On ubuntu
 ```bash
 sudo apt-get install python-biopython python-pandas python-yaml python-networkx python-pysam
 ```
-
-On other systems [pip](https://pip.pypa.io/en/stable/) may be the preferred method for installation.
+On Redhat
 ```bash
-pip install --upgrade biopython pandas PyYAML networkx pysam
+sudo yum install python-biopython python-pandas python-yaml python-networkx python-pysam
+```
+A more general and complete solution is to use [pip](https://pip.pypa.io/en/stable/). This may result in the upgrading of packages already installed by a distributional package manager (e.g. apt-get, yum) and potentially cause a version conflict for already-installed software dependent on an older python module.
+```bash
+pip install --upgrade  biopython dendropy intervaltree json networkx numpy pandas python-louvain pysam PyYaml scipy 
 ```
 
 ### Usage
