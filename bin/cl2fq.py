@@ -1,31 +1,49 @@
 #!/usr/bin/env python
 from Bio import SeqIO
 import truthtable as ttable
+import argparse
 import os
 import sys
 
-if len(sys.argv) != 5:
-    print 'usage <clid> <clustering> <multi-fassta> <out dir>'
-    sys.exit(1)
 
-clid = int(sys.argv[1])
+parser = argparse.ArgumentParser(description='Extract clustered sequences')
+parser.add_argument('-o', '--out-dir', help='Output directory')
+parser.add_argument('--cid', nargs='*',  help='Specific cluster IDs')
+parser.add_argument('-v', dest='verbose', default=False, action='store_true', help='Verbose standard output')
+parser.add_argument('clustering', metavar='CLUSTERING', help='MCL format clustering file')
+parser.add_argument('fasta', metavar='FASTA', help='Fasta sequences supporting clustering')
+args = parser.parse_args()
 
-print 'Getting sequence index'
-seq_index = SeqIO.index(sys.argv[3], 'fasta')
+if args.out_dir:
+    if not os.path.exists(args.out_dir):
+        os.makedirs(args.out_dir)
+    elif not os.path.isdir(args.out_dir):
+        raise IOError('Output path exists and is not a directory')
 
-print 'Reading clustering'
-tt = ttable.read_mcl(sys.argv[2])
-#tt.print_tally(50)
-#tt.filter_extent(0.01, lengths)
+if args.verbose:
+    print 'Getting sequence index'
+seq_index = SeqIO.index(args.fasta, 'fasta')
+
+if args.verbose:
+    print 'Reading clustering'
+tt = ttable.read_mcl(args.clustering)
 cl2seq = tt.invert()
 
-print 'Collecting sequences for cluster {0}'.format(clid)
-seqs = []
-for si in cl2seq[clid]:
-    seqs.append(seq_index[si])
+if args.cid:
+    cid_list = [].extend(args.cid)
+else:
+    cid_list = [ci for ci in cl2seq]
 
-print 'Writing {0} sequences for cluster {1}'.format(len(seqs), clid)
-if not os.path.exists(sys.argv[4]):
-    os.makedirs(sys.argv[4])
+for ci in cid_list:
 
-SeqIO.write(seqs, os.path.join(sys.argv[4], 'cl{0}.fasta'.format(clid)), 'fasta')
+    if args.verbose:
+        print 'Collecting sequences for cluster {0}'.format(ci)
+
+    seqs = []
+    for si in cl2seq[ci]:
+        seqs.append(seq_index[si])
+
+    if args.verbose:
+        print 'Writing {0} sequences for cluster {1}'.format(len(seqs), ci)
+
+    SeqIO.write(seqs, os.path.join(args.out_dir, 'cl{0}.fasta'.format(ci)), 'fasta')

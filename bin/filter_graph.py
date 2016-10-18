@@ -4,6 +4,7 @@ from Bio.Restriction import *
 import networkx as nx
 import numpy as np
 import argparse
+import sys
 
 RESTRICTION_BATCH = None
 ENZYME = None
@@ -49,12 +50,13 @@ def scale_factor_from_sites(g, u, v):
 
 
 parser = argparse.ArgumentParser(description='Filter and normalise graphml file from raw counts')
+parser.add_argument('--min-length', type=int, help='Minimum sequence length')
 parser.add_argument('--no-isolates', default=False, action='store_true', help='Remove isolated nodes')
 parser.add_argument('--no-self', default=False, action='store_true', help='Remove self-loops')
 parser.add_argument('-w', '--weight', default=0, type=int, help='Threshold raw edge weight to exclude.[0]')
 parser.add_argument('--percentile', default=None, type=float,
                     help='Percentile threshold weight below which to exclude [0..100]')
-parser.add_argument('--cutter-length', default=4, type=int, help='Length of enzyme cut-site')
+parser.add_argument('--cutter-length', type=int, help='Length of enzyme cut-site')
 parser.add_argument('--cutter', help='Restriction enzyme used to product ligation products')
 parser.add_argument('--fasta', help='Fasta file for corresponding node sequences')
 parser.add_argument('graph', help='GraphML format graph file to analyse')
@@ -63,20 +65,32 @@ args = parser.parse_args()
 
 
 if args.cutter:
-    RESTRICTION_BATCH = RestrictionBatch([args.cutter])
-    ENZYME = RestrictionBatch.get(RESTRICTION_BATCH, args.cutter, add=False)
-    if args.cutter_length:
-        print 'Warning: option "cutter-length" is ignored if option "cutter" is supplied'
-    args.cutter_length = ENZYME.size
+    try:
+        RESTRICTION_BATCH = RestrictionBatch([args.cutter])
+        ENZYME = RestrictionBatch.get(RESTRICTION_BATCH, args.cutter, add=False)
+        if args.cutter_length:
+            print 'Warning: option "cutter-length" is ignored if option "cutter" is supplied'
+        args.cutter_length = ENZYME.size
+    except ValueError:
+        print 'Error: failed to find an enzyme named [{0}]'.format(args.cutter)
+        sys.exit(1)
 
 RECIP_CUTFREQ = 1.0 / 4 ** args.cutter_length
 
 g = nx.read_graphml(args.graph)
-print 'Raw graph contained {0} nodes and {1} edges'.format(g.order(), g.size())
+print 'Raw graph contained'
+print nx.info(g)
 
 if args.no_self:
     g.remove_edges_from(g.selfloop_edges())
-    print 'Removed self-loops: {0}/{1}'.format(g.order(), g.size())
+    print 'Removed self-loops'
+    print nx.info(g)
+
+if args.min_length:
+    to_remove = [u for u, d in g.nodes_iter(data=True) if d['length'] > args.min_length]
+    g.remove_nodes_from(to_remove)
+    print 'After removing sequences short than {0} bp'.format(args.min_length)
+    print nx.info(g)
 
 if args.weight > 0:
     to_remove = []
@@ -84,7 +98,8 @@ if args.weight > 0:
         if d['weight'] <= args.weight:
             to_remove.append((u, v))
     g.remove_edges_from(to_remove)
-    print 'After removing edges <= {0} weight: {1}/{2}'.format(args.weight, g.order(), g.size())
+    print 'After removing edges <= {0} weight'.format(args.weight)
+    print nx.info(g)
 
 if args.fasta:
     if not args.cutter:
@@ -101,6 +116,7 @@ if args.fasta:
 
         # nodes with no detected cutsites are removed
         print 'Removing {0} nodes which had no cutsite'.format(len(vacant_nodes))
+        print nx.info(g)
         g.remove_nodes_from(vacant_nodes)
 
 
@@ -116,13 +132,14 @@ for u, v, d in g.edges_iter(data=True):
 if args.percentile:
     weights = np.fromiter((d['weight'] for u, v, d in g.edges_iter(data=True)), dtype=float)
     thres = np.percentile(weights, args.percentile)
-    print 'Thresholding graph at {0}%: {1:.3f}'.format(args.percentile, thres)
+    print 'Thresholding graph at {0}%: {1:.3e}'.format(args.percentile, thres)
     to_remove = []
     for u, v, d in g.edges_iter(data=True):
         if d['weight'] < thres:
             to_remove.append((u, v))
     g.remove_edges_from(to_remove)
-    print 'After thresholding: {0}/{1}'.format(g.order(), g.size())
+    print 'After thresholding'
+    print nx.info(g)
 
 if args.no_isolates:
     to_remove = []
@@ -130,6 +147,7 @@ if args.no_isolates:
         if g.degree(u) == 0:
             to_remove.append(u)
     g.remove_nodes_from(to_remove)
-    print 'After removing isolated nodes: {0}/{1}'.format(g.order(), g.size())
+    print 'After removing isolated nodes'
+    print nx.info(g)
 
 nx.write_graphml(g, args.output)
