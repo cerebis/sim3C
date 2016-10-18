@@ -27,7 +27,6 @@ The workflows depend on the following Python modules, which must be installed pr
 * biopython
 * dendropy
 * intervaltree
-* json
 * networkx
 * numpy
 * pandas
