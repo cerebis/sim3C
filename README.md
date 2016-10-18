@@ -7,6 +7,7 @@ By expressing microbial community composition and the details of metagenomic exp
 ### Prerequisites
 - Nextflow requires Java 7+.
 - Workflows require a *Linux x86-64* runtime environment due to dependence on external statically linked tools.
+- GCC must be installed for Biopython
 
 ### Dependencies
 
