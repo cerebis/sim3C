@@ -7,7 +7,7 @@ Prerequisites
 -------------
 
 ### Nextflow 
-- Requires Java 7+.
+- Presently requires **Oracle** Java 7+. 
 - Workflows require a *Linux x86-64* runtime environment due to dependence on external statically linked tools.
 
 ### Biopython from Pip
