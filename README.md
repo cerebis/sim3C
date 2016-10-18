@@ -48,7 +48,7 @@ sudo yum install python-biopython python-pandas python-yaml python-networkx pyth
 ```
 A more general and complete solution is to use [pip](https://pip.pypa.io/en/stable/). This may result in the upgrading of packages already installed by a distributional package manager (e.g. apt-get, yum) and potentially cause a version conflict for already-installed software dependent on an older python module.
 ```bash
-pip install --upgrade  biopython dendropy intervaltree json networkx numpy pandas python-louvain pysam PyYaml scipy 
+pip install --upgrade  biopython dendropy intervaltree networkx numpy pandas python-louvain pysam PyYaml scipy 
 ```
 
 ### Usage
