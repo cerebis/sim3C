@@ -26,7 +26,7 @@ The [Nextflow](http://www.nextflow.io/) framework, which can be installed easily
 
 ```wget -qO- get.nextflow.io | bash``` or ```curl -fsSL get.nextflow.io | bash```
 
-assuming you have met the prerequisite of installing Java 7+.
+assuming you have met the prerequisite of installing Java 7+. Note, you will need to have ```wget``` or ```curl``` installed depending on your choice above. Whether either is installed by default is dependent on which distribution of Linux you are using.
 
 In addition, meta-sweeper expects that the main executable ```nextflow``` is accessible on the path. Users can move this file to a location already on the path or add its parent directory to the path.
 
