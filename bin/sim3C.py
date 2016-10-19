@@ -194,6 +194,8 @@ class Part:
 class Replicon:
     """Represents a replicon which holds a reference to its containing cell"""
 
+    PART_DESC_FMT = '{0:d}:{1}:{2}'
+
     def __init__(self, name, parent_cell, sequence, cutters):
         self.name = name
         self.parent_cell = parent_cell
@@ -208,7 +210,9 @@ class Replicon:
 
         # initialise CID blocked empirical model
         self.cid_blocks = empirical_model.cids_to_blocks(
-            empirical_model.generate_random_cids(RANDOM_STATE, self.length()))
+            empirical_model.generate_random_cids(RANDOM_STATE, self.length(),
+                                                 genome_shape=MIXED_GEOM_PROB,
+                                                 cid_shape=CID_GEOM_PROB))
 
     def __repr__(self):
         return repr((self.name, self.parent_cell, self.sequence))
@@ -231,15 +235,16 @@ class Replicon:
         :param rev: reverse complement this sequence.
         :return: subseq Seq object
         """
+
         end = start + length
         diff = end - self.length()
         if diff > 0:
             # sequence will wrap around
             ss = self.sequence[start:] + self.sequence[:diff]
-            ss.description = '{0}-{1}:RC={2}'.format(start, diff, rev)
+            ss.description = Replicon.PART_DESC_FMT.format(rev, start, diff)
         else:
             ss = self.sequence[start:end]
-            ss.description = '{0}-{1}:RC={2}'.format(start, end, rev)
+            ss.description = Replicon.PART_DESC_FMT.format(rev, start, end)
 
         if rev:
             ss.reverse_complement(id=True, description=True)
@@ -639,8 +644,6 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Simulate HiC read pairs')
     parser.add_argument('-C', '--compress', choices=['gzip', 'bzip2'], default=None,
                         help='Compress output files')
-    parser.add_argument('--dir-naming', default=False, action='store_true',
-                        help='Encode direction in read-name (fwd/rev)')
     parser.add_argument('--site-dup', default=False, action='store_true',
                         help='HiC style ligation junction site duplication')
     parser.add_argument('-f', '--ofmt', dest='output_format', default='fastq', choices=['fasta', 'fastq'],
@@ -705,6 +708,8 @@ if __name__ == '__main__':
     SHEARING_SD = args.frag_sd
     ANTIDIAG_RATE = args.anti_rate
 
+    SEQ_ID_FMT = 'SIM3C:{seed}:{origin}:1:1:1:{idx}'
+
     #
     # Prepare community abundance profile, either procedurally or from a file
     #
@@ -744,18 +749,6 @@ if __name__ == '__main__':
         # Junction produced in Hi-C prep
         cut_site = get_enzyme_instance(CUTTER_NAME).site
         hic_junction = cut_site + cut_site
-
-        # Control the style of read names employed. We originally appended the direction
-        # or read number (R1=fwd, R2=rev) to the id. This is not what is expected in normal
-        # situations.
-        if args.dir_naming:
-            # original style, encoding direction. This breaks read-pairing convention in normal tools.
-            fwd_fmt = 'frg{0}fwd'
-            rev_fmt = 'frg{0}rev'
-        else:
-            # direction will just be part of the description
-            fwd_fmt = 'frg{0} fwd'
-            rev_fmt = 'frg{0} rev'
 
         frag_lengths = {'a': [], 'b': []}
 
@@ -828,10 +821,16 @@ if __name__ == '__main__':
 
                 # create sequencing read pair for fragment
                 pair = next_pair(str(fragment.seq))
-                read1 = pair['fwd'].read_record(fwd_fmt.format(frag_count),
-                                                desc='{0} {1}'.format(part_a.seq.id, part_a.seq.description))
-                read2 = pair['rev'].read_record(rev_fmt.format(frag_count),
-                                                desc='{0} {1}'.format(part_b.seq.id, part_b.seq.description))
+
+                # emulate Illumina recent naming convention, where we re-purpose fields as follows:
+                #
+                # SIM3C:{RANDOM SEED}:{ORIGIN SEQ}:1:1:1:{INDEX} {R1/2}:N:1 {RECOMP}:{PART_START}:{PART_STOP}
+                #
+                read1 = pair['fwd'].read_record(SEQ_ID_FMT.format(seed=args.seed, origin=part_a.seq.id, idx=frag_count),
+                                                desc='1:N:18:1 {0}'.format(part_a.seq.description))
+
+                read2 = pair['rev'].read_record(SEQ_ID_FMT.format(seed=args.seed, origin=part_b.seq.id, idx=frag_count),
+                                                desc='2:N:18:1 {0}'.format(part_b.seq.description))
 
                 # write to interleaved file
                 write_reads(h_output, [read1, read2], args.output_format, dummy_q=False)
