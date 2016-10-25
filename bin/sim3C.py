@@ -46,9 +46,6 @@ GLOBALS
 
 """
 
-# restriction enzymes used in reaction
-CUTTER_NAME = 'NlaIII'
-
 # Mixed geom/unif model
 MIXED_GEOM_PROB = 6.0e-6
 CID_GEOM_PROB = 8.0e-6
@@ -102,13 +99,14 @@ def get_enzyme_instance(enzyme_name):
 def find_restriction_sites(enzyme_name, seq):
     """
     For supplied enzyme, find all restriction sites in a given sequence
-    returns list of sites.
+    returns list of sites. Note, positions are converted from 1-based to 0-based.
+
     :param enzyme_name: name of enzyme to use in digestion
     :param seq: sequence to digest
     :return: list of genomic coordinates
     """
     en = get_enzyme_instance(enzyme_name)
-    return en.search(seq, linear=False)
+    return np.array(en.search(seq, linear=False)) - 1
 
 
 def find_priming_sites(oligo, seq):
@@ -197,6 +195,13 @@ class Replicon:
     PART_DESC_FMT = '{0:d}:{1}:{2}'
 
     def __init__(self, name, parent_cell, sequence, cutters):
+        """
+        Instantiate a Replicon instance
+        :param name: name of the replicon
+        :param parent_cell: cell to which this replicon belongs
+        :param sequence: DNA sequence of this replicon
+        :param cutters: restriction enzymes used to digest this replicon
+        """
         self.name = name
         self.parent_cell = parent_cell
         self.sequence = sequence
@@ -211,7 +216,7 @@ class Replicon:
         # initialise CID blocked empirical model
         self.cid_blocks = empirical_model.cids_to_blocks(
             empirical_model.generate_random_cids(RANDOM_STATE, self.length(),
-                                                 genome_shape=MIXED_GEOM_PROB,
+                                                 chr_shape=MIXED_GEOM_PROB,
                                                  cid_shape=CID_GEOM_PROB))
 
     def __repr__(self):
@@ -221,9 +226,16 @@ class Replicon:
         return str(self.parent_cell) + '.' + self.name
 
     def length(self):
+        """
+        Length of the replicon's DNA sequence
+        :return:
+        """
         return len(self.sequence)
 
     def is_alone(self):
+        """
+        :return: True if this is the only replicon in a cell.
+        """
         return self.parent_cell.number_replicons() == 1
 
     def subseq(self, start, length, rev=False):
@@ -235,16 +247,15 @@ class Replicon:
         :param rev: reverse complement this sequence.
         :return: subseq Seq object
         """
-
         end = start + length
         diff = end - self.length()
         if diff > 0:
             # sequence will wrap around
             ss = self.sequence[start:] + self.sequence[:diff]
-            ss.description = Replicon.PART_DESC_FMT.format(rev, start, diff)
+            ss.description = Replicon.PART_DESC_FMT.format(rev, start+1, diff)
         else:
             ss = self.sequence[start:end]
-            ss.description = Replicon.PART_DESC_FMT.format(rev, start, end)
+            ss.description = Replicon.PART_DESC_FMT.format(rev, start+1, end)
 
         if rev:
             ss.reverse_complement(id=True, description=True)
@@ -263,8 +274,7 @@ class Replicon:
 
     def nearest_cut_site_above(self, cutter_name, pos):
         """
-        Return the nearest cut-site for enzyme 'cutter_name' relative to the
-        supplied genomic position. Reported positions are always upstream.
+        Return nearest cut-site for enzyme 'cutter_name' right of the supplied genomic position.
 
         :param cutter_name: enzyme name
         :param pos: genomic position
@@ -278,6 +288,12 @@ class Replicon:
             return cs[idx]
 
     def nearest_cut_site_below(self, cutter_name, pos):
+        """
+        Return nearest cut-site for enzyme 'cutter_name' left of the supplied genomic position.
+        :param cutter_name: enzyme
+        :param pos: genomic position
+        :return:
+        """
         cs = self.cut_sites[cutter_name]
         idx = np.searchsorted(cs, pos)
         if idx == 0:
@@ -286,31 +302,38 @@ class Replicon:
             return cs[idx - 1]
 
     def nearest_cut_site_by_distance(self, cutter_name, pos):
-        """Find the nearest restriction cut site for the specified cutter type [4cut, 6cut]
-        returns genomic position of nearest cut site"""
+        """
+        Find the nearest restriction cut site for the specified cutter type [4cut, 6cut]
+        returns genomic position of nearest cut site. Assumes circular DNA for edge cases.
+
+        :param cutter_name: name of restriction enzyme to lookup
+        :param pos: position from which to find the nearest site for enzyme "cutter_name"
+        :return: position of cutsite
+        """
 
         cs = self.cut_sites[cutter_name]
-        idx = np.searchsorted(cs, pos)
+        above = np.searchsorted(cs, pos)
 
-        # edge cases when insertion point between be before or after
-        # beginning or end of linear sequence
-        if idx >= len(cs) - 1:
-            d1 = (idx - 1, pos - cs[-1])
-            d2 = (0, cs[0])
-        elif idx == 0:
-            d1 = (idx - 1, self.length() - cs[-1])
-            d2 = (0, cs[0])
+        if above == len(cs):
+            # pos beyond the last site, so wrap around
+            prev = above - 1
+            return cs[prev if pos - cs[prev] <= self.length() - pos + cs[0] else 0]
+        elif above == 0:
+            # pos before the first site, so wrap around
+            return cs[above if cs[above] - pos <= self.length() - cs[-1] + pos else -1]
         else:
-            d1 = (idx, pos - cs[idx])
-            d2 = (idx + 1, cs[idx + 1] - pos)
+            prev = above - 1
+            return cs[prev if pos - cs[prev] <= cs[above] - pos else above]
 
-        if d2[1] < d1[1]:
-            return cs[d2[0]]
-        else:
-            return cs[d1[0]]
 
     @staticmethod
     def get_loc(emp_dist, origin):
+        """
+        Get a random location from 'origin', following the specified empirical distribution.
+        :param emp_dist: EmpiricalDistribution to draw from
+        :param origin: relative origin from which a location is derived.
+        :return: random position from origin, +ve or -ve in direction
+        """
         delta = int(emp_dist.rand())
         # either +ve/-ve relative to origin
         if RANDOM_STATE.uniform() < 0.5:
@@ -319,6 +342,17 @@ class Replicon:
             return origin + delta
 
     def constrained_location_cids(self, origin):
+        """
+        Get a random location along this replicon's extent, relative to 'origin'.
+
+        In our model, this is constrained by both the traditional experimentally determined HiC/3C
+        relationship with separation and also our modelling of chromosomal interacting domains (CIDs).
+        Whether a CID plays a part is dependent on whether the specified origin falls within a region
+        defined as having a CID.
+
+        :param origin: relative origin
+        :return: another randomly drawn location.
+        """
         block = self.cid_blocks[origin].pop()
         ovl_invs = block.data['inv_list']
         if len(ovl_invs) == 1:
@@ -431,6 +465,14 @@ class Community:
     [replicon name] [cell name] [abundance]
     """
     def __init__(self, inter_rep_prob, spurious_prob, profile, seq_filename, cutters):
+        """
+        Instantiate a Community.
+        :param inter_rep_prob: probability of inter replicon ligation
+        :param spurious_prob: probability of a spurious ligation (noise)
+        :param profile: abundance profile of the community members
+        :param seq_filename: multi-fasta containing the genomic sequences of all community members
+        :param cutters: list of restriction enzymed used in digestion.
+        """
         self.pdf = None
         self.cdf = None
         self.totalRawAbundance = 0
@@ -579,6 +621,13 @@ Fragment creation methods
 
 """
 
+def get_partial_fragment_length():
+    """
+    Return lengths for partial fragments which are half the length of the desired ligation product.
+    :return: length for this portion of ligation fragment
+    """
+    return int(0.5 * RANDOM_STATE.normal(SHEARING_MEAN, SHEARING_SD))
+
 
 def make_unconstrained_part_a():
     """
@@ -589,9 +638,8 @@ def make_unconstrained_part_a():
 
     repl = comm.get_replicon_by_index(comm.pick_replicon())
     pos = repl.random_cut_site(CUTTER_NAME)
-    frag_len = int(RANDOM_STATE.normal(SHEARING_MEAN, SHEARING_SD) / 2)
+    frag_len = get_partial_fragment_length()
     seq = repl.subseq(pos, frag_len)
-
     return Part(seq, pos, pos + frag_len, True, repl)
 
 
@@ -613,7 +661,7 @@ def make_unconstrained_part_b(first_part):
     """
     diff_repl = first_part.replicon.parent_cell.pick_inter_rep(first_part.replicon)
     pos = diff_repl.random_cut_site(CUTTER_NAME)
-    frag_len = int(RANDOM_STATE.normal(SHEARING_MEAN, SHEARING_SD) / 2)
+    frag_len = get_partial_fragment_length()
     seq = diff_repl.subseq(pos, frag_len)
     return Part(seq, pos, pos + frag_len, True, diff_repl)
 
@@ -631,9 +679,10 @@ def make_constrained_part_b(first_part):
         loc = first_part.replicon.length() - loc
 
     pos = first_part.replicon.nearest_cut_site_by_distance(CUTTER_NAME, loc)
-    frag_len = int(RANDOM_STATE.normal(SHEARING_MEAN, SHEARING_SD) / 2)
+    frag_len = get_partial_fragment_length()
     seq = first_part.replicon.subseq(pos, frag_len)
     return Part(seq, pos, pos+frag_len, True, first_part.replicon)
+
 
 
 if __name__ == '__main__':
@@ -642,14 +691,18 @@ if __name__ == '__main__':
     # Commandline interface
     #
     parser = argparse.ArgumentParser(description='Simulate HiC read pairs')
+
     parser.add_argument('-C', '--compress', choices=['gzip', 'bzip2'], default=None,
                         help='Compress output files')
-    parser.add_argument('--site-dup', default=False, action='store_true',
-                        help='HiC style ligation junction site duplication')
+    parser.add_argument('--sample-name', default='SIM3C', help='Sample name used in reads [SIM3C]')
     parser.add_argument('-f', '--ofmt', dest='output_format', default='fastq', choices=['fasta', 'fastq'],
                         help='Output format')
+
     parser.add_argument('-r', '--seed', metavar='INT', type=int, default=int(time.time()),
                         help="Random seed for initialising number generator")
+    parser.add_argument('--site-dup', default=False, action='store_true',
+                        help='HiC style ligation junction site duplication')
+    parser.add_argument('--enzyme', default='NlaIII', help='Restriction enzyme [NlaIII]')
 
     parser.add_argument('-n', '--num-frag', metavar='INT', type=int, required=True,
                         help='Number of Hi-C fragments to generate reads')
@@ -703,12 +756,13 @@ if __name__ == '__main__':
     #
     # Main routine
     #
+    CUTTER_NAME = args.enzyme
     RANDOM_STATE = np.random.RandomState(args.seed)
     SHEARING_MEAN = args.frag_mean
     SHEARING_SD = args.frag_sd
     ANTIDIAG_RATE = args.anti_rate
 
-    SEQ_ID_FMT = 'SIM3C:{seed}:{origin}:1:1:1:{idx}'
+    SEQ_ID_FMT = args.sample_name + ':{seed}:{origin}:1:1:1:{idx}'
 
     #
     # Prepare community abundance profile, either procedurally or from a file
