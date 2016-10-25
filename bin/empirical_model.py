@@ -97,56 +97,72 @@ def _reducer_cid_data(acc, x):
     return {'prob': 0.5*(acc['prob'] + x['prob']), 'empdist': acc['empdist'] + x['empdist']}
 
 
-def generate_random_cids(random_state, genome_length, genome_prob=2.0, genome_bins=1000, genome_shape=8.0e-6,
+def generate_random_cids(random_state, chr_length, chr_prob=0.5, chr_bins=1000, chr_shape=8.0e-6,
                          min_cid_len=20000, max_cid_len=250000, num_cid=10, cid_bins=100, cid_shape=6.0e-6,
                          merge_overlaps=False):
     """
     Generate a random set of CID intervals for a given genome size. Default values have been set for most
     parameters.
 
-    :param random_state:
-    :param genome_length:
-    :param genome_prob:
-    :param genome_bins:
-    :param genome_shape:
-    :param min_cid_len:
-    :param max_cid_len:
-    :param num_cid:
-    :param cid_bins:
-    :param cid_shape:
-    :param merge_overlaps:
-    :return:
+    :param random_state: numpy RandomState to be used for all random number generation
+    :param chr_length: length of chromosome
+    :param chr_prob: probability of chromosome selection
+    :param chr_bins: number of sampling bins used in empirical distribution for chromosome
+    :param chr_shape: geometric distribution shape parameter for chromosome
+    :param min_cid_len: minimum possible size of CIDs
+    :param max_cid_len: maximum possible size of CIDs
+    :param num_cid: number of CIDs to generate for chromosome
+    :param cid_bins: number of sampling bins used in empirical distribution of CID.
+    :param cid_shape: geometric distribution shape parameter for CIDs
+    :param merge_overlaps: if true, overlapping CID are merged. This can result in CID exceeding max_cid_len.
+    :return: an intervaltree representing range of effect of each CID, as well as the full chromosome.
     """
-    # create the list of CID intervals as (cid_begin, cid_length) pairs.
-    data = map(lambda _: (random_state.randint(genome_length),
+
+    # Although most parameters could have an assert, these two are possibly more useful
+    assert chr_prob < 1.0, 'chromosomal probability must be less than 1'
+    assert num_cid > 0, 'number of CIDs must be greater than 0'
+
+    # Create the list of CID intervals as (cid_begin, cid_length) pairs.
+    data = map(lambda _: (random_state.randint(chr_length),
                           random_state.randint(min_cid_len, max_cid_len)), range(num_cid))
 
-    # initialise the interval-tree, where we associate a random probability for each CID interval
-    # where we assume their distributions of the same basic type as the full genome.
-    cid_tree = IntervalTree(Interval(x, x+y,
-                                     {'prob': random_state.uniform(),
-                                      'empdist': EmpiricalDistribution(random_state, y, cid_bins, cdf_geom_unif, shape=cid_shape)}
-                                     ) for x, y in data if y < genome_length)
+    # Draw a set of independent probabilities and normalise these along with chr_prob to 1.
+    # The closer chr_prob is to 1, the greater its precedence and the less role CIDs will
+    # play in determining locations.
+    cid_probs = np.array(random_state.uniform(size=num_cid))
+    cid_probs *= (1.0 - chr_prob) / cid_probs.sum()
+    cid_probs_iter = np.nditer(cid_probs)
 
-    # if requested, simplify the CID tree into non-overlapping regions
+    # Initialise the interval-tree, and associate a random interaction probability for each CID interval.
+    # We assume their distributions are of the same form as the full genome.
+    cid_tree = IntervalTree(Interval(x, x+y,
+                                     {'prob': cid_probs_iter.next(),
+                                      'empdist': EmpiricalDistribution(random_state, y, cid_bins, cdf_geom_unif, shape=cid_shape)}
+                                     ) for x, y in data if y < chr_length)
+
+    # If requested, simplify the CID tree into non-overlapping regions
     if merge_overlaps:
         cid_tree.merge_overlaps(data_reducer=_reducer_cid_data)
 
-    # add the interval governing the whole genome -- call it the genome-wide CID. mother of all CID? heh
-    cid_tree[0:genome_length] = {'prob': genome_prob,
-                                 'empdist': EmpiricalDistribution(random_state, genome_length, genome_bins,
-                                                                  cdf_geom_unif, shape=genome_shape)}
+    # Add the interval governing the whole genome -- call it the genome-wide CID. mother of all CID? heh
+    cid_tree[0:chr_length] = {'prob': chr_prob,
+                                 'empdist': EmpiricalDistribution(random_state, chr_length, chr_bins,
+                                                                  cdf_geom_unif, shape=chr_shape)}
 
     return cid_tree
 
 
 def cids_to_blocks(cid_tree):
     """
-    From CID IntervalTree, create a new IntervalTree where now a interval represents a region of constant
-    effect. That is, each resulting interval describes range where a constant set of CIDs are involved. Blocks
-    do not overlap, but are perfectly adjacent. (zero spacing)
-    :param cid_tree: an intervaltree of representing genomic intervals with CIDs
-    :return: a blocked CID intervaltree.
+    Using an IntervalTree as returned by generate_random_cids(), create a new IntervalTree where now the
+    intervals represent regions (blocks) of homogeneous effect. That is, each resulting interval defines a
+    region where a fixed set of CIDs are involved.
+
+    Blocks, therefore, do not overlap but are instead perfectly adjacent (zero spacing). For a given block
+    the independent CID probabilities are normalized to sum to 1, in preparation of selection by random draw.
+
+    :param cid_tree: an IntervalTree representing CIDs and the chromsome.
+    :return: an IntervalTree of the homogeneous blocks for this set of CID.
     """
 
     # Get all the begin and end points in ascending order.
@@ -161,9 +177,11 @@ def cids_to_blocks(cid_tree):
     block_tree = IntervalTree()
     for i in xrange(len(x)-1):
         ovl_invs = sorted(cid_tree[x[i]:x[i+1]])  # the CIDs involved in this range
+
         # normalize probs for the block.
         p = np.fromiter((inv.data['prob'] for inv in ovl_invs), dtype=float)
         p /= p.sum()
+
         # a block stores the normalized probabilities and originating CID intervals for quick lookup.
         block_tree[x[i]:x[i+1]] = {'prob_list': p, 'inv_list': ovl_invs}
 
