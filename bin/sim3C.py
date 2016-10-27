@@ -216,6 +216,7 @@ class Replicon:
         # initialise CID blocked empirical model
         self.cid_blocks = empirical_model.cids_to_blocks(
             empirical_model.generate_random_cids(RANDOM_STATE, self.length(),
+                                                 chr_prob=BACKBONE_PROB,
                                                  chr_shape=MIXED_GEOM_PROB,
                                                  cid_shape=CID_GEOM_PROB))
 
@@ -719,6 +720,8 @@ if __name__ == '__main__':
 
     parser.add_argument('--anti-rate', metavar='FLOAT', type=float, default=0.2,
                         help='Rate of anti-diagonal fragments')
+    parser.add_argument('--backbone-prob', metavar='FLOAT', type=float, default=0.333,
+                        help='Probability of regular chromosomal interaction, rather than CID')
     parser.add_argument('--inter-prob', dest='inter_prob', metavar='FLOAT', type=float, default=0.9,
                         help='Probability that a fragment spans two replicons within a single genome [0.9]')
     parser.add_argument('--spurious-prob', dest='spur_prob', metavar='FLOAT', type=float, default=0.01,
@@ -761,6 +764,7 @@ if __name__ == '__main__':
     SHEARING_MEAN = args.frag_mean
     SHEARING_SD = args.frag_sd
     ANTIDIAG_RATE = args.anti_rate
+    BACKBONE_PROB = args.backbone_prob
 
     SEQ_ID_FMT = args.sample_name + ':{seed}:{origin}:1:1:1:{idx}'
 
