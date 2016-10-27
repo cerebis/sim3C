@@ -69,13 +69,13 @@ pip install --upgrade -r requirements.txt
 
 Before running a meta-sweeper workflow, you must initialise the shell environment. 
 
-1. Set meta-sweepers home to your installed location. 
-  - If meta-sweeper was installed in /home/user/meta-sweeper. 
+1. Set meta-sweepers home to your installed location.
+  - If meta-sweeper was installed in /home/user/meta-sweeper.\s\s
   ```export METASWEEPER_HOME=/home/user/meta-sweeper```
-2. Append the meta-sweeper home patht to nextflow's classpath. 
+2. Append the meta-sweeper home patht to nextflow's classpath.\s\s
   ```export NXF_CLASSPATH=$NXF_CLASSPATH:$METASWEEPER_HOME```
 3. Check that nextflow is installed and has been added to the path.
-  - Either of the following should return the canonical path to the nextflow executable.
+  - Either of the following should return the canonical path to the nextflow executable.\s\s
   ```command -v nextflow``` or ```which nextflow``` 
 
 We have provided a Bash script which will automate this process. It can be invoked as follows.
@@ -115,6 +115,8 @@ Submit to a PBS queue manager.
 ```bash
 nextflow run hic-sweep.nf --profile pbs
 ```
+
+* * *
 
 [Darling Lab](http://darlinglab.org/)
 
