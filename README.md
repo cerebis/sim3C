@@ -65,6 +65,23 @@ pip install --upgrade -r requirements.txt
 
 ### Usage
 
+**Environmental Configuration**
+
+Before running a meta-sweeper workflow, you must initialise the shell environment. 
+
+1. Set meta-sweepers home to your installed location. 
+  - e.g. If meta-sweeper was installed in /home/user/meta-sweeper. ```export METASWEEPER_HOME=/home/user/meta-sweeper```
+2. Append the meta-sweeper home patht to nextflow's classpath. 
+  - e.g. ```export NXF_CLASSPATH=$NXF_CLASSPATH:$METASWEEPER_HOME```
+3. Check that nextflow is installed and has been added to the path.
+  - e.g. ```command -v nextflow``` or ```which nextflow``` should return the canonical path to the nextflow executable.
+
+We have provided a Bash script which will automate this process. It can be invoked as follows.
+
+```bash
+. bash_configure
+```
+
 We recommend users start sweeps using the ```meta-sweeper.sh``` launch script. It is the easiest way to start meta-sweeper, providing a tiny bit of boiler plate to the subordinate workflows. Namely, it obtains the installed path of meta-sweeper and checks that nextflow exists on the path. 
 
 How parameters are varied over the sweep are defined in a Nextflow configuration file. An example ```sweep.config``` along with supporting files in ```test``` has been provided.
