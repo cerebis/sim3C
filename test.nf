@@ -33,9 +33,11 @@ gen_in = ms.createSweep()
 
 ms.describeSweep('Tree Generation')
 
+
+
 // a newick tree is generated for each seed and clade def.
 process TreeGen {
-    publishDir params.output, mode: 'copy', overwrite: 'true'
+    publishDir ms.options.output, mode: 'copy', overwrite: 'true'
 
     input:
     set key, seed, clade from gen_in
@@ -72,7 +74,7 @@ ms.describeSweep('Evolve Clades')
 
 // sequences are produced for all taxa in the clade
 process Evolve {
-    publishDir params.output, mode: 'copy', overwrite: 'true'
+    publishDir ms.options.output, mode: 'copy', overwrite: 'true'
 
     input:
     set key, tree_file, seed, clade, alpha from evo_in
@@ -113,7 +115,7 @@ prof_in = prof_in.map{[it[0], it[1].value]}
 
 // generate an abundance profile for each clade
 process ProfileGen {
-    publishDir params.output, mode: 'copy', overwrite: 'true'
+    publishDir ms.options.output, mode: 'copy', overwrite: 'true'
 
     input:
     set key, file('clade_seq') from prof_in
@@ -150,7 +152,7 @@ merge_prof_in = merge_prof_in.groupBy{ it[0].selectedKey('seed','alpha') }
 
 // merge the clade profiles together
 process ProfileMerge {
-    publishDir params.output, mode: 'copy', overwrite: 'true'
+    publishDir ms.options.output, mode: 'copy', overwrite: 'true'
 
     input:
     set key, file('clade_profile') from merge_prof_in
@@ -182,7 +184,7 @@ merge_seq_in = merge_seq_in.groupBy{ it[0].selectedKey('seed','alpha') }
 
 // the sequences for all clades are concatenated together
 process MergeClades {
-    publishDir params.output, mode: 'copy', overwrite: 'true'
+    publishDir ms.options.output, mode: 'copy', overwrite: 'true'
 
     input:
     set key, file('clade_seq') from merge_seq_in
@@ -221,7 +223,7 @@ ms.describeSweep('WGS Read Generation')
 
 // from community sequences, generate simulated WGS reads
 process WGS_Reads {
-    publishDir params.output, mode: 'copy', overwrite: 'true'
+    publishDir ms.options.output, mode: 'copy', overwrite: 'true'
 
     input:
     set key, file(comm_seq), file(comm_prof), xfold from wgs_in
@@ -270,7 +272,7 @@ ms.describeSweep('HiC Read Generation')
 
 // from community sequences, generate 3C sequence
 process HIC_Reads {
-    publishDir params.output, mode: 'copy', overwrite: 'true'
+    publishDir ms.options.output, mode: 'copy', overwrite: 'true'
 
     input:
     set key, file(comm_seq), file(comm_prof), n3c from hic_in
@@ -305,7 +307,7 @@ asm_in = asm_in.map{[it[0], it[1].value, it[2].value, it[3]]}
 
 // assemble each metagenome
 process Assemble {
-    publishDir params.output, mode: 'copy', overwrite: 'true'
+    publishDir ms.options.output, mode: 'copy', overwrite: 'true'
 
     input:
     set key, file(reads1), file(reads2), file(comm_seq) from asm_in
@@ -339,7 +341,7 @@ truth_in = truth_in.map{ [it[0], it[1].value, it[4]] }
 
 // generate ground-truth tables by aligning assembly contigs to community references
 process Truth {
-    publishDir params.output, mode: 'copy', overwrite: 'true'
+    publishDir ms.options.output, mode: 'copy', overwrite: 'true'
 
     input:
     set key, file(contigs), file(comm_seq) from truth_in
@@ -381,7 +383,7 @@ hicmap_in = ms.sweep.joinChannels(hic_out, hicmap_in, 2)
 
 // map 3C reads to assembly contigs
 process HiCMap {
-    publishDir params.output, mode: 'copy', overwrite: 'true'
+    publishDir ms.options.output, mode: 'copy', overwrite: 'true'
 
     input:
     set key, file(hic_reads), file(contigs) from hicmap_in
@@ -422,7 +424,7 @@ graph_in = graph_in.map{[it[0], it[1].value, it[2], it[3]]}
 // contig graphs are generated from 3C mappings
 process Graph {
 
-    publishDir params.output, mode: 'copy', overwrite: 'true'
+    publishDir ms.options.output, mode: 'copy', overwrite: 'true'
 
     input:
     set key, file(hic2ctg), file(hic_reads), file(contigs) from graph_in
@@ -458,7 +460,7 @@ wgsmap_in = wgsmap_in.map{ [it[0], it[1].value, it[2], it[3]]}
 
 // map WGS reads to contigs
 process WGSMap {
-    publishDir params.output, mode: 'copy', overwrite: 'true'
+    publishDir ms.options.output, mode: 'copy', overwrite: 'true'
 
     input:
     set key, file(contigs), file(reads1), file(reads2) from wgsmap_in
@@ -495,7 +497,7 @@ cov_in = cov_in.map{[it[0], it[1].value, it[2]]}
 
 // depth inferred from WGS2CTG mapping
 process InferReadDepth {
-    publishDir params.output, mode: 'copy', overwrite: 'true'
+    publishDir ms.options.output, mode: 'copy', overwrite: 'true'
 
     input:
     set key, file(wgs2ctg), file(contigs) from cov_in
