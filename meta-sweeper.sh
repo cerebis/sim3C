@@ -37,7 +37,7 @@ function canonical_path () {
 # Set the location of meta-sweeper
 script_path=`canonical_path $0`
 export METASWEEPER_HOME=${script_path%/*}
-export NXF_CLASSPATH=$METASWEEPER_HOME
+export NXF_CLASSPATH=$METASWEEPER_HOME:$NXF_CLASSPATH
 
 # Nextflow should be on path
 test_exists "nextflow"
