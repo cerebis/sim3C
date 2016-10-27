@@ -1,6 +1,6 @@
 #!/usr/bin/env python
-import networkx as nx
 import community as com
+import networkx as nx
 import numpy as np
 
 
@@ -30,44 +30,58 @@ def decompose_graph(g):
     return decomposed
 
 
-def cluster(g, no_iso, method='simple', levels=1, ragbag=False):
+def cluster(g, no_iso, method='simple', ragbag=False, verbose=False):
 
-    # remove isolated nodes
+    ragbag_group = None
+    singletons = None
+
+    # if we need them, determine singleton nodes, but don't count self-loops (which networkx does)
+    if no_iso or ragbag:
+        # this is a memory costly approach.
+        g_nsl = g.copy()
+        g_nsl.remove_edges_from(g_nsl.selfloop_edges())
+        singletons = nx.isolates(g_nsl)
+        g_nsl.clear()
+
+    # remove isolated nodes and forget about em
     if no_iso:
-        singletons = nx.isolates(g)
         print 'Removed {0} isolated nodes from graph'.format(len(singletons))
         g.remove_nodes_from(singletons)
         print_info(g)
 
+    # put them in a ragbag instead
     elif ragbag:
-        singletons = nx.isolates(g)
         print 'Ragbag cluster will cotnain {0} nodes'.format(len(singletons))
+        g.remove_nodes_from(singletons)
         ragbag_group = dict((n, 1.0) for n in singletons)
-
-    gi = g
-    for lv_i in xrange(levels):
-        subgraphs = list(nx.connected_component_subgraphs(gi))
-        print 'For decomposition level {0}, the graph comprises {0} connected components'.format(lv_i, len(subgraphs))
-
-        print 'Components with more than one node:'
-        for n, sg in enumerate(subgraphs, start=1):
-            if sg.order() > 1:
-                print '\tcomponent {0}: {1} nodes {2} edges'.format(n, sg.order(), sg.size())
-
+        print_info(g)
 
     # determine the best partitioning of g
+    print 'Determining best partitioning'
     partitions = com.best_partition(g)
 
     # build a dictionary of classification from the partitioning result
     # this is effectively a hard clustering answer to the problem
     com_ids = set(partitions.values())
     print 'There were {0} communities in decomposition'.format(len(com_ids))
-    print 'Communities with more than one node:'
+
+    print 'Inverting partition map'
+    revpart = {}
+    for ni, ci in partitions.iteritems():
+        revpart.setdefault(ci, []).append((ni, 1.0))
+
+    if verbose:
+        print 'Communities with more than one node:'
+
+    # dict of communities
     communities = {}
     for ci in com_ids:
-        communities[ci] = dict((n, 1.0) for n, cj in partitions.iteritems() if cj == ci)
-        if len(communities[ci]) > 1:
+        communities[ci] = dict(revpart[ci])
+        if verbose and len(communities[ci]) > 1:
             print '\tcommunity {0}: {1} nodes'.format(ci, len(communities[ci]))
+
+    # bit o memory conservation
+    revpart.clear()
 
     if method == 'maxaff':
         for u in g.nodes_iter():
@@ -123,25 +137,6 @@ def write_mcl(communities, path):
             hout.write('\n')
 
 
-def plot_graph(part, g):
-    import matplotlib.pyplot as plt
-    from palettable.colorbrewer.qualitative import Paired_12, Set3_12
-    # use 24 colours for plotting partitions.
-    color_list = Paired_12.mpl_colors + Set3_12.mpl_colors
-    ncol = len(color_list)
-
-    layouts = [nx.graphviz_layout, nx.spring_layout]
-
-    for i in xrange(2):
-        pos = layouts[i](g)
-        plt.subplot(121 + i)
-        for n, com in enumerate(set(part.values())):
-            list_nodes = [nodes for nodes in part.keys() if part[nodes] == com]
-            nx.draw_networkx_nodes(g, pos, list_nodes, node_size=30, node_color=color_list[n % ncol], alpha=1.0)
-        nx.draw_networkx_edges(g, pos, alpha=0.5)
-    plt.show()
-
-
 def write_output(communities, filename, ofmt='mcl'):
     if ofmt == 'mcl':
         write_mcl(communities, filename)
@@ -161,20 +156,22 @@ if __name__ == '__main__':
     import argparse
 
     parser = argparse.ArgumentParser(description='Decompose a graph into its communities')
+    parser.add_argument('-v', '--verbose', action='store_true', default=False, help='Verbose output')
     parser.add_argument('--no-isolates', action='store_true', default=False, help='Remove isolated nodes')
     parser.add_argument('--otype', choices=['hard', 'soft', 'maxaff'], default='soft', help='Output type')
     parser.add_argument('--ofmt', choices=['mcl', 'graphml'], default='mcl', help='Specify output format [mcl]')
     parser.add_argument('--ragbag', action='store_true', default=False,
                         help='Place isolates in a single ragbag cluster')
-    parser.add_argument('input', nargs=1, help='Input graph (graphml format)')
-    parser.add_argument('output', nargs=1, help='Output file')
+    parser.add_argument('input', help='Input graph (graphml format)')
+    parser.add_argument('output', help='Output file')
     args = parser.parse_args()
 
     if args.otype == 'induced':
         raise RuntimeError('induced option no longer supported')
 
-    g = nx.read_graphml(args.input[0])
+    g = nx.read_graphml(args.input)
     print 'Initial statistics'
+
     print_info(g)
 
     if args.otype == 'soft':
@@ -184,7 +181,6 @@ if __name__ == '__main__':
     else:
         method = None
 
-    communities = cluster(g, args.no_isolates, method=method, levels=1, ragbag=args.ragbag)
+    communities = cluster(g, args.no_isolates, method=method, ragbag=args.ragbag, verbose=args.verbose)
 
-    write_output(communities, args.output[0], args.ofmt)
-
+    write_output(communities, args.output, args.ofmt)

@@ -1,4 +1,3 @@
-#!/bin/bash
 # meta-sweeper - for performing parametric sweeps of simulated
 # metagenomic sequencing experiments.
 # Copyright (C) 2016 "Matthew Z DeMaere"
@@ -17,7 +16,9 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 function test_exists () {
-    command -v $1 >/dev/null 2>&1 || { echo >&2 "Required tool \"$1\" was not on path.  Aborting."; exit 1; }
+    command -v $1 >/dev/null 2>&1 \
+        && { echo "$1 was found."; return 1; } \
+        || { echo >&2 "$1 was not found on path."; return 0; }
 }
 
 function canonical_path () {
@@ -30,17 +31,34 @@ function canonical_path () {
     fi
 }
 
+echo "Setting up meta-sweeper environment variables"
+
+# Nextflow should be installed and on system PATH
+printf "Checking for nextflow: "
+if test_exists "nextflow"
+then
+    echo "Please refer to README.md for installation instructions."
+fi
+
 #
 # Extract the location of this script to determine the full path
 # for meta-sweeper home. This will be set as METASWEEPER_HOME.
 #
+
 # Set the location of meta-sweeper
-script_path=`canonical_path $0`
-export METASWEEPER_HOME=${script_path%/*}
-export NXF_CLASSPATH=$METASWEEPER_HOME:$NXF_CLASSPATH
+script_path=`canonical_path $BASH_SOURCE`
+ms_home=${script_path%/*}
+echo "Inferring meta-sweeper installation directory from: $script_path"
 
-# Nextflow should be on path
-test_exists "nextflow"
+echo "Setting METASWEEPER_HOME=$ms_home"
+export METASWEEPER_HOME=$ms_home
 
-# Invoke nextflow, passing additional arguments from cmdline
-nextflow $@
+echo "Adding metasweeper dependencies to Nextflow class path"
+if [ -z "$NXF_CLASSPATH" ]
+then
+    NXF_CLASSPATH=$ms_home
+elif [[ ":$NXF_CLASSPATH:" != *":$ms_home:"* ]]
+then
+    NXF_CLASSPATH=$ms_home:$NXF_CLASSPATH
+fi
+export NXF_CLASSPATH

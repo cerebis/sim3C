@@ -16,10 +16,11 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """
-import json
-import yaml
-import gzip
 import bz2
+import gzip
+import json
+
+import yaml
 
 # default buffer for incremental read/write
 DEF_BUFFER = 16384

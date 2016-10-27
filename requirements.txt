@@ -1,0 +1,19 @@
+# pip requirements for meta-sweeper
+#
+# To use: pip install --upgrade -r requirements.txt
+#
+
+# Biopython installation requires GCC and python libraries and headers. See README.md
+biopython
+
+# Pysam requires library and headers for zlib. See README.md
+pysam
+
+dendropy
+intervaltree
+networkx
+numpy >= 1.9.0
+pandas
+python-louvain
+PyYaml
+scipy

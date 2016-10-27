@@ -19,7 +19,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """
 import argparse
 
-import numpy
+import numpy as np
 from Bio import SeqIO
 
 import abundance
@@ -40,9 +40,9 @@ if __name__ == '__main__':
     RANDOM_STATE = None
     if args.dist != 'equal' and not args.seed:
         print 'Warning: not specifying a seed makes repeatability difficult!'
-        RANDOM_STATE = numpy.random.RandomState()
+        RANDOM_STATE = np.random.RandomState()
     else:
-        RANDOM_STATE = numpy.random.RandomState(args.seed)
+        RANDOM_STATE = np.random.RandomState(args.seed)
 
     seq_index = None
     try:
