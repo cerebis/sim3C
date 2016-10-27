@@ -71,44 +71,49 @@ Before running a meta-sweeper workflow, you must initialise the shell environmen
 
 1. Set meta-sweepers home to your installed location. 
   - If meta-sweeper was installed in /home/user/meta-sweeper. 
-  - e.g. ```export METASWEEPER_HOME=/home/user/meta-sweeper```
+  ```export METASWEEPER_HOME=/home/user/meta-sweeper```
 2. Append the meta-sweeper home patht to nextflow's classpath. 
-  - e.g. ```export NXF_CLASSPATH=$NXF_CLASSPATH:$METASWEEPER_HOME```
+  ```export NXF_CLASSPATH=$NXF_CLASSPATH:$METASWEEPER_HOME```
 3. Check that nextflow is installed and has been added to the path.
   - Either of the following should return the canonical path to the nextflow executable.
-  - e.g. ```command -v nextflow``` or ```which nextflow``` 
+  ```command -v nextflow``` or ```which nextflow``` 
 
 We have provided a Bash script which will automate this process. It can be invoked as follows.
 
 ```bash
 . bash_configure
 ```
+**Sweep Invocation**
 
-We recommend users start sweeps using the ```meta-sweeper.sh``` launch script. It is the easiest way to start meta-sweeper, providing a tiny bit of boiler plate to the subordinate workflows. Namely, it obtains the installed path of meta-sweeper and checks that nextflow exists on the path. 
+After initialisation, users may start sweeps using standard Nextflow invocation syntax.
 
-How parameters are varied over the sweep are defined in a Nextflow configuration file. An example ```sweep.config``` along with supporting files in ```test``` has been provided.
+A sweep is defined in the ```sweep.yaml``` configuration file, which employs YAML syntax. An example, along with supporting files in ```test```, has been provided.
 
 #### Local execution
 
 Using regular local processes.
 ```bash
-meta-sweeper.sh -c sweep.config run hic-sweep.nf
+nextflow run hic-sweep.nf
 ```
 
 **Note:** the nature of mixing concurrency and potentially resource hungry processes (such as genome assembly) can mean that a basic local execution strategy may result in resource stravation and subsequently premature program termination. It is recommended that, in the long run, it is worthwhile for users to configure a [Nextflow supported distributed resource manager (DRM)](https://www.nextflow.io/docs/latest/executor.html) such as SGE, SLURM, etc. to take responsibility for managing available local resources.
 
 #### Distributed execution
 
-With Nextflow it is easy to submit the work to a grid architecture. For Meta-sweeper, these details are organised as execution profiles in the file named ```execution.config```. We have defined a few examples which may work out of the box on your system.
+With Nextflow, it is easy to submit work to a grid architecture. The specifics of such runtime environments can vary and therefore associated configuration detail can be encapsulated in Nextflow [config profiles](https://www.nextflow.io/docs/latest/config.html#config-profiles). We have provided a few simple examples of such profiles in the default nextflow configuration file ```nextflow.config```. This file is automatically sourced by nextflow at invocation time, so long as it the user does not override the behaviour by using Nextflow's ```-C``` *(capital C)* [command-line option](https://www.nextflow.io/docs/latest/config.html#configuration-file).
 
-SGE execution, where the target queue is ```all.q```.
+**Submission Examples for meta-sweeper**
+
+Submit to SGE queue manager.
+
 ```bash
-meta-sweeper.sh -c sweep.config run hic-sweep.nf --profile sge
+nextflow run hic-sweep.nf --profile sge
 ```
 
-PBS execution, where the target queue is ```batch```.
+Submit to a PBS queue manager.
+
 ```bash
-meta-sweeper.sh -c sweep.config run hic-sweep.nf --profile pbs
+nextflow run hic-sweep.nf --profile pbs
 ```
 
 [Darling Lab](http://darlinglab.org/)
