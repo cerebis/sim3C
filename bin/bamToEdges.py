@@ -108,7 +108,7 @@ if __name__ == '__main__':
     parser.add_argument('--sim', default=False, action='store_true', help='Hi-C simulation read names')
 
     parser.add_argument('--minlen', type=int, required=False, default=0,
-                        help='Minimum length in bp (1000)')
+                        help='Minimum length in bp [0]')
     parser.add_argument('--mapq', default=0, type=int, help='Minimum mapping quality [0]')
     parser.add_argument('--strong', default=None, type=int,
                         help='Accept only mapped reads with no disagreements only clipping')
