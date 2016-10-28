@@ -33,8 +33,6 @@ gen_in = ms.createSweep()
 
 ms.describeSweep('Tree Generation')
 
-
-
 // a newick tree is generated for each seed and clade def.
 process TreeGen {
     publishDir ms.options.output, mode: 'copy', overwrite: 'true'
