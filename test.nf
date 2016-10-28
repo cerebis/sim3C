@@ -284,13 +284,13 @@ process HIC_Reads {
     if (params.debug) {
         """
         echo "sim3C.py -C gzip -r ${key['seed']} -n $n3c -l ${ms.options['n3c']['read_len']} \
-            -p ${ms.options['n3c']['inter_prob']} --profile $comm_prof $comm_seq ${key}.hic.fa.gz" > ${key}.hic.fa.gz
+            --inter-prob ${ms.options['n3c']['inter_prob']} --profile $comm_prof $comm_seq ${key}.hic.fa.gz" > ${key}.hic.fa.gz
         """
     }
     else {
         """
         sim3C.py -C gzip -r ${key['seed']} -n $n3c -l ${ms.options['n3c']['read_len']} \
-            -p ${ms.options['n3c']['inter_prob']} --profile $comm_prof $comm_seq "${key}.hic.fa.gz"
+            --inter-prob ${ms.options['n3c']['inter_prob']} --profile $comm_prof $comm_seq "${key}.hic.fa.gz"
         wait_on_openfile.sh ${key}.hic.fa.gz
         """
     }
@@ -444,7 +444,7 @@ process Graph {
         then
             samtools index $hic2ctg
         fi
-        bamToEdges_mod2.py --sim --afmt bam --strong 150 --graphml "${key}.graphml" --merged $hic2ctg hic2ctg.e hic2ctg.n
+        bamToEdges.py --strong 150 --preserve-zerodeg --merged $hic2ctg -o ${key}
         """
     }
 }
