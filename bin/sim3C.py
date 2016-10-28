@@ -740,10 +740,8 @@ if __name__ == '__main__':
                         help='Log-normal relative abundance sigma parameter')
 
     parser.add_argument('--no-read-errors', default=False, action='store_true', help='Simulate sequencing errors')
-    parser.add_argument('--read-profile1', help='ART sequencer profile for R1',
-                        default='external/art/Illumina_profiles/EmpMiSeq250R1.txt')
-    parser.add_argument('--read-profile2', help='ART sequencer profile for R2',
-                        default='external/art/Illumina_profiles/EmpMiSeq250R1.txt')
+    parser.add_argument('--read-profile', help='The name of an ART sequencing machine profile [EmpMiSeq250]',
+                        default='EmpMiSeq250', choices=Art.ILLUMINA_PROFILES.keys())
     parser.add_argument('--ins-rate', type=float, default=0.00009, help='Insert rate')
     parser.add_argument('--del-rate', type=float, default=0.00011, help='Deletion rate')
 
@@ -820,7 +818,7 @@ if __name__ == '__main__':
 
             # initialise ART
             art = Art.Art(args.read_length,
-                          Art.EmpDist(args.read_profile1, args.read_profile2),
+                          Art.EmpDist.create(args.read_profile),
                           args.ins_rate, args.del_rate, seed=args.seed)
 
             # set the method used to generate reads

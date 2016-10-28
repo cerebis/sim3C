@@ -18,6 +18,7 @@ You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """
 import string
+import os
 
 import numpy as np
 import scipy.stats as st
@@ -37,6 +38,60 @@ def _clear_list(l):
     del l[:]
 
 
+# path of this (Art.py) source file. It is expected that profiles are co-located with Art.
+MODULE_PATH = os.path.dirname(os.path.abspath(__file__))
+
+# A catalog of empirical profiles for Illumina machine types.
+ILLUMINA_PROFILES = {
+    'Emp100': ('Illumina_profiles/Emp100R1.txt',
+               'Illumina_profiles/Emp100R2.txt'),
+    'Emp36':('Illumina_profiles/Emp36R1.txt',
+             'Illumina_profiles/Emp36R2.txt'),
+    'Emp44': ('Illumina_profiles/Emp44R1.txt',
+              'Illumina_profiles/Emp44R2.txt'),
+    'Emp50': ('Illumina_profiles/Emp50R1.txt',
+              'Illumina_profiles/Emp50R2.txt'),
+    'Emp75': ('Illumina_profiles/Emp75R1.txt',
+              'Illumina_profiles/Emp75R2.txt'),
+    'EmpMiSeq250': ('Illumina_profiles/EmpMiSeq250R1.txt',
+                    'Illumina_profiles/EmpMiSeq250R2.txt'),
+    'EmpR36': ('Illumina_profiles/EmpR36R1.txt',
+               'Illumina_profiles/EmpR36R2.txt'),
+    'EmpR44': ('Illumina_profiles/EmpR44R1.txt',
+               'Illumina_profiles/EmpR44R2.txt'),
+    'EmpR50': ('Illumina_profiles/EmpR50R1.txt',
+               'Illumina_profiles/EmpR50R2.txt'),
+    'EmpR75': ('Illumina_profiles/EmpR75R1.txt',
+               'Illumina_profiles/EmpR75R2.txt'),
+    'HiSeq2500L125': ('Illumina_profiles/HiSeq2500L125R1.txt',
+                      'Illumina_profiles/HiSeq2500L125R2.txt'),
+    'HiSeq2500L150': ('Illumina_profiles/HiSeq2500L150R1.txt',
+                      'Illumina_profiles/HiSeq2500L150R2.txt'),
+    'HiSeq2500L150filt': ('Illumina_profiles/HiSeq2500L150R1filter.txt',
+                          'Illumina_profiles/HiSeq2500L150R2filter.txt'),
+    'HiSeq2kL100': ('Illumina_profiles/HiSeq2kL100R1.txt',
+                    'Illumina_profiles/HiSeq2kL100R2.txt'),
+    'HiSeqXPCRfreeL150': ('Illumina_profiles/HiSeqXPCRfreeL150R1.txt',
+                          'Illumina_profiles/HiSeqXPCRfreeL150R2.txt'),
+    'HiSeqXtruSeqL150': ('Illumina_profiles/HiSeqXtruSeqL150R1.txt',
+                         'Illumina_profiles/HiSeqXtruSeqL150R2.txt'),
+    'MiSeqv3L250': ('Illumina_profiles/MiSeqv3L250R1.txt',
+                    'Illumina_profiles/MiSeqv3L250R2.txt'),
+    'NextSeq500v2L75': ('Illumina_profiles/NextSeq500v2L75R1.txt',
+                        'Illumina_profiles/NextSeq500v2L75R2.txt')
+}
+
+def get_profile(name):
+    """
+    Return the absolute path to a requested Illumina profile.
+    :param name: the name of the profile.
+    :return: absolute (full) path
+    """
+    assert name in ILLUMINA_PROFILES, 'Unknown profile name. Try one of: {0}'.format(
+        ', '.join(ILLUMINA_PROFILES.keys()))
+
+    return map(lambda pi: os.path.join(MODULE_PATH, pi), ILLUMINA_PROFILES[name])
+
 class EmpDist:
 
     FIRST = True
@@ -55,6 +110,17 @@ class EmpDist:
     # lookup table of probability indexed by quality score
     PROB_ERR = np.apply_along_axis(
         lambda xi: 10.**(-xi/10.), 0, np.arange(HIGHEST_QUAL)).tolist()
+
+    @staticmethod
+    def create(name, sep_quals=False):
+        """
+        Instantiate a EmpDist with the specified profile name.
+        :param name: empirically derived machine profile
+        :param sep_quals: independent quality model per base (A,C,G,T)
+        :return: instance of EmpDist
+        """
+        profile_r1, profile_r2 = get_profile(name)
+        return EmpDist(profile_r1, profile_r2, sep_quals)
 
     def __init__(self, fname_first, fname_second, sep_quals=False):
         """
