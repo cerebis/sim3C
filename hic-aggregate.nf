@@ -23,7 +23,8 @@ import MetaSweeper
 
 
 import groovyx.gpars.dataflow.DataflowQueue
-import java.util.regex.Pattern
+import org.yaml.snakeyaml.Yaml
+import org.yaml.snakeyaml.DumperOptionsimport java.util.regex.Pattern
 import groovy.json.JsonSlurper
 import groovy.json.JsonBuilder
 import static Globals.*
@@ -111,18 +112,18 @@ process Aggregate {
     """
 }
 
-/*
-def slurper = new JsonSlurper()
-
-def sweep_labels = ['ancestor','donor','alpha_BL','tree','profile','xfold','n3c']
+// Write results to file
+DumperOptions options = new DumperOptions();
+options.setWidth(1024)def yaml = new Yaml(options)
+def sweep_labels = ['seed', 'alpha_BL', 'xfold', 'n3c']
 
 all_stats = all_stats
-    .map { t -> [ t[0], [sweep_labels, t[1].split(SEPARATOR)].transpose().collectEntries{ k, v -> [k, v] }, t[2] ] }
-    .map { t -> t[1]['algo']=t[0]; t[1].putAll(slurper.parseText(t[2])); t[1]}
+    .map { t -> [ t[0], [sweep_labels, t[1].split(Pattern.quote(MetaSweeper.SEPARATOR))].transpose().collectEntries{ k, v -> [k, v] }, t[2] ] }
+    .map { t -> t[1]['algo']=t[0]; t[1].putAll(yaml.load(t[2])); t[1]}
     .reduce([]) {a, b -> a.push(b); return a}
 
 
-fout = file('all_stats.json')
-fout << new JsonBuilder(all_stats.val).toString()
+fout = file('all_stats.yaml')
+fout.write(yaml.dump(all_stats.val))
 fout << '\n'
-*/
+
