@@ -28,6 +28,7 @@ import java.nio.file.Path
 import java.io.File
 import java.io.Writer
 import java.nio.file.Files
+import java.util.regex.Pattern
 import nextflow.Channel
 import nextflow.Nextflow
 import nextflow.util.KryoHelper
@@ -326,6 +327,26 @@ class MetaSweeper {
 
         String id() {
             return id(varMap.values())
+        }
+
+        /**
+         * Initialse an instance of Key from a file name. This assumes the file name
+         * follows the variable delimited syntax of a sweep ({val1}{sep}{val2}{sep}...}.
+         * Integers are substituted for the variable names of each element of the key.
+         * <br>
+         * Eg.
+         * Filename: 1-+-0.5-+-1000.fasta
+         * Key: {0:1, 1:0.5, 2:1000}
+         *
+         * @param file -- java.nio.Path whose file name follows the delimited syntax
+         * @return instance of Key
+         */
+        static Key fromFile(Path file) {
+            Key key = new Key();
+            String baseName = MetaSweeper.dropSuffix(file.name)
+            Collection values = baseName.split(Pattern.quote(MetaSweeper.SEPARATOR))
+            values.eachWithIndex { it, n -> key.put(Integer.toString(n), it) }
+            return key
         }
 
         /**
@@ -963,6 +984,23 @@ class MetaSweeper {
 
     static float[] stringToFloats(String str) {
         return (str.split(delimiters) - '').collect { elem -> elem as float }
+    }
+
+
+    static DataflowChannel globPath(path) {
+        return Channel.from(path)
+                .map { f -> [Key.fromFileName(f), f] }
+    }
+
+    /**
+     * Append a suffix to a given key string. This will use
+     * the defined separator to join the key string and new suffix.
+     * @param keyString -- the key string to append to
+     * @param suffix -- the suffix to append to key
+     * @return joined keyString and suffix
+     */
+    static String appendTo(String keyString, String suffix) {
+        "${keyString}${SEPARATOR}${suffix}"
     }
 
     /**

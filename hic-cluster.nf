@@ -21,93 +21,125 @@ import MetaSweeper
 
 MetaSweeper ms = MetaSweeper.fromFile(new File('sweep.yaml'))
 
-//import static Globals.*
-//class Globals {
-//    static final String SEPARATOR = '%'
-//}
-//helper = this.class.classLoader.parseClass(new File('Helper.groovy')).newInstance()
-//duplicator = this.class.classLoader.parseClass(new File('ChannelDuplicator.groovy')).newInstance()
-
 // truth tables
 truths = Channel.from(file("${ms.options.output}/*.truth"))
-        .map { f -> [f.name[0..-7], f] }
+                .map { f -> [MetaSweeper.dropSuffix(f.name), f] }
 
-truths.subscribe{println it}
-//truths = duplicator.createFrom(truths)
+// contig graphs
+graphs = Channel.from(file("${ms.options.output}/*.graphml"))
+                .map { f -> [MetaSweeper.dropSuffix(f.name), f] }
 
-//// contig graphs
-//graphs = Channel.from(file("${ms.options.output}/*.graphml"))
-//        .map { f -> [helper.dropSuffix(f.name, '%'), f] }
-//graphs = duplicator.createFrom(graphs)
-//
-//gr_sweep = graphs.onCopy()
-//
-//process LouvSoft {
-//    cache 'deep'
-//    publishDir params.output, mode: 'symlink', overwrite: 'true'
-//
-//    input:
-//    set oname, file('g.graphml') from gr_sweep
-//
-//    output:
-//    set file("${oname}${SEPARATOR}louv-soft.cl") into louvsoft_cl
-//
-//    """
-//    louvain_cluster.py --otype soft --ofmt mcl g.graphml "${oname}.louv-soft.cl"
-//    """
-//}
-//
-//gr_sweep = graphs.onCopy()
-//
-//process LouvHard {
-//    cache 'deep'
-//    publishDir params.output, mode: 'symlink', overwrite: 'true'
-//
-//    input:
-//    set oname, file('g.graphml') from gr_sweep
-//
-//    output:
-//    set file("${oname}${SEPARATOR}louv-hard.cl") into louvhard_cl
-//
-//    """
-//    louvain_cluster.py --otype hard --ofmt mcl g.graphml "${oname}.louv-hard.cl"
-//    """
-//}
-//
-//gr_sweep = graphs.onCopy()
-//
-//process Oclustr {
-//    cache 'deep'
-//    publishDir params.output, mode: 'symlink', overwrite: 'true'
-//
-//    input:
-//    set oname, file('g.graphml') from gr_sweep
-//
-//    output:
-//    set file("${oname}${SEPARATOR}oclustr.cl") into oclustr_cl
-//
-//    """
-//    oclustr.py -f mcl g.graphml "${oname}.oclustr.cl"
-//    """
-//}
-//
-//gr_sweep = graphs.onCopy()
-//
-//process GraphStats {
-//    cache 'deep'
-//    publishDir params.output, mode: 'symlink', overwrite: 'true'
-//
-//    input:
-//    set oname, file('g.graphml') from gr_sweep
-//
-//    output:
-//    set file("${oname}.gstat"), file("${oname}.geigh") into graph_info
-//
-//    """
-//    graph_stats.py --ofmt json g.graphml "${oname}.gstat"
-//    graph_complexity.py --ofmt json --method eigh g.graphml "${oname}.geigh"
-//    """
-//}
+// copy channel
+(cl_in, graphs) = graphs.into(2)
+
+process LouvSoft {
+    publishDir ms.options.output, mode: 'copy', overwrite: 'true'
+
+    input:
+    set key, file('g.graphml') from cl_in
+
+    output:
+    set key, file(cl_file) into ls_out
+
+    script:
+    cl_file = MetaSweeper.appendTo(key, "louvsoft.cl")
+
+    if (params.debug) {
+        """
+        echo $key > $cl_file
+        """
+    }
+    else {
+        """
+        louvain_cluster.py --otype soft --ofmt mcl g.graphml $cl_file
+        """
+    }
+}
+
+
+// copy channel
+(cl_in, graphs) = graphs.into(2)
+
+process LouvHard {
+    publishDir ms.options.output, mode: 'copy', overwrite: 'true'
+
+    input:
+    set key, file('g.graphml') from cl_in
+
+    output:
+    set key, file(cl_file) into lh_out
+
+    script:
+    cl_file = MetaSweeper.appendTo(key, "louvhard.cl")
+
+    if (params.debug) {
+        """
+        echo $key > $cl_file
+        """
+    }
+    else {
+        """
+        louvain_cluster.py --otype hard --ofmt mcl g.graphml $cl_file
+        """
+    }
+}
+
+
+// copy channel
+(cl_in, graphs) = graphs.into(2)
+
+process Oclustr {
+    publishDir ms.options.output, mode: 'copy', overwrite: 'true'
+
+    input:
+    set key, file('g.graphml') from cl_in
+
+    output:
+    set key, file(cl_file) into oc_out
+
+    script:
+    cl_file = MetaSweeper.appendTo(key, "oclustr.cl")
+
+    if (params.debug) {
+        """
+        echo $key > $cl_file
+        """
+    }
+    else {
+        """
+        oclustr.py -f mcl g.graphml $cl_file
+        """
+    }
+}
+
+
+// copy channel
+(ginfo_in, graphs) = graphs.into(2)
+
+process GraphInfo {
+    publishDir ms.options.output, mode: 'copy', overwrite: 'true'
+
+    input:
+    set key, file('g.graphml') from ginfo_in
+
+    output:
+    set file("${key}.gstat"), file("${key}.geigh") into ginfo_out
+
+    script:
+    if (params.debug) {
+        """
+        echo $key > ${key}.gstat
+        echo $key > ${key}.geigh
+        """
+    }
+    else {
+        """
+        graph_stats.py --ofmt yaml g.graphml ${key}.gstat
+        graph_complexity.py --ofmt yaml --method eigh g.graphml ${key}.geigh
+        """
+    }
+}
+
 //
 //bc_sweep = truths.onCopy().cross(louvsoft_cl.map { f-> [helper.dropSuffix(f.name), f]}
 //    .mix(louvhard_cl.map{ f-> [helper.dropSuffix(f.name), f]})
@@ -131,27 +163,28 @@ truths.subscribe{println it}
 //    """
 //}
 //
-//contigs = duplicator.createFrom(Channel.from(file('out/*.contigs.fasta'))
-//    .map { f -> [f.name[0..-15], f] })
-//
-//contig_sweep = contigs.onCopy()
-//
-//process AssemblyStats {
-//    cache 'deep'
-//    publishDir params.output, mode: 'symlink', overwrite: 'true'
-//
-//    input:
-//    set oname, file('contigs.fa') from contig_sweep
-//
-//    output:
-//    set file("${oname}.asmstat") into asm_stats
-//
-//    """
-//    calc_N50_L50.py --ofmt json contigs.fa "${oname}.asmstat"
-//    """
-//}
 
-/*
-cluster_bc.map { f -> [helper.dropSuffix(f.name), f] }
-    .subscribe{println it}
-*/
+contigs = Channel.from(file('out/*.contigs.fasta'))
+    .map { f -> [MetaSweeper.dropSuffix(f.name), f] }
+
+process AssemblyStats {
+    publishDir ms.options.output, mode: 'copy', overwrite: 'true'
+
+    input:
+    set key, file('contigs.fa') from contigs
+
+    output:
+    set key, file("${key}.asmstat") into astat_out
+
+    script:
+    if (params.debug) {
+        """
+        echo $key > ${key}.asmstat
+        """
+    }
+    else {
+        """
+        calc_N50_L50.py --ofmt yaml contigs.fa "${key}.asmstat"
+        """
+    }
+}
