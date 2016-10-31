@@ -999,8 +999,12 @@ class MetaSweeper {
      * @param suffix -- the suffix to append to key
      * @return joined keyString and suffix
      */
-    static String appendTo(String keyString, String suffix) {
+    static String appendKey(String keyString, String suffix) {
         "${keyString}${SEPARATOR}${suffix}"
+    }
+
+    static DataflowQueue appendKey(DataflowChannel channel, String suffix) {
+        channel.map{ f -> [appendKey(f[0], suffix), *f[1..-1]]}
     }
 
     /**
@@ -1010,6 +1014,19 @@ class MetaSweeper {
      */
     static String[] stringToList(String str) {
         return str.split(delimiters) - ''
+    }
+
+    /**
+     * Create a channel with a leading key derived from the file name. This assumes
+     * the sweep variable delimited filename syntax is being used by the file.
+     * @param path sweep file or list of files
+     * @return Channel with a leading key for use in joins
+     */
+    static DataflowChannel keyedFrom(path) {
+        assert path instanceof Path || path instanceof List<Path> : 'Error: supplied path must be an instance of ' +
+                'java.nio.Path or Collection<Path>'
+
+        Channel.from(path).map { f -> [dropSuffix(f.name), f]}
     }
 
     static String dropSuffix(str, sep) {
