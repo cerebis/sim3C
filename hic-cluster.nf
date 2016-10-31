@@ -16,18 +16,38 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
-
+/**
+ * Workflow to cluster the results of the primary hic sweep (hic-sweep.nf)
+ *
+ * Input to this workflow are sourced from the output directory of the primary
+ * sweep workflow. As the workflow is much simpler than the primary workflow,
+ * channels here are generated from conventional Nextflow methods, rather than
+ * reliance on the MetaSweeper classes.
+ *
+ * The only complication is the initial joining of truth tables and contig graphs
+ * into a single channel. This simplifies downstream processes which depend on
+ * both results; such as external scoring metrics.
+ */
 import MetaSweeper
 
 MetaSweeper ms = MetaSweeper.fromFile(new File('sweep.yaml'))
 
-// truth tables
+// fetch truth tables from sweep output directory
 truths = Channel.from(file("${ms.options.output}/*.truth"))
+                // add a string key for each iteration step
                 .map { f -> [MetaSweeper.dropSuffix(f.name), f] }
 
-// contig graphs
+// fetch contig graphs from output dir and pair with respective truth table
 graphs = Channel.from(file("${ms.options.output}/*.graphml"))
+                // add a string key for each iteration step
                 .map { f -> [MetaSweeper.dropSuffix(f.name), f] }
+                // prepare a key relevant to truth table from clustering (one less iterative depth)
+                .map { t -> [MetaSweeper.removeLevels(t[0], 1), *t ] }
+                // join channels, using new key as index
+                .phase(truths)
+                // unwrap lists and remove redundant elements
+                .map{ t -> [*t[0][1..-1], t[1][1]] }
+
 
 // copy channel
 (cl_in, graphs) = graphs.into(2)
@@ -36,10 +56,10 @@ process LouvSoft {
     publishDir ms.options.output, mode: 'copy', overwrite: 'true'
 
     input:
-    set key, file('g.graphml') from cl_in
+    set key, file('g.graphml'), truth from cl_in
 
     output:
-    set key, file(cl_file) into ls_out
+    set key, file(cl_file), truth into ls_out
 
     script:
     cl_file = MetaSweeper.appendTo(key, "louvsoft.cl")
@@ -64,10 +84,10 @@ process LouvHard {
     publishDir ms.options.output, mode: 'copy', overwrite: 'true'
 
     input:
-    set key, file('g.graphml') from cl_in
+    set key, file('g.graphml'), truth from cl_in
 
     output:
-    set key, file(cl_file) into lh_out
+    set key, file(cl_file), truth into lh_out
 
     script:
     cl_file = MetaSweeper.appendTo(key, "louvhard.cl")
@@ -92,10 +112,10 @@ process Oclustr {
     publishDir ms.options.output, mode: 'copy', overwrite: 'true'
 
     input:
-    set key, file('g.graphml') from cl_in
+    set key, file('g.graphml'), truth from cl_in
 
     output:
-    set key, file(cl_file) into oc_out
+    set key, file(cl_file), truth into oc_out
 
     script:
     cl_file = MetaSweeper.appendTo(key, "oclustr.cl")
@@ -140,32 +160,37 @@ process GraphInfo {
     }
 }
 
-//
-//bc_sweep = truths.onCopy().cross(louvsoft_cl.map { f-> [helper.dropSuffix(f.name), f]}
-//    .mix(louvhard_cl.map{ f-> [helper.dropSuffix(f.name), f]})
-//    .mix(oclustr_cl.map{ f-> [helper.dropSuffix(f.name), f]})
-//    .map { t -> [ helper.removeLevels(t[0],1), *t ] })
-//    .map { t -> [ t[1][1], t[1][2], t[0][1]] }
-//
-//
-//process Bcubed  {
-//    cache 'deep'
-//    publishDir params.output, mode: 'symlink', overwrite: 'true'
-//
-//    input:
-//    set oname, file('clust'), file('truth') from bc_sweep
-//
-//    output:
-//    set file("${oname}.bc") into cluster_bc
-//
-//    """
-//    bcubed.py --tfmt json --ofmt json truth clust "${oname}.bc"
-//    """
-//}
-//
 
+
+// Collect all clustering results and score
+bc_in = ls_out.mix(lh_out)
+
+process Bcubed  {
+    publishDir ms.options.output, mode: 'copy', overwrite: 'true'
+
+    input:
+    set key, file('clust'), file('truth') from bc_in
+
+    output:
+    set key, file("${key}.bc") into bc_out
+
+    script:
+    if (params.debug) {
+        """
+        echo $key > ${key}.bc
+        """
+    }
+    else {
+        """
+        bcubed.py --tfmt yaml --ofmt yaml truth clust ${key}.bc
+        """
+    }
+}
+
+// fetch contig fastas from output dir
 contigs = Channel.from(file('out/*.contigs.fasta'))
-    .map { f -> [MetaSweeper.dropSuffix(f.name), f] }
+                 // add a string key for each iteration step
+                 .map { f -> [MetaSweeper.dropSuffix(f.name), f] }
 
 process AssemblyStats {
     publishDir ms.options.output, mode: 'copy', overwrite: 'true'
@@ -184,7 +209,7 @@ process AssemblyStats {
     }
     else {
         """
-        calc_N50_L50.py --ofmt yaml contigs.fa "${key}.asmstat"
+        calc_N50_L50.py --ofmt yaml contigs.fa ${key}.asmstat
         """
     }
 }
