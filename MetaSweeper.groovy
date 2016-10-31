@@ -1031,11 +1031,11 @@ class MetaSweeper {
 
     static String removeLevels(Path path, int n) {
         def name = path.toAbsolutePath().toString()
-        return name.split(SEPARATOR)[0..-(n+1)].join(SEPARATOR)
+        return name.split(Pattern.quote(SEPARATOR))[0..-(n+1)].join(SEPARATOR)
     }
 
     static String removeLevels(String name, int n) {
-        return name.split(SEPARATOR)[0..-(n+1)].join(SEPARATOR)
+        return name.split(Pattern.quote(SEPARATOR))[0..-(n+1)].join(SEPARATOR)
     }
 
     static Object[] product(A, B) {
