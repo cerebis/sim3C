@@ -52,7 +52,7 @@ process TreeGen {
     else {
         """
         tree_generator.py --seed $seed --prefix ${clade.value.prefix} --suppress-rooting --mode random \
-            --max-height 0.1 --birth-rate ${clade.value.tree['birth']} --death-rate ${clade.value.tree['death']} \
+            --max-height 0.1 --birth-rate ${clade.value.tree.birth} --death-rate ${clade.value.tree.death} \
             --format newick --num-taxa ${clade.value.ntaxa} ${key}.nwk
         """
     }
@@ -89,10 +89,10 @@ process Evolve {
     else {
         """
         scale_tree.py -a $alpha $tree_file scaled_tree
-        \$EXT_BIN/sgevolver/sgEvolver --indel-freq=${ms.options['evo']['indel_freq']} \
-            --small-ht-freq=${ms.options['evo']['small_ht_freq']} \
-            --large-ht-freq=${ms.options['evo']['large_ht_freq']} \
-            --inversion-freq=${ms.options['evo']['inversion_freq']} \
+        \$EXT_BIN/sgevolver/sgEvolver --indel-freq=${ms.options.evo.indel_freq} \
+            --small-ht-freq=${ms.options.evo.small_ht_freq} \
+            --large-ht-freq=${ms.options.evo.large_ht_freq} \
+            --inversion-freq=${ms.options.evo.inversion_freq} \
             --random-seed=$seed scaled_tree \
              $clade.value.ancestor $clade.value.donor "${key}.evo.aln" "${key}.evo.fa"
         strip_semis.sh "${key}.evo.fa"
@@ -144,7 +144,7 @@ prof_out = prof_out.map{ it.nameify(1, 'clade_profile') }
  * Profile Merging
  */
 (prof_out, merge_prof_in) = prof_out.into(2)
-merge_prof_in = merge_prof_in.groupBy{ it[0].selectedKey('seed','alpha') }
+merge_prof_in = merge_prof_in.groupBy{ it[0].selectedKey('seed', 'alpha') }
         .flatMap{ it.collect { k,v -> [k] +  v.flatten() } }
         .map{ [it[0], [it[2],it[4]]*.value] }
 
@@ -176,7 +176,7 @@ merge_prof_out = merge_prof_out.map{ it.nameify(1, 'comm_profile') }
  * Merge clades into communities
  */
 (evo_out, merge_seq_in) = evo_out.into(2)
-merge_seq_in = merge_seq_in.groupBy{ it[0].selectedKey('seed','alpha') }
+merge_seq_in = merge_seq_in.groupBy{ it[0].selectedKey('seed', 'alpha') }
         .flatMap{it.collect { k,v -> [k] +  v.collect{cl -> [cl[1],cl[3]]}.flatten() } }
         .map{ [it[0], [it[1],it[3]]*.value] }
 
@@ -282,13 +282,14 @@ process HIC_Reads {
     if (params.debug) {
         """
         echo "sim3C.py -C gzip -r ${key['seed']} -n $n3c -l ${ms.options['n3c']['read_len']} \
-            --inter-prob ${ms.options['n3c']['inter_prob']} --profile $comm_prof $comm_seq ${key}.hic.fa.gz" > ${key}.hic.fa.gz
+            --inter-prob ${ms.options['n3c']['inter_prob']} --profile $comm_prof $comm_seq \
+            ${key}.hic.fa.gz" > ${key}.hic.fa.gz
         """
     }
     else {
         """
         sim3C.py -C gzip -r ${key['seed']} -n $n3c -l ${ms.options['n3c']['read_len']} \
-            --inter-prob ${ms.options['n3c']['inter_prob']} --profile $comm_prof $comm_seq "${key}.hic.fa.gz"
+            --inter-prob ${ms.options['n3c']['inter_prob']} --profile $comm_prof $comm_seq ${key}.hic.fa.gz
         wait_on_openfile.sh ${key}.hic.fa.gz
         """
     }

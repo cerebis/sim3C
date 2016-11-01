@@ -33,6 +33,7 @@ import nextflow.Channel
 import nextflow.Nextflow
 import nextflow.util.KryoHelper
 import org.yaml.snakeyaml.Yaml
+import org.yaml.snakeyaml.DumperOptions
 import org.yaml.snakeyaml.TypeDescription
 import org.yaml.snakeyaml.constructor.Constructor
 import com.google.common.hash.Hashing
@@ -48,8 +49,10 @@ class MetaSweeper {
     public Map<String, Object> options
     public sweep
 
-    static String SEPARATOR = '-+-'
+    static String KEYVALUE_SEP = '#'
+    static String PARAM_SEP = '-+-'
     static def delimiters = /[ ,\t]/
+    static int MAX_LINE_LENGTH = 1024
 
     static {
 
@@ -314,19 +317,8 @@ class MetaSweeper {
             return id()
         }
 
-        String id(Collection vars) {
-            return vars.collect{ simpleSafeString(it.value) }.join(SEPARATOR)
-        }
-
-        String id(int maxDepth) {
-            List values = varMap.values() as List
-            assert maxDepth > 0 : 'Depth must be a positive integer'
-            assert maxDepth <= values.size() : "Requested depth [$maxDepth] exceeds defined variable count [${values.size()}]"
-            return id(values[0..maxDepth-1])
-        }
-
         String id() {
-            return id(varMap.values())
+            varMap.collect { k, v -> "$k$KEYVALUE_SEP${simpleSafeString(v)}" }.join(PARAM_SEP)
         }
 
         /**
@@ -344,7 +336,7 @@ class MetaSweeper {
         static Key fromFile(Path file) {
             Key key = new Key();
             String baseName = MetaSweeper.dropSuffix(file.name)
-            Collection values = baseName.split(Pattern.quote(MetaSweeper.SEPARATOR))
+            Collection values = baseName.split(Pattern.quote(MetaSweeper.PARAM_SEP))
             values.eachWithIndex { it, n -> key.put(Integer.toString(n), it) }
             return key
         }
@@ -587,7 +579,7 @@ class MetaSweeper {
         public String describe() {
             def l = [prefix, simpleSafeString(ancestor), simpleSafeString(donor), ntaxa] +
                     mapString(tree) + mapString(profile)
-            l.flatten().join(SEPARATOR)
+            l.flatten().join(PARAM_SEP)
         }
 
         @Override
@@ -940,7 +932,7 @@ class MetaSweeper {
      * @return [key, *row]
      */
     static def addKey(row, firstCol=0, lastCol=-1) {
-        [row[firstCol..lastCol].collect { simpleSafeString(it.value) }.join(SEPARATOR), *row]
+        [row[firstCol..lastCol].collect { simpleSafeString(it.value) }.join(PARAM_SEP), *row]
     }
 
     /**
@@ -975,7 +967,7 @@ class MetaSweeper {
         else {
             s = val.toString()
         }
-        return s.replaceAll(/[\\\/]/, "_")
+        return s.replaceAll(/[\\\/ \t;!?*"']/, "_")
     }
 
     static int[] stringToInts(String str) {
@@ -1000,7 +992,7 @@ class MetaSweeper {
      * @return joined keyString and suffix
      */
     static String appendKey(String keyString, String suffix) {
-        "${keyString}${SEPARATOR}${suffix}"
+        "${keyString}${PARAM_SEP}${suffix}"
     }
 
     static DataflowQueue appendKey(DataflowChannel channel, String suffix) {
@@ -1048,14 +1040,21 @@ class MetaSweeper {
 
     static String removeLevels(Path path, int n) {
         def name = path.toAbsolutePath().toString()
-        return name.split(Pattern.quote(SEPARATOR))[0..-(n+1)].join(SEPARATOR)
+        return name.split(Pattern.quote(PARAM_SEP))[0..-(n+1)].join(PARAM_SEP)
     }
 
     static String removeLevels(String name, int n) {
-        return name.split(Pattern.quote(SEPARATOR))[0..-(n+1)].join(SEPARATOR)
+        return name.split(Pattern.quote(PARAM_SEP))[0..-(n+1)].join(PARAM_SEP)
     }
 
     static Object[] product(A, B) {
         return A.collectMany{a->B.collect{b->[a, b]}}
     }
+
+    static Yaml getYamlParser() {
+        DumperOptions options = new DumperOptions();
+        options.setWidth(MAX_LINE_LENGTH)
+        return new Yaml(options)
+    }
+
 }
