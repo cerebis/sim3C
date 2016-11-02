@@ -49,8 +49,13 @@ class MetaSweeper {
     public Map<String, Object> options
     public sweep
 
+    // NOTE: File system dependent! Both separator patterns must be composed of
+    // legal, non-escaped characters of the underlying filesystem. Escaped characters
+    // appear to be handled badly when wildcards are used within Nextflow file()
     static String KEYVALUE_SEP = '#'
     static String PARAM_SEP = '-+-'
+
+    static def charsToReplace = /[\\\/ \t;!?*"']/
     static def delimiters = /[ ,\t]/
     static int MAX_LINE_LENGTH = 1024
 
@@ -106,18 +111,34 @@ class MetaSweeper {
             }
         }
 
+        /**
+         * Add a key to a list which does not currently have one.
+         */
         List.metaClass.addKey = {
+            assert ! delegate[0] instanceof Key : 'This list already has a leading key/index element'
             Key key = new Key()
             delegate.each { key.put(it) }
             [key, *delegate]
         }
 
+        /**
+         * Add a name to a given list element, by wrapping it inside a NamedValue object
+         */
         List.metaClass.nameify = { ix, name ->
             def val = delegate[ix]
             delegate[ix] = new NamedValue(name, val)
             return delegate
         }
 
+        /**
+         * Extend an existing list key (index) by adding the supplied key/value pair.
+         */
+        List.metaClass.extendKey = { k, v ->
+            assert delegate[0] instanceof Key : 'First element of list is not a key'
+            Key newKey = delegate[0].clone()
+            newKey.put(k, v)
+            [newKey, *delegate[1..-1]]
+        }
     }
 
     /**
@@ -249,6 +270,7 @@ class MetaSweeper {
         }
     }
 
+    @AutoClone
     static class Key {
         LinkedHashMap varMap = [:]
 
@@ -261,6 +283,29 @@ class MetaSweeper {
          * objects without parameters.
          */
         Key() {/*...*/}
+
+        /**
+         * Construct a key from a given file. It is assume this file has been named using the delimited
+         * convention used in sweeps and that the same separators are in use.
+         * @param keyedFile -- a file whose name is a set of delimtied key/value pairs.
+         * @param numSuffix -- the number of '.' appended suffixes to find and remove
+         */
+        Key(Path keyedFile, int numSuffix=1) {
+            // make sure string is treated literally
+            String safe_kv_sep = Pattern.quote(KEYVALUE_SEP)
+            // drop any suffix from file's name
+            String keyStr = keyedFile.name
+            for (int i=0; i<numSuffix; i++) {
+                keyStr = dropSuffix(keyStr)
+            }
+            // doubly split the remainder, first for values then key/value pairs.
+            // using they pairs, initialise the instance's map.
+            keyStr.split(Pattern.quote(PARAM_SEP))
+                    .inject(this.varMap) { map, it ->
+                        def (k, v) = it.split(safe_kv_sep)
+                        map << [(k): new NamedValue(k, v)]
+                    }
+        }
 
         /**
          * Analogous to String concatenation, the + operator is not reflexive. (a+b != b+a)
@@ -298,7 +343,7 @@ class MetaSweeper {
         @Synchronized
         Object put(NamedValue v) {
             def old = varMap.putIfAbsent(v.name, v)
-            assert old == null: "attempted duplicate key insertion \"$v.name\" with existing keys: ${getKeys()}"
+            assert old == null: "attempted duplicate insertion of key [$v.name]"
             return old
         }
 
@@ -319,26 +364,6 @@ class MetaSweeper {
 
         String id() {
             varMap.collect { k, v -> "$k$KEYVALUE_SEP${simpleSafeString(v)}" }.join(PARAM_SEP)
-        }
-
-        /**
-         * Initialse an instance of Key from a file name. This assumes the file name
-         * follows the variable delimited syntax of a sweep ({val1}{sep}{val2}{sep}...}.
-         * Integers are substituted for the variable names of each element of the key.
-         * <br>
-         * Eg.
-         * Filename: 1-+-0.5-+-1000.fasta
-         * Key: {0:1, 1:0.5, 2:1000}
-         *
-         * @param file -- java.nio.Path whose file name follows the delimited syntax
-         * @return instance of Key
-         */
-        static Key fromFile(Path file) {
-            Key key = new Key();
-            String baseName = MetaSweeper.dropSuffix(file.name)
-            Collection values = baseName.split(Pattern.quote(MetaSweeper.PARAM_SEP))
-            values.eachWithIndex { it, n -> key.put(Integer.toString(n), it) }
-            return key
         }
 
         /**
@@ -387,6 +412,20 @@ class MetaSweeper {
             k.putAll(values[0..(depth-1)])
             return k
         }
+
+        /**
+         * Remove levels of the key from the right side (lowest level first).
+         * @param numLevels -- the number of levels to remove
+         * @return the Key after removing @{numLevels} levels.
+         */
+        public Key popLevels(int numLevels) {
+            List values = varMap.values() as List
+            assert values.size() > numLevels : "Attempted to pop of [$numLevels] greater than total depth [${values.size()}"
+            Key k = new Key()
+            k.putAll(values[0..-(numLevels+1)])
+            return k
+        }
+
 
         /**
          * At a given sweep level, split a key into two parts.
@@ -967,7 +1006,7 @@ class MetaSweeper {
         else {
             s = val.toString()
         }
-        return s.replaceAll(/[\\\/ \t;!?*"']/, "_")
+        return s.replaceAll(charsToReplace, "_")
     }
 
     static int[] stringToInts(String str) {
@@ -1014,11 +1053,11 @@ class MetaSweeper {
      * @param path sweep file or list of files
      * @return Channel with a leading key for use in joins
      */
-    static DataflowChannel keyedFrom(path) {
+    static DataflowChannel keyedFrom(path, int numSuffix=1) {
         assert path instanceof Path || path instanceof List<Path> : 'Error: supplied path must be an instance of ' +
                 'java.nio.Path or Collection<Path>'
 
-        Channel.from(path).map { f -> [dropSuffix(f.name), f]}
+        Channel.from(path).map { f -> [new Key(f, numSuffix), f] }
     }
 
     static String dropSuffix(str, sep) {
