@@ -1,8 +1,9 @@
 #!/usr/bin/env nextflow
-# deconvolution sweep.
-# test metagenomic deconvolution over a range of simulated strain evolution parameters
-# 
-
+/* deconvolution sweep.
+** test metagenomic deconvolution over a range of simulated strain evolution parameters
+**
+** Usage: deconvolute-timeseries.nf -c sweep.config
+*/
 import static Helper.*
 
 sweep = new Sweep()
