@@ -19,6 +19,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """
 import argparse
 import json
+import os
 
 import yaml
 
@@ -34,13 +35,19 @@ args = parser.parse_args()
 load_func = io_utils.json_load_byteified if args.fmt == 'json' else yaml.load
 dump_func = json.dumps if args.fmt == 'json' else yaml.safe_dump
 
-d = {}
+aggregation = {}
 for fi in args.input_files:
-    d_frag = load_func(fi)
-    ovl = set(d_frag) & set(d)
-    if len(ovl) != 0:
-        key_list = ', '.join([str(ki) for ki in ovl])
-        raise RuntimeError('Overlapping keys exist between dictionaries: {0}'.format(key_list))
-    d.update(d_frag)
+    # extract the suffix as a meaningful key.
+    fparts = os.path.splitext(fi.name)
+    if not fparts[-1]:
+        # use the file basename in cases of no suffix
+        fnKey = os.path.basename(fi.name)
+    else:
+        # remove the leading '.'
+        fnKey = fparts[-1][1:]
+    if fnKey in aggregation:
+        raise IOError('aggregation dict already contains a key [{0}]'.format(fnKey))
+    aggregation[fnKey] = load_func(fi)
 
-print dump_func(d)
+print dump_func(aggregation)
+

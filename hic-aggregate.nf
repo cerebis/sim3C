@@ -54,16 +54,10 @@ process Aggregate {
     }
 }
 
-//// Write aggregated results to a single file
-//parser = ms.getYamlParser()
-//def key_names = ['seed', 'alpha_BL', 'xfold', 'n3c']
-//all_stats = all_stats
-//    // TODO simplify this
-//    .map { t ->
-//        [ t[0], [key_names, t[1].split(Pattern.quote(MetaSweeper.PARAM_SEP))].transpose().collectEntries{ k, v -> [k, v] }, t[2] ] }
-//    .map { t -> t[1]['algo']=t[0]; t[1].putAll(parser.load(t[2])); t[1]}
-//    .reduce([]) {a, b -> a.push(b); return a}
-//
-//fout = file("${ms.options.output}/all_stats.yaml")
-//fout.write(parser.dump(all_stats.val))
-//fout << '\n'
+
+parser = ms.getYamlParser()
+all_stats = all_stats.map{ [params: it[0].varMap.each { entry -> entry.value = entry.value.value }] + parser.load(it[1]) }.toList()
+fout = file("${ms.options.output}/all_stats.yaml")
+fout.write(parser.dump(all_stats.get()))
+fout << '\n'
+

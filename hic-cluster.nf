@@ -154,7 +154,7 @@ ginfo_out = ginfo_out.map { it.nameify(1, 'gstat'); it.nameify(2, 'geigh') }
 
 
 // Collect all clustering results and score
-bc_in = ls_out.mix(lh_out, oc_out)
+bc_in = ls_out.mix(lh_out, oc_out).map { t -> t.unwrap() }
 
 process Bcubed  {
     publishDir ms.options.output, mode: 'copy', overwrite: 'true'
@@ -206,3 +206,4 @@ process AssemblyStats {
 }
 
 astat_out = astat_out.map { it.nameify(1, 'asmstat') }
+

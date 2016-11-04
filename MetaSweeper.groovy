@@ -118,6 +118,7 @@ class MetaSweeper {
                 }
                 acc
             }
+
         }
 
         /**
@@ -149,6 +150,9 @@ class MetaSweeper {
             return delegate
         }
 
+        List.metaClass.unwrap = {
+            delegate.collect { (it instanceof NamedValue ? it.value : it) }
+        }
     }
 
     static class DataflowUtils {
