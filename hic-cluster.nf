@@ -32,27 +32,21 @@ import MetaSweeper
 MetaSweeper ms = MetaSweeper.fromFile(new File('sweep.yaml'))
 
 // fetch truth tables from sweep output directory
-truths = MetaSweeper.keyedFrom(file("${ms.options.output}/*.truth"))
+truths = ms.keyedFrom(file("${ms.options.output}/*.truth"))
 
 // fetch contig graphs from output dir and pair with respective truth table
-graphs = MetaSweeper.keyedFrom(file("${ms.options.output}/*.graphml"))
-                // reduce the key depth to that of the truth tables
-                .map { t -> [t[0].popLevels(1), *t] }
-                // join channels, using new reduced key as the index
-                .phase(truths)
-                // unwrap lists and remove redundant elements
-                .map { t -> [*t[0][1..-1], t[1][1]] }
-
+graphs = ms.keyedFrom(file("${ms.options.output}/*.graphml"))
+graphs = ms.joinChannels(graphs, truths, 3)
 
 // prepare input channel
-(cl_in, graphs) = graphs.into(2)
-cl_in = cl_in.map { t -> t.extendKey('algo', 'louvsoft') }
+(ls_in, graphs) = graphs.into(2)
+ls_in = ls_in.map { t -> [ms.extendKey(t.getKey(), 'algo', 'louvsoft'), *t[1..-1] ] }
 
 process LouvSoft {
     publishDir ms.options.output, mode: 'copy', overwrite: 'true'
 
     input:
-    set key, file('g.graphml'), truth from cl_in
+    set key, file('g.graphml'), truth from ls_in
 
     output:
     set key, file("${key}.cl"), truth into ls_out
@@ -73,14 +67,14 @@ process LouvSoft {
 ls_out = ls_out.map { it.nameify(1, 'ls_clustering') }
 
 // prepare input channel
-(cl_in, graphs) = graphs.into(2)
-cl_in = cl_in.map { t -> t.extendKey('algo', 'louvhard') }
+(lh_in, graphs) = graphs.into(2)
+lh_in = lh_in.map { t -> [ms.extendKey(t.getKey(), 'algo', 'louvhard'), *t[1..-1]] }
 
 process LouvHard {
     publishDir ms.options.output, mode: 'copy', overwrite: 'true'
 
     input:
-    set key, file('g.graphml'), truth from cl_in
+    set key, file('g.graphml'), truth from lh_in
 
     output:
     set key, file("${key}.cl"), truth into lh_out
@@ -101,14 +95,14 @@ process LouvHard {
 lh_out = lh_out.map { it.nameify(1, 'lh_clustering') }
 
 // prepare input channel
-(cl_in, graphs) = graphs.into(2)
-cl_in = cl_in.map { t -> t.extendKey('algo', 'oclustr') }
+(oc_in, graphs) = graphs.into(2)
+oc_in = oc_in.map { t -> [ms.extendKey(t.getKey(), 'algo', 'ocluster'), *t[1..-1]] }
 
 process Oclustr {
     publishDir ms.options.output, mode: 'copy', overwrite: 'true'
 
     input:
-    set key, file('g.graphml'), truth from cl_in
+    set key, file('g.graphml'), truth from oc_in
 
     output:
     set key, file("${key}.cl"), truth into oc_out
@@ -127,6 +121,7 @@ process Oclustr {
 }
 
 oc_out = oc_out.map { it.nameify(1, 'oc_clustering') }
+
 
 // copy channel
 (ginfo_in, graphs) = graphs.into(2)
@@ -186,7 +181,7 @@ process Bcubed  {
 bc_out = bc_out.map { it.nameify(1, 'bc_scores') }
 
 // fetch contig fastas from output dir
-contigs = MetaSweeper.keyedFrom(file("${ms.options.output}/*.contigs.fasta"), 2)
+contigs = ms.keyedFrom(file("${ms.options.output}/*.contigs.fasta"), 2)
 
 process AssemblyStats {
     publishDir ms.options.output, mode: 'copy', overwrite: 'true'

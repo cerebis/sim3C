@@ -377,15 +377,15 @@ truth_out = truth_out.map{ it.nameify(1, 'truth') }
  */
 (asm_out, hicmap_in) = asm_out.into(2)
 // join 3C reads and assembly results
-hicmap_in = ms.sweep.joinChannels(hic_out, hicmap_in, 2)
-        .map{ [it[0], it[1].value, it[2].value] }
+hicmap_in = ms.joinChannels(hicmap_in, hic_out, 2)
+        .map{ [it[0], it[1].value, it[-1].value] }
 
 // map 3C reads to assembly contigs
 process HiCMap {
     publishDir ms.options.output, mode: 'copy', overwrite: 'true'
 
     input:
-    set key, file(hic_reads), file(contigs) from hicmap_in
+    set key, file(contigs), file(hic_reads) from hicmap_in
 
     output:
     set key, file("${key}.hic2ctg.bam"), file(hic_reads), file(contigs) into hicmap_out

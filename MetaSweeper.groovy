@@ -16,7 +16,6 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
-package mzd
 
 @Grab('org.yaml:snakeyaml:1.17')
 @Grab('com.google.guava:guava:19.0')
@@ -45,8 +44,8 @@ import com.google.common.hash.Funnels
  * Utility methods used in the construction of meta-sweep workflows.
  */
 class MetaSweeper {
-    public Map<String, Object> variables
-    public Map<String, Object> options
+    public Map<String, Object> variables = [:]
+    public Map<String, Object> options = [:]
     public sweep
 
     // NOTE: File system dependent! Both separator patterns must be composed of
@@ -61,6 +60,9 @@ class MetaSweeper {
 
     static {
 
+        // Mixin some convenience methods.
+        DataflowQueue.mixin DataflowUtils
+
         // For Nextflow caching to function, we must register our custom classes
         // with the chosen serialization library (Kryo). We do not provide any
         // custom Serializer implementation.
@@ -68,6 +70,13 @@ class MetaSweeper {
         KryoHelper.register(NamedValue)
         KryoHelper.register(Community)
         KryoHelper.register(Clade)
+
+        List.metaClass.getKey = { ->
+            if (delegate[0] instanceof Key) {
+                return delegate[0]
+            }
+            throw GroovyRuntimeException('The leading element was not an instance of Key')
+        }
 
         List.metaClass.pick = { ... picks ->
             if (picks instanceof Object[]) {
@@ -115,10 +124,20 @@ class MetaSweeper {
          * Add a key to a list which does not currently have one.
          */
         List.metaClass.addKey = {
-            assert ! delegate[0] instanceof Key : 'This list already has a leading key/index element'
+            assert ! delegate[0] instanceof Key : 'This list already has a leading key/index element [${delegate[0]}]'
             Key key = new Key()
             delegate.each { key.put(it) }
             [key, *delegate]
+        }
+
+        /**
+         * Update an existing key
+         */
+        List.metaClass.addOrUpdateKey = {
+            Key key = new Key()
+            int start = delegate[0] instanceof Key ? 1 : 0
+            delegate[start..-1].each{ key.put(it) }
+            [key, *(delegate[start..-1])]
         }
 
         /**
@@ -130,85 +149,25 @@ class MetaSweeper {
             return delegate
         }
 
+    }
+
+    static class DataflowUtils {
+
         /**
-         * Extend an existing list key (index) by adding the supplied key/value pair.
+         * Cross this channel with another, but flatten the resulting rows
+         * and keep only one key element in the first position.
          */
-        List.metaClass.extendKey = { k, v ->
-            assert delegate[0] instanceof Key : 'First element of list is not a key'
-            Key newKey = delegate[0].clone()
-            newKey.put(k, v)
-            [newKey, *delegate[1..-1]]
+        DataflowQueue flatCross(DataflowQueue b) {
+            return this.cross(b).map{ t -> [*t[0], t[1][1..-1]].flatten() }
         }
-    }
 
-    /**
-     * Read a configuration from file and return an instance of MetaSweeper
-     * @param config -- YAML format configuration file.
-     * @return new MetaSweeper instance
-     */
-    static MetaSweeper fromFile(File config) {
-        ConfigLoader.read(config)
-    }
-
-    /**
-     * Print a table describing the current sweep.
-     * @param msg -- an additional message to include
-     */
-    public void describeSweep(String msg=null) {
-        if (msg) {
-            println msg
-        }
-        println this.sweep.description()
-    }
-
-    /**
-     * Initialize the sweep.
-     * @return This MetaSweeper instance
-     */
-    public MetaSweeper createSweep() {
-        sweep = new Sweep()
-        return this
-    }
-
-    /**
-     * Extend a channel by adding the named configuration variable to the sweep and
-     * then permute the passed Channel.
-     *
-     * @param df -- the existing channel to extend
-     * @param varName -- the named variable with which to extend the channel
-     * @return the extended Channel
-     */
-    public DataflowChannel extend(DataflowQueue df, String... varName) {
-        sweep.extendChannel(df, varName)
-    }
-
-    /**
-     * Add a configuration variable to sweep of this MetaSweeper instance.
-     * @param name - the configuration variable to add
-     * @param stepInto - for non-collections which are iterable, step into the object and retrieve
-     * the elements instead
-     * @return MetaSweeper instance
-     */
-    public MetaSweeper withVariable(String name, Boolean stepInto=false) {
-        if (stepInto) {
-            // step into a variable which itself iterable but not a plain collection
-            sweep[name] = variables[name].collect()
-        }
-        else {
-            sweep[name] = variables[name]
-        }
-        return this
-    }
-
-    public DataflowQueue permute() {
-        sweep.permutedChannel()
     }
 
     /**
      * NamedValue wrap objects with a name.
      */
     @AutoClone
-    static class NamedValue {
+    static class NamedValue implements Comparable<NamedValue> {
         String name
         Object value
 
@@ -267,6 +226,10 @@ class MetaSweeper {
          */
         int hashCode() {
             return Objects.hash(name, value)
+        }
+
+        int compareTo(NamedValue other) {
+            return value.compareTo(other.value)
         }
     }
 
@@ -438,10 +401,12 @@ class MetaSweeper {
         public Map splitKey(int level) {
             def values = varMap.values() as List
             assert level > 0 : 'Depth must be > 0'
-            assert level < values.size() : "Requested cut point [$level] would produce an empty split for max [${values.size()}] levels"
+            assert level <= values.size() : "Requested cut point [$level] beyond end. Max [${values.size()}] levels"
             def keys = ['lo':new Key(), 'hi':new Key()]
             keys.lo.putAll(values[0..level-1])
-            keys.hi.putAll(values[level..-1])
+            if (level < values.size()) {
+                keys.hi.putAll(values[level..-1])
+            }
             return keys
         }
 
@@ -741,8 +706,14 @@ class MetaSweeper {
             permute(values())
         }
 
+        /**
+         * Return the permutation of the variables, as referenced by their names.
+         * @param varNames the variables to permut
+         * @return all permutations as a list
+         */
         public Collection permuteNames(Object... varNames) {
             def ln = varNames.collect()
+            // delegated subMap
             ln = subMap(ln)
             permute(ln.values())
         }
@@ -752,6 +723,11 @@ class MetaSweeper {
             permute(subMap(names[begin..end]).values())
         }
 
+        /**
+         * Permute the list of lists, return all permutations
+         * @param collections -- a list of lists to permute
+         * @return all permutations
+         */
         protected Collection permute(Collection collections) {
             if (collections == null || collections.isEmpty()) {
                 return []
@@ -762,7 +738,9 @@ class MetaSweeper {
             }
         }
 
-        /** Recursive implementation for permutations(List, Collection) */
+        /**
+         * Recursive implementation for permutations(List, Collection)
+         */
         private static void permuteImpl(ori, res, d, current) {
             // if depth equals number of original collections, final reached, add and return
             if (d == ori.size()) {
@@ -779,16 +757,26 @@ class MetaSweeper {
             }
         }
 
+        /**
+         * Permute the entire sweep.
+         * @return the permutations as a channel
+         */
         public  DataflowQueue permutedChannel() {
             List allVars = varRegistry.keySet() as List
             permutedChannel(*allVars)
         }
 
+        /**
+         * Create channel embodying the permutations for the specified
+         * variables of a sweep.
+         * @param varNames the specified variables to include
+         * @return the permutations as a channel
+         */
         public DataflowQueue permutedChannel(Object... varNames) {
             def pn = permuteNames(varNames)
             Channel.from(pn).map{ it ->
                 try {
-                    it.addKey()
+                    it.addOrUpdateKey()
                 }
                 catch (Throwable t) {
                     println "ITER $it"
@@ -796,103 +784,6 @@ class MetaSweeper {
                     throw ex
                 }
             }
-        }
-
-        public DataflowQueue extendChannel(DataflowQueue df, Object... varNames) {
-            assert varNames.size() > 0 : "Error, no variables named in extendChannel"
-            def p = permuteNames(varNames)
-            if (p.size() == 0) {
-                return df
-            }
-
-            df = df.spread(p)
-                    .map { row ->
-                        // create a copy of existing key
-                        def key = row[0].copy();
-                        // get the set of new variables added to each row
-                        def new_vars = row[-varNames.size()..-1]
-                        // add each new variable to the key
-                        new_vars.each { key.put(it) }
-
-                        def all_vars = row[1..-1].collect() // { acc, it -> acc << it }
-                        //println "ALL $all_vars"
-                        [key, *all_vars]
-                    }
-
-            return df
-        }
-
-        /**
-         * Group the elements of a channel by a common key at a specific level in the
-         * sweep hierarchy.
-         *
-         * It is expected that the specified level would be such that multiple rows in
-         * the table will share a common key value. i.e 1 < level < max_level
-         *
-         * The returned map is indexed by the common key. Its elements are lists which
-         * hold the "overhang" (remaining key levels dropped for this grouping) and the
-         * row values for each grouped set of values.
-         *
-         * @param df - channel to group
-         * @param level - sweep level to group at
-         * @return map of grouped rows.
-         */
-        static Map groupAtLevel(DataflowQueue df, int level) {
-            List list = df.toList().get()
-            return list.inject([:]) { acc, row ->
-                def k = row[0].splitKey(level)
-                if (!acc[k.lo]) {
-                    acc[k.lo] = []
-                }
-                acc[k.lo].add( ['overhang': k.hi, 'values':row[1..-1]] )
-                acc
-            }
-        }
-
-        /**
-         * Join two channels together at a given level in the sweep hierarchy. This is used
-         * when merging the results of two branches in the sweep.
-         *
-         * Such cases arise when inputs from a single point are used by two different tasks (branch point)
-         * and then their output channels merged together for further processing (merge point).
-         *
-         * The merged channel elements are lists (table rows) composed of a leading key (which reflects the join point)
-         * and followed by all the per-task output NamedValueS which were emitted by both channels. As such, it can be
-         * a good idea to reduce rows to only the output values which will be required in subsequent tasks. This can be
-         * accomplished using helper meta-method "List.pick(varname1, varname2...).
-         *
-         * Eg. If two output columns were 'reads' and 'contigs', using the map operator in Nextflow
-         *
-         *      chan.map{ it.pick('reads', 'contigs') }
-         *
-         * @param df1 - channel 1
-         * @param df2 - channel 2
-         * @param level - the level of the sweep hierarchy to merge at.
-         * @return channel of merged values
-         */
-        public DataflowQueue joinChannels(DataflowQueue df1, DataflowQueue df2, int level) {
-            Map g1 = groupAtLevel(df1, level)
-            Map g2 = groupAtLevel(df2, level)
-
-            // combine values from each input channel for common keys
-            List ret = g1.keySet().inject([]) { acc, k ->
-                if (g2[k]) {
-                    def x = [g1[k], g2[k]].combinations()
-                    x = [[k], x].combinations{ a, b ->
-                        [a, b['overhang'].flatten(), b['values'].flatten()]
-                    }
-                    acc.addAll(x)
-                }
-                acc
-            }
-
-            // join keys in sweep order and return rows as [key, output_values]
-            ret = ret.collect { row ->
-                Key joined = orderKey(row[0] + row[1][0] + row[1][1])
-                [joined, *row[2]]
-            }
-
-            return Channel.from(ret)
         }
 
         /**
@@ -909,28 +800,206 @@ class MetaSweeper {
             }
         }
 
-    }
+        /**
+         * Given an existing channel, extend it by those sweep variables specified
+         * by their names. These variables must already have been defined within
+         * the sweep instance.
+         *
+         * @param df -- the channel to extend
+         * @param varNames -- the variables, referenced by their sweep names
+         * @return an extended channel
+         */
+        public DataflowQueue extendChannel(DataflowQueue df, Object... varNames) {
+            assert varNames.size() > 0 : "Error, no variables named in extendChannel"
 
-    static def selectByName(keys, list) {
-        def m = list.inject([:]) {acc, it -> acc[it.name] = it; acc}
-        keys.inject([]) { acc, k -> assert m[k] != null, "element [$k] not found in map"; acc << m[k]; acc }
+            def p = permuteNames(varNames)
+            if (p.size() == 0) {
+                return df
+            }
+
+            df = df.spread(p)
+                    .map { row ->
+                // create a copy of existing key
+                def key = row[0].copy();
+                // get the set of new variables added to each row
+                def new_vars = row[-varNames.size()..-1]
+                // add each new variable to the key
+                new_vars.each { key.put(it) }
+
+                def all_vars = row[1..-1].collect() // { acc, it -> acc << it }
+                //println "ALL $all_vars"
+                [key, *all_vars]
+            }
+
+            return df
+        }
+
     }
 
     /**
-     * Add a name to every object in a list.
-     */
-    static def addName(name, list) {
-        list.collect{new NamedValue(name, it)}
-    }
-
-    /**
-     * Return absolute path from string.
+     * Extend an existing list key (index) by adding the supplied key/value pair.
      *
-     * @param path - path as string, wildcards allowed
-     * @return java.nio.file.Path or list of
+     * This also updates the sweep definition.
+     *
+     * @param key -- target key to extend
+     * @param name -- variable name to add
+     * @param value -- value corresponding to this variable
+     * @return a new instance of Key
      */
-    static def absPath(path) {
-        Nextflow.file(path)*.toAbsolutePath()
+    public Key extendKey(Key key, String name, Object value) {
+        Class clazz
+        if (variables[name]) {
+            clazz = variables[name][0].getClass()
+        }
+        else {
+            variables[name] = []
+        }
+        variables[name].add(clazz ? clazz.cast(value) : value)
+        withVariable(name)
+        Key newKey = key.clone()
+        newKey.put(name, value)
+        return newKey
+    }
+
+    /**
+     * Read a configuration from file and return an instance of MetaSweeper
+     * @param config -- YAML format configuration file.
+     * @return new MetaSweeper instance
+     */
+    static MetaSweeper fromFile(File config) {
+        ConfigLoader.read(config)
+    }
+
+    /**
+     * Print a table describing the current sweep.
+     * @param msg -- an additional message to include
+     */
+    public void describeSweep(String msg=null) {
+        if (msg) {
+            println msg
+        }
+        println this.sweep.description()
+    }
+
+    /**
+     * Initialize the sweep.
+     * @return This MetaSweeper instance
+     */
+    public MetaSweeper createSweep() {
+        sweep = new Sweep()
+        return this
+    }
+
+    /**
+     * Extend a channel by adding the named configuration variable to the sweep and
+     * then permute the passed Channel.
+     *
+     * @param df -- the existing channel to extend
+     * @param varName -- the named variable with which to extend the channel
+     * @return the extended Channel
+     */
+    public DataflowChannel extend(DataflowQueue df, String... varName) {
+        sweep.extendChannel(df, varName)
+    }
+
+    /**
+     * Add a configuration variable to sweep of this MetaSweeper instance.
+     * @param name - the configuration variable to add
+     * @param stepInto - for non-collections which are iterable, step into the object and retrieve
+     * the elements instead
+     * @return MetaSweeper instance
+     */
+    public MetaSweeper withVariable(String name, Boolean stepInto=false) {
+        if (stepInto) {
+            // step into a variable which itself iterable but not a plain collection
+            sweep[name] = variables[name].collect()
+        }
+        else {
+            sweep[name] = variables[name]
+        }
+        return this
+    }
+
+    /**
+     * For a given sweep defintion, create a channel which represents all the permutations.
+     *
+     * @return channel of perumuted sweep parameters.
+     */
+    public DataflowQueue permute() {
+        sweep.permutedChannel()
+    }
+
+    /**
+     * Group the elements of a channel by a common key at a specific level in the
+     * sweep hierarchy.
+     *
+     * It is expected that the specified level would be such that multiple rows in
+     * the table will share a common key value. i.e 1 < level < max_level
+     *
+     * The returned map is indexed by the common key. Its elements are lists which
+     * hold the "overhang" (remaining key levels dropped for this grouping) and the
+     * row values for each grouped set of values.
+     *
+     * @param df - channel to group
+     * @param level - sweep level to group at
+     * @return map of grouped rows.
+     */
+    public static Map groupAtLevel(DataflowQueue df, int level) {
+        List list = df.toList().get()
+        return list.inject([:]) { acc, row ->
+            def k = row[0].splitKey(level)
+            if (!acc[k.lo]) {
+                acc[k.lo] = []
+            }
+            acc[k.lo].add( ['overhang': k.hi, 'values':row[1..-1]] )
+            acc
+        }
+    }
+
+    /**
+     * Join two channels together at a given level in the sweep hierarchy. This is used
+     * when merging the results of two branches in the sweep.
+     *
+     * Such cases arise when inputs from a single point are used by two different tasks (branch point)
+     * and then their output channels merged together for further processing (merge point).
+     *
+     * The merged channel elements are lists (table rows) composed of a leading key (which reflects the join point)
+     * and followed by all the per-task output NamedValueS which were emitted by both channels. As such, it can be
+     * a good idea to reduce rows to only the output values which will be required in subsequent tasks. This can be
+     * accomplished using helper meta-method "List.pick(varname1, varname2...).
+     *
+     * Eg. If two output columns were 'reads' and 'contigs', using the map operator in Nextflow
+     *
+     *      chan.map{ it.pick('reads', 'contigs') }
+     *
+     * @param df1 - channel 1
+     * @param df2 - channel 2
+     * @param level - the level of the sweep hierarchy to merge at.
+     * @return channel of merged values
+     */
+    public DataflowQueue joinChannels(DataflowQueue df1, DataflowQueue df2, int level) {
+        Map g1 = groupAtLevel(df1, level)
+        Map g2 = groupAtLevel(df2, level)
+
+        // combine values from each input channel for common keys
+        List ret = g1.keySet().inject([]) { acc, k ->
+            if (g2[k]) {
+                def x = [g1[k], g2[k]].combinations()
+                x = [[k], x].combinations{ a, b ->
+                    [a, b['overhang'].flatten(), b['values'].flatten()]
+                }
+                acc.addAll(x)
+            }
+            acc
+        }
+
+        // rejoin keys and return rows as [key, output_values]
+        ret = ret.collect { row ->
+            Key joined = sweep.orderKey(row[0] + row[1][0] + row[1][1])
+            [joined, *row[2]]
+        }
+
+        return Channel.from(ret)
     }
 
     /**
@@ -955,41 +1024,6 @@ class MetaSweeper {
     }
 
     /**
-     * When performing combinatorial sweeps, channels represent tables of varied parameters,
-     * where each row corresponds to an individual combination of variable values.
-     * <p>
-     * String representations of a value-set (one value for each variable involved in sweep stage) are
-     * joined together to act as an proxy identifier or key. These keys are used both in naming output
-     * files of a process and as a means of joining channels together along relevant combinations.
-     * <p>
-     * All columns in a row are returned, prepended by the new key.
-     *
-     * @param row - channel row, where columns between firstCol and lastCol contain the relevant values from
-     * which to generate a key.
-     * @param firstCol - the first column in the row to use in the key.
-     * @param lastCol - the last column in the row to use in the key.
-     * @return [key, *row]
-     */
-    static def addKey(row, firstCol=0, lastCol=-1) {
-        [row[firstCol..lastCol].collect { simpleSafeString(it.value) }.join(PARAM_SEP), *row]
-    }
-
-    /**
-     * Select a subset of elements from a collection.
-     * <p>
-     * This is mostly for readability and is used to reduce the outcome of channel joins
-     * to only the desired columns. Where often, joins contain redundant or superfluous
-     * columns.
-     *
-     * @param row - the collection to slice
-     * @param elems - the element indices to return
-     * @return the sliced collection
-     */
-    static def selectById(row, elems) {
-        row[elems]
-    }
-
-    /**
      * Return a safer representation of a string. Where "safe" is in the context
      * of filesystem restrictions. Therefore, masking of backslash characters and
      * the use only of the base file name when provided with an instance of
@@ -1007,20 +1041,6 @@ class MetaSweeper {
             s = val.toString()
         }
         return s.replaceAll(charsToReplace, "_")
-    }
-
-    static int[] stringToInts(String str) {
-        return (str.split(delimiters) - '').collect { elem -> elem as int }
-    }
-
-    static float[] stringToFloats(String str) {
-        return (str.split(delimiters) - '').collect { elem -> elem as float }
-    }
-
-
-    static DataflowChannel globPath(path) {
-        return Channel.from(path)
-                .map { f -> [Key.fromFileName(f), f] }
     }
 
     /**
@@ -1053,40 +1073,125 @@ class MetaSweeper {
      * @param path sweep file or list of files
      * @return Channel with a leading key for use in joins
      */
-    static DataflowChannel keyedFrom(path, int numSuffix=1) {
+    public static DataflowChannel simpleKeyedFrom(path, int numSuffix=1) {
         assert path instanceof Path || path instanceof List<Path> : 'Error: supplied path must be an instance of ' +
                 'java.nio.Path or Collection<Path>'
 
         Channel.from(path).map { f -> [new Key(f, numSuffix), f] }
     }
 
-    static String dropSuffix(str, sep) {
-        def p1 = str.lastIndexOf(sep)
-        if (p1 == -1) {
-            return str
+    /**
+     * Attempts to cast a string first to an integer then to a double.
+     * If both cause a NumberFormatException, the string is returned unchanged.
+     * @param s -- the string to cast
+     * @return Integer, Double or String representation of the input.
+     */
+    static def implicitValueOf(s) {
+        if (! s instanceof String) {
+            // we only want to try and cast strings
+            return s
         }
-        return str.indexOf('.', p1).with { it != -1 ? str[0..<it] : str }
+        try {
+            return Integer.valueOf(s)
+        } catch (NumberFormatException ex) {/*...*/}
+        try {
+            return Double.valueOf(s)
+        } catch (NumberFormatException ex) {/*...*/}
+        return s
     }
 
+    /**
+     * Use implicit casting on an entire collection. It is assume that a collection should
+     * be only one type. For cases where more than one type has been returned by implicit
+     * conversion (such as 1 returning as an Integer, when other numbers in the list were
+     * Doubles), the list will be cast to the most specific type.
+     *
+     * An exception is when Strings are mixed with non-strings. In this case, the original
+     * collection is returned.
+     *
+     * @param c -- the collection to cast
+     * @return the cast collection
+     */
+    static def implicitValueOf(Collection stringValues) {
+        def castValues = stringValues.collect{ implicitValueOf(it) }
+        def castTypes = castValues.inject([] as Set){ acc, it -> acc.add(it.getClass()); acc }
+        if (castTypes.size() == 1) {
+            // were done, everything is one type
+            return castValues
+        }
+        else {
+            if (Double.class in castTypes) {
+                // when doubles exist, everything is converted to doubles.
+                return castValues.collect { (Double) it }
+            }
+            else {
+                // any other mixed-type case is presently abandoned.
+                return stringValues as List
+            }
+        }
+    }
+
+    /**
+     * Create a channel using the keys as found on a path or list of paths.
+     * @param path -- one or a list of @{link java.nio.Path}
+     * @param numSuffix -- the number of dot '.' suffixes to remove, leaving only the key data.
+     * @param permute -- if true, create a permutation of all parameters. Otherwise just return those
+     * iterations which were observed.
+     * @return a channel of iterations, possibly part or all of a sweep depending on the paths parsed
+     */
+    public DataflowChannel keyedFrom(path, int numSuffix=1, boolean permute=false) {
+        assert path instanceof Path || path instanceof List<Path> : 'Error: supplied path must be an instance of ' +
+                'java.nio.Path or Collection<Path>'
+
+        if (! sweep) {
+            createSweep()
+        }
+
+        List files = Channel.from(path).toList().get()
+        def toAdd = [:].withDefault{[] as Set}
+
+        // Get the key from each file name, collect a map of variables and values
+        def keyedFiles = files.collect { f ->
+            Key key = new Key(f, numSuffix)
+            key.varMap.collect{ k, v ->
+                toAdd[k].add(v.value)
+            }
+            [key, f]
+        }
+
+        // convert string representations to more specific types if possible. Override any
+        // existing definition of that variable or create a new one. Finally, add the variable
+        // to the sweep.
+        toAdd.each { k, v ->
+            variables[k] = implicitValueOf(v).sort(false)
+            withVariable(k)
+        }
+
+        // create a channel which is a permutation of all the discovered variables and their values.
+        if (permute) {
+            return permute()
+        }
+        else {
+            return Channel.from(keyedFiles)
+        }
+    }
+
+    /**
+     * Remove the right-most dot '.' suffix from a String
+     * @param str -- the string to parse
+     * @return string without a suffix if found
+     */
     static String dropSuffix(str) {
         return str.lastIndexOf('.').with {it != -1 ? str[0..<it] : str}
     }
 
-    static String[] splitSampleName(Path path) {
-        def m = (path.name =~ /^(.*)_?([rR][0-9]+).*$/)
-        return m[0][1..2]
-    }
-
-    static String removeLevels(Path path, int n) {
-        def name = path.toAbsolutePath().toString()
-        return name.split(Pattern.quote(PARAM_SEP))[0..-(n+1)].join(PARAM_SEP)
-    }
-
-    static String removeLevels(String name, int n) {
-        return name.split(Pattern.quote(PARAM_SEP))[0..-(n+1)].join(PARAM_SEP)
-    }
-
-    static Object[] product(A, B) {
+    /**
+     * Create the cartesian product of two collections
+     * @param A -- collection A
+     * @param B -- collection B
+     * @return cartesian product as an array of objects
+     */
+    static Object[] product(Collection A, Collection B) {
         return A.collectMany{a->B.collect{b->[a, b]}}
     }
 
