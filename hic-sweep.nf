@@ -51,9 +51,9 @@ process TreeGen {
     }
     else {
         """
-        tree_generator.py --seed $seed --prefix ${clade.value.prefix} --suppress-rooting --mode random \
-            --max-height 0.1 --birth-rate ${clade.value.tree.birth} --death-rate ${clade.value.tree.death} \
-            --format newick --num-taxa ${clade.value.ntaxa} ${key}.nwk
+        tree_generator.py --seed $seed --prefix ${clade.prefix} --suppress-rooting --mode random \
+            --max-height 0.1 --birth-rate ${clade.tree.birth} --death-rate ${clade.tree.death} \
+            --format newick --num-taxa ${clade.ntaxa} ${key}.nwk
         """
     }
 }
@@ -93,7 +93,7 @@ process Evolve {
             --large-ht-freq=${ms.options.evo.large_ht_freq} \
             --inversion-freq=${ms.options.evo.inversion_freq} \
             --random-seed=$seed scaled_tree \
-             $clade.value.ancestor $clade.value.donor "${key}.evo.aln" "${key}.evo.fa"
+             $clade.ancestor $clade.donor "${key}.evo.aln" "${key}.evo.fa"
         strip_semis.sh "${key}.evo.fa"
         """
     }
@@ -125,8 +125,8 @@ process ProfileGen {
         """
     }
     else {
-        def mu = key['community'].value.profile.mu
-        def sigma = key['community'].value.profile.sigma
+        def mu = key['community'].profile.mu
+        def sigma = key['community'].profile.sigma
         """
         profile_generator.py --seed ${key['seed']} --dist lognormal --lognorm-mu $mu \
             --lognorm-sigma $sigma clade_seq ${key}.prf
