@@ -16,28 +16,24 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 function test_exists () {
+    printf "Checking for $1: "
     command -v $1 >/dev/null 2>&1 \
-        && { echo "$1 was found."; return 1; } \
-        || { echo >&2 "$1 was not found on path."; return 0; }
+        && { echo "$(tput setaf 2)[OK]$(tput sgr0)"; return 1; } \
+        || { tput setaf 1; echo >&2 "$(tput setaf 1)[ERROR] $1 was not found on path.$(tput sgr0)"; return 0; }
 }
 
 function canonical_path () {
-    if [ ! -e $1 ]
-    then
-        echo "$1 does not exist"
-        exit 1
-    else
-        echo `/usr/bin/env python -c "import os, sys; print os.path.realpath(sys.argv[1])" $1`
-    fi
+    echo `/usr/bin/env python -c "import os, sys; print os.path.realpath(sys.argv[1])" $1`
 }
 
 echo "Setting up meta-sweeper environment variables"
 
 # Nextflow should be installed and on system PATH
-printf "Checking for nextflow: "
+
 if test_exists "nextflow"
 then
     echo "Please refer to README.md for installation instructions."
+    return 1
 fi
 
 #
@@ -46,14 +42,20 @@ fi
 #
 
 # Set the location of meta-sweeper
+if [ ! -e $BASH_SOURCE ]
+then
+    echo "$(tput setaf 1)Error: $1 does not exist$(tput sgr0)"
+    return 1
+fi
+
+# find the absolute path to this script. This is used to infer the location of
+# meta-sweeper, therefore, do not move it.
 script_path=`canonical_path $BASH_SOURCE`
 ms_home=${script_path%/*}
-echo "Inferring meta-sweeper installation directory from: $script_path"
-
-echo "Setting METASWEEPER_HOME=$ms_home"
+echo "Inferring meta-sweeper installation directory to be: $(tput setaf 2)$ms_home$(tput sgr0)"
 export METASWEEPER_HOME=$ms_home
 
-echo "Adding metasweeper dependencies to Nextflow class path"
+echo "Extending Nextflow class path: $(tput setaf 2)NXF_CLASSPATH += $ms_home$(tput sgr0)"
 if [ -z "$NXF_CLASSPATH" ]
 then
     NXF_CLASSPATH=$ms_home
