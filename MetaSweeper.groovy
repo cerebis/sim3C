@@ -67,7 +67,6 @@ class MetaSweeper {
         // with the chosen serialization library (Kryo). We do not provide any
         // custom Serializer implementation.
         KryoHelper.register(Key)
-        KryoHelper.register(NamedValue)
         KryoHelper.register(Community)
         KryoHelper.register(Clade)
 
@@ -78,81 +77,6 @@ class MetaSweeper {
             throw GroovyRuntimeException('The leading element was not an instance of Key')
         }
 
-        List.metaClass.pick = { ... picks ->
-            if (picks instanceof Object[]) {
-                picks = picks.collect()
-            }
-            else if (! (picks instanceof Collection)) {
-                picks = [picks]
-            }
-            else {
-                picks = picks.unique()
-            }
-            picks.inject([] as Set){acc, pi -> pi
-                owner.delegate.each {
-                    if (!(it instanceof NamedValue) || it.name == pi) {
-                        acc << it
-                    }
-                }
-                acc
-            }
-        }
-
-        List.metaClass.pickWithoutKeys = { ... picks ->
-            if (picks instanceof Object[]) {
-                picks = picks.collect()
-            }
-            else if (! (picks instanceof Collection)) {
-                picks = [picks]
-            }
-            else {
-                picks = picks.unique()
-            }
-
-            picks.inject([] as Set){acc, pi -> pi
-                acc << delegate[0]
-                owner.delegate[1..-1].each {
-                    if (it instanceof NamedValue && it.name == pi) {
-                        acc << it
-                    }
-                }
-                acc
-            }
-
-        }
-
-        /**
-         * Add a key to a list which does not currently have one.
-         */
-        List.metaClass.addKey = {
-            assert ! delegate[0] instanceof Key : 'This list already has a leading key/index element [${delegate[0]}]'
-            Key key = new Key()
-            delegate.each { key.put(it) }
-            [key, *delegate]
-        }
-
-        /**
-         * Update an existing key
-         */
-        List.metaClass.addOrUpdateKey = {
-            Key key = new Key()
-            int start = delegate[0] instanceof Key ? 1 : 0
-            delegate[start..-1].each{ key.put(it) }
-            [key, *(delegate[start..-1])]
-        }
-
-        /**
-         * Add a name to a given list element, by wrapping it inside a NamedValue object
-         */
-        List.metaClass.nameify = { ix, name ->
-            def val = delegate[ix]
-            delegate[ix] = new NamedValue(name, val)
-            return delegate
-        }
-
-        List.metaClass.unwrap = {
-            delegate.collect { (it instanceof NamedValue ? it.value : it) }
-        }
     }
 
     static class DataflowUtils {
@@ -167,75 +91,6 @@ class MetaSweeper {
 
     }
 
-    /**
-     * NamedValue wrap objects with a name.
-     */
-    @AutoClone
-    static class NamedValue implements Comparable<NamedValue> {
-        String name
-        Object value
-
-        /**
-         * A default constructor is required for Kryo deserialization.
-         */
-        NamedValue() {/*...*/}
-
-        /**
-         * Basic constructor.
-         * @param name - variable name
-         * @param value - value to wrap
-         */
-        NamedValue(name, value) {
-            this.name = name
-            this.value = value
-        }
-
-        /**
-         * String representations are of the underlying values only, collections are
-         * concatenated by whitespace.
-         * @return String
-         */
-        String toString() {
-            if (value instanceof Collection) {
-                value.toSorted().join(' ')
-            }
-            else {
-                value.toString()
-            }
-        }
-
-        public static NamedValue create(name, value) {
-            new NamedValue(name,value)
-        }
-
-        /**
-         * NamedValue identity is determined by both name and value.
-         * @param other
-         * @return
-         */
-        boolean equals(Object obj) {
-            if (!(obj instanceof NamedValue)) {
-                return false
-            }
-            if (this.is(obj)) {
-                return true
-            }
-            NamedValue other = obj as NamedValue
-            return other.name == name && other.value == value
-        }
-
-        /**
-         * NamedValue identity is determined by both name and value.
-         * @return
-         */
-        int hashCode() {
-            return Objects.hash(name, value)
-        }
-
-        int compareTo(NamedValue other) {
-            return value.compareTo(other.value)
-        }
-    }
 
     @AutoClone
     static class Key {
@@ -270,7 +125,8 @@ class MetaSweeper {
             keyStr.split(Pattern.quote(PARAM_SEP))
                     .inject(this.varMap) { map, it ->
                         def (k, v) = it.split(safe_kv_sep)
-                        map << [(k): new NamedValue(k, v)]
+                        map.put(k, v)
+                        map
                     }
         }
 
@@ -290,39 +146,36 @@ class MetaSweeper {
 
         @Synchronized
         List values() {
-            varMap.collect{ k, v -> v}
+            return varMap.values()
+        }
+
+        @Synchronized
+        List keyList() {
+            return varMap.keySet() as List
         }
 
         @Synchronized
         Key copy() {
             Key newKey = new Key()
-            varMap.each{ k, v -> newKey.put(v.clone())}
+            varMap.each{ k, v -> newKey.put(k, v)}
             return newKey
         }
 
         @Synchronized
-        Map putAll(Collection v) {
+        Map putAll(Collection kv) {
             def ret = [:]
             v.each{ ret[it.name] = put(it) }
             return ret
         }
 
         @Synchronized
-        Object put(NamedValue v) {
-            def old = varMap.putIfAbsent(v.name, v)
-            assert old == null: "attempted duplicate insertion of key [$v.name]"
-            return old
-        }
-
-        @Synchronized
         Object put(String k, Object v) {
-            assert !(v instanceof NamedValue): 'NamedValue objects should be passed alone'
-            return put(new NamedValue(k, v))
+            assert varMap.putIfAbsent(k, v) == null : "attempted duplicate insertion of key [$k]"
         }
 
         @Synchronized
         Object getAt(String k) {
-            return varMap[k]
+            return this.varMap[k]
         }
 
         String toString() {
@@ -330,7 +183,8 @@ class MetaSweeper {
         }
 
         String id() {
-            varMap.collect { k, v -> "$k$KEYVALUE_SEP${simpleSafeString(v)}" }.join(PARAM_SEP)
+            return this.varMap.collect { k, v ->
+                "$k$KEYVALUE_SEP${simpleSafeString(v)}" }.join(PARAM_SEP)
         }
 
         /**
@@ -358,12 +212,8 @@ class MetaSweeper {
             return Objects.hash(toString())
         }
 
-        public def getKeys() {
-            varMap.keySet() as List
-        }
-
         List join(Key other) {
-            getKeys().intersect(other.getKeys()) as List
+            return keyList().intersect(other.keyList()) as List
         }
 
         /**
@@ -372,27 +222,24 @@ class MetaSweeper {
          * @return reduced key
          */
         public Key subKey(int depth) {
-            List values = varMap.values() as List
             assert depth > 0 : 'Depth must be a positive integer'
-            assert depth <= values.size() : "Requested depth [$depth] exceeds defined variable count [${values.size()}]"
+            List keys = keyList()
+            assert depth <= keys.size() : "Requested depth [$depth] exceeds defined variable count [${keys.size()}]"
             Key k = new Key()
-            k.putAll(values[0..(depth-1)])
+            k.varMap << this.varMap.subMap(keys[0..(depth-1)])
             return k
         }
 
         /**
-         * Remove levels of the key from the right side (lowest level first).
+         * Pop a number of levels from the key on the right side (lowest level first).
          * @param numLevels -- the number of levels to remove
          * @return the Key after removing @{numLevels} levels.
          */
         public Key popLevels(int numLevels) {
-            List values = varMap.values() as List
-            assert values.size() > numLevels : "Attempted to pop of [$numLevels] greater than total depth [${values.size()}"
-            Key k = new Key()
-            k.putAll(values[0..-(numLevels+1)])
-            return k
+            assert numLevels >= 0 : 'Number of levels must be >= 0'
+            assert numLevels < this.varMap.size() : 'Action would remove all levels from key'
+            return subKey(this.varMap.size() - numLevels)
         }
-
 
         /**
          * At a given sweep level, split a key into two parts.
@@ -403,15 +250,14 @@ class MetaSweeper {
          * @return Map containing two keys: 'hi' and 'lo'
          */
         public Map splitKey(int level) {
-            def values = varMap.values() as List
+            //def values = varMap.values() as List
+            List keys = keyList()
             assert level > 0 : 'Depth must be > 0'
-            assert level <= values.size() : "Requested cut point [$level] beyond end. Max [${values.size()}] levels"
-            def keys = ['lo':new Key(), 'hi':new Key()]
-            keys.lo.putAll(values[0..level-1])
-            if (level < values.size()) {
-                keys.hi.putAll(values[level..-1])
-            }
-            return keys
+            assert level <= keys.size() : "Requested cut point [$level] beyond end. Max [${keys.size()}] levels"
+            def splitKey = ['lo': new Key(), 'hi': new Key()]
+            splitKey.lo.varMap << this.varMap.subMap(keys[0..<level])
+            splitKey.hi.varMap << this.varMap.subMap(keys[level..-1])
+            return splitKey
         }
 
         public Key selectedKey(String... names) {
@@ -419,9 +265,11 @@ class MetaSweeper {
             Map m = varMap.subMap(names)
             assert m.size() > 0 : "No elements matched [$names]"
             assert m.size() == names.size() : "Not all specified key names [$names] existed in [${varMap.keySet()}]"
-            Key k = new Key()
-            k.putAll(m.values())
-            return k
+            Key key = new Key()
+            m.each { name, value ->
+                key.put(name, value)
+            }
+            return key
         }
 
     }
@@ -681,7 +529,10 @@ class MetaSweeper {
         Map varRegistry = [:]
 
         public Object put(Object key, Object value) {
-            varRegistry[key] = value.collect { new NamedValue(key, it) }
+            if (value instanceof String) {
+                value = [value]
+            }
+            varRegistry[key] = value.collect()
         }
 
         public String description() {
@@ -719,7 +570,8 @@ class MetaSweeper {
             def ln = varNames.collect()
             // delegated subMap
             ln = subMap(ln)
-            permute(ln.values())
+            // make name/value pairs for each variable, then permute the pairs.
+            permute(ln.collect{ k, v -> GroovyCollections.combinations([k], v) })
         }
 
         public Collection permuteLevels(int begin = 0, int end = -1) {
@@ -778,12 +630,18 @@ class MetaSweeper {
          */
         public DataflowQueue permutedChannel(Object... varNames) {
             def pn = permuteNames(varNames)
-            Channel.from(pn).map{ it ->
+
+            Channel.from(pn).map{ row ->
                 try {
-                    it.addOrUpdateKey()
+                    row.inject([new Key()]) { row_out, it ->
+                        def (name, val) = it
+                        row_out[0].put(name, val)
+                        row_out << val
+                        row_out
+                    }
                 }
                 catch (Throwable t) {
-                    println "ITER $it"
+                    println "ITER $row"
                     println "EXCEPTION: $t"
                     throw ex
                 }
@@ -798,7 +656,7 @@ class MetaSweeper {
         public Key orderKey(Key key) {
             return varRegistry.inject(new Key()) { ordKey, name, values ->
                 if (key[name]) {
-                    ordKey.put(key[name])
+                    ordKey.put(name, key[name])
                 }
                 ordKey
             }
@@ -813,26 +671,29 @@ class MetaSweeper {
          * @param varNames -- the variables, referenced by their sweep names
          * @return an extended channel
          */
-        public DataflowQueue extendChannel(DataflowQueue df, Object... varNames) {
+        public DataflowQueue extendChannel(DataflowQueue df, String... varNames) {
             assert varNames.size() > 0 : "Error, no variables named in extendChannel"
 
             def p = permuteNames(varNames)
             if (p.size() == 0) {
+                println 'Warning: the specified variables may not be referenced. Permutation length was 0.'
                 return df
             }
 
-            df = df.spread(p)
-                    .map { row ->
-                // create a copy of existing key
+            df = df.spread(p).map { row ->
+                // the key
                 def key = row[0].copy();
-                // get the set of new variables added to each row
-                def new_vars = row[-varNames.size()..-1]
-                // add each new variable to the key
-                new_vars.each { key.put(it) }
-
-                def all_vars = row[1..-1].collect() // { acc, it -> acc << it }
-                //println "ALL $all_vars"
-                [key, *all_vars]
+                // the output row begins with the key adn preexisting variables
+                def row_out = [key] + row[1..<-(2*varNames.size())].collect()
+                // the new variables, we'll pair up the name/values too
+                def new_vars = pairListElements( row[-(2*varNames.size())..-1] )
+                // add each new variable to the key, add append it to the row
+                new_vars.each { it ->
+                    def (name, val) = it
+                    key.put(name, val)
+                    row_out << val
+                }
+                row_out
             }
 
             return df
@@ -899,11 +760,11 @@ class MetaSweeper {
      * then permute the passed Channel.
      *
      * @param df -- the existing channel to extend
-     * @param varName -- the named variable with which to extend the channel
+     * @param varNames -- the named variable with which to extend the channel
      * @return the extended Channel
      */
-    public DataflowChannel extend(DataflowQueue df, String... varName) {
-        sweep.extendChannel(df, varName)
+    public DataflowChannel extend(DataflowQueue df, String... varNames) {
+        sweep.extendChannel(df, varNames)
     }
 
     /**
@@ -968,7 +829,7 @@ class MetaSweeper {
      * and then their output channels merged together for further processing (merge point).
      *
      * The merged channel elements are lists (table rows) composed of a leading key (which reflects the join point)
-     * and followed by all the per-task output NamedValueS which were emitted by both channels. As such, it can be
+     * and followed by all the per-task output values which were emitted by both channels. As such, it can be
      * a good idea to reduce rows to only the output values which will be required in subsequent tasks. This can be
      * accomplished using helper meta-method "List.pick(varname1, varname2...).
      *
@@ -1203,6 +1064,10 @@ class MetaSweeper {
         DumperOptions options = new DumperOptions();
         options.setWidth(MAX_LINE_LENGTH)
         return new Yaml(options)
+    }
+
+    static List pairListElements(List list) {
+        (0..<list.size()/2).collect{ list[it*2..<(it+1)*2] }
     }
 
 }

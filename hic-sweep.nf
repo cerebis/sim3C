@@ -58,8 +58,6 @@ process TreeGen {
     }
 }
 
-tree_out = tree_out.map{ it.nameify(1, 'tree_file') }
-
 
 /**
  * Evolve Clade Sequences
@@ -68,6 +66,7 @@ tree_out = tree_out.map{ it.nameify(1, 'tree_file') }
 (tree_out, evo_in) = tree_out.into(2)
 // add alpha to the sweep and extend the channel
 evo_in = ms.withVariable('alpha').extend(evo_in, 'alpha')
+
 ms.describeSweep('Evolve Clades')
 
 // sequences are produced for all taxa in the clade
@@ -101,15 +100,13 @@ process Evolve {
 
 }
 
-evo_out = evo_out.map{ it.nameify(1, 'clade_seq') }
-
 
 /**
  * Profile Generation
  */
 
 (evo_out, prof_in) = evo_out.into(2)
-prof_in = prof_in.map{[it[0], it[1].value]}
+prof_in = prof_in.map{[it[0], it[1]]}
 
 // generate an abundance profile for each clade
 process ProfileGen {
@@ -137,8 +134,6 @@ process ProfileGen {
     }
 }
 
-prof_out = prof_out.map{ it.nameify(1, 'clade_profile') }
-
 
 /**
  * Profile Merging
@@ -146,7 +141,7 @@ prof_out = prof_out.map{ it.nameify(1, 'clade_profile') }
 (prof_out, merge_prof_in) = prof_out.into(2)
 merge_prof_in = merge_prof_in.groupBy{ it[0].selectedKey('seed', 'alpha') }
         .flatMap{ it.collect { k,v -> [k] +  v.flatten() } }
-        .map{ [it[0], [it[2],it[4]]*.value] }
+        .map{ [it[0], [it[2],it[4]]] }
 
 // merge the clade profiles together
 process ProfileMerge {
@@ -170,15 +165,13 @@ process ProfileMerge {
     }
 }
 
-merge_prof_out = merge_prof_out.map{ it.nameify(1, 'comm_profile') }
-
 /**
  * Merge clades into communities
  */
 (evo_out, merge_seq_in) = evo_out.into(2)
 merge_seq_in = merge_seq_in.groupBy{ it[0].selectedKey('seed', 'alpha') }
         .flatMap{it.collect { k,v -> [k] +  v.collect{cl -> [cl[1],cl[3]]}.flatten() } }
-        .map{ [it[0], [it[1],it[3]]*.value] }
+        .map{ [it[0], [it[1],it[3]]] }
 
 // the sequences for all clades are concatenated together
 process MergeClades {
@@ -203,8 +196,6 @@ process MergeClades {
     }
 }
 
-merge_seq_out = merge_seq_out.map{ it.nameify(1, 'comm_seq') }
-
 
 /**
  * Make WGS reads
@@ -214,7 +205,7 @@ merge_seq_out = merge_seq_out.map{ it.nameify(1, 'comm_seq') }
 // pick out just the required variables.
 (merge_seq_out, wgs_in) = merge_seq_out.into(2)
 (merge_prof_out, tmp) = merge_prof_out.into(2)
-wgs_in = wgs_in.map{ [it[0], it[1].value] }.phase(tmp).map{ [*it[0], it[1][1].value]}
+wgs_in = wgs_in.map{ [it[0], it[1]] }.phase(tmp).map{ [*it[0], it[1][1]]}
 // add WGS coverage to the sweep, extend our channel
 wgs_in = ms.withVariable('xfold').extend(wgs_in, 'xfold')
 ms.describeSweep('WGS Read Generation')
@@ -253,8 +244,6 @@ process WGS_Reads {
     }
 }
 
-wgs_out = wgs_out.map{ it.nameify(1, 'wgs_reads1'); it.nameify(2, 'wgs_reads2') }
-
 
 /**
  * Make 3C reads
@@ -263,7 +252,7 @@ wgs_out = wgs_out.map{ it.nameify(1, 'wgs_reads1'); it.nameify(2, 'wgs_reads2') 
 // pick out just the required variables.
 (merge_seq_out, hic_in) = merge_seq_out.into(2)
 (merge_prof_out, tmp) = merge_prof_out.into(2)
-hic_in = hic_in.map{ [it[0], it[1].value]}.phase(tmp).map{ [*it[0], it[1][1].value]}
+hic_in = hic_in.map{ [it[0], it[1]]}.phase(tmp).map{ [*it[0], it[1][1]]}
 // add 3C coverage to the sweep, extend our channel
 hic_in = ms.withVariable('n3c').extend(hic_in, 'n3c')
 ms.describeSweep('HiC Read Generation')
@@ -295,14 +284,12 @@ process HIC_Reads {
     }
 }
 
-hic_out = hic_out.map{ it.nameify(1, 'hic_reads') }
-
 
 /**
  * Assemble WGS reads
  */
 (wgs_out, asm_in) = wgs_out.into(2)
-asm_in = asm_in.map{[it[0], it[1].value, it[2].value, it[3]]}
+asm_in = asm_in.map{[it[0], it[1], it[2], it[3]]}
 
 // assemble each metagenome
 process Assemble {
@@ -329,14 +316,12 @@ process Assemble {
     }
 }
 
-asm_out = asm_out.map{ it.nameify(1, 'contigs') }
-
 
 /**
  * Make Truth Tables
  */
 (asm_out, truth_in) = asm_out.into(2)
-truth_in = truth_in.map{ [it[0], it[1].value, it[4]] }
+truth_in = truth_in.map{ [it[0], it[1], it[4]] }
 
 // generate ground-truth tables by aligning assembly contigs to community references
 process Truth {
@@ -369,8 +354,6 @@ process Truth {
 
 }
 
-truth_out = truth_out.map{ it.nameify(1, 'truth') }
-
 
 /**
  * Map HiC reads to assembled contigs
@@ -378,7 +361,7 @@ truth_out = truth_out.map{ it.nameify(1, 'truth') }
 (asm_out, hicmap_in) = asm_out.into(2)
 // join 3C reads and assembly results
 hicmap_in = ms.joinChannels(hicmap_in, hic_out, 2)
-        .map{ [it[0], it[1].value, it[-1].value] }
+        .map{ [it[0], it[1], it[-1]] }
 
 // map 3C reads to assembly contigs
 process HiCMap {
@@ -411,14 +394,12 @@ process HiCMap {
     }
 }
 
-hicmap_out = hicmap_out.map{ it.nameify(1, 'hic2ctg') }
-
 
 /**
  * Generate contig graphs
  */
 (hicmap_out, graph_in) = hicmap_out.into(2)
-graph_in = graph_in.map{[it[0], it[1].value, it[2], it[3]]}
+graph_in = graph_in.map{[it[0], it[1], it[2], it[3]]}
 
 // contig graphs are generated from 3C mappings
 process Graph {
@@ -448,14 +429,12 @@ process Graph {
     }
 }
 
-graph_out = graph_out.map{ it.nameify(1, 'graph') }
-
 
 /**
  * Map WGS reads to contigs
  */
 (asm_out, wgsmap_in) = asm_out.into(2)
-wgsmap_in = wgsmap_in.map{ [it[0], it[1].value, it[2], it[3]]}
+wgsmap_in = wgsmap_in.map{ [it[0], it[1], it[2], it[3]]}
 
 // map WGS reads to contigs
 process WGSMap {
@@ -485,14 +464,12 @@ process WGSMap {
     }
 }
 
-wgsmap_out = wgsmap_out.map{ it.nameify(1, 'wgs2ctg') }
-
 
 /**
  * Calculate assembly contig coverage
  */
 (wgsmap_out, cov_in) = wgsmap_out.into(2)
-cov_in = cov_in.map{[it[0], it[1].value, it[2]]}
+cov_in = cov_in.map{[it[0], it[1], it[2]]}
 
 // depth inferred from WGS2CTG mapping
 process InferReadDepth {
@@ -535,5 +512,3 @@ process InferReadDepth {
         """
     }
 }
-
-cov_out = cov_out.map{ it.nameify(1, 'coverage') }
