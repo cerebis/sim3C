@@ -22,7 +22,7 @@ import MetaSweeper
 MetaSweeper ms = MetaSweeper.fromFile(new File('sweep.yaml'))
 
 /**
- * Tree Generation
+ * Generate phylogenetic trees for each clade within each community
  */
 
 // Initial sweep begins with seeds and community's clades
@@ -33,7 +33,6 @@ gen_in = ms.createSweep()
 
 ms.describeSweep('Tree Generation')
 
-// a newick tree is generated for each seed and clade def.
 process TreeGen {
     publishDir ms.options.output, mode: 'copy', overwrite: 'true'
 
@@ -60,16 +59,16 @@ process TreeGen {
 
 
 /**
- * Evolve Clade Sequences
+ * Generate evolved sequences for each clade from each community
  */
 
 (tree_out, evo_in) = tree_out.into(2)
-// add alpha to the sweep and extend the channel
+
+        // extend the sweep to include alpha
 evo_in = ms.withVariable('alpha').extend(evo_in, 'alpha')
 
 ms.describeSweep('Evolve Clades')
 
-// sequences are produced for all taxa in the clade
 process Evolve {
     publishDir ms.options.output, mode: 'copy', overwrite: 'true'
 
@@ -102,13 +101,14 @@ process Evolve {
 
 
 /**
- * Profile Generation
+ * Generate abundance profiles for each clade within each community
  */
 
 (evo_out, prof_in) = evo_out.into(2)
-prof_in = prof_in.map{[it[0], it[1]]}
 
-// generate an abundance profile for each clade
+    // just the clade sequences, which are used to obtain taxon ids.
+prof_in = prof_in.map { it.pick(1) }
+
 process ProfileGen {
     publishDir ms.options.output, mode: 'copy', overwrite: 'true'
 
@@ -136,14 +136,17 @@ process ProfileGen {
 
 
 /**
- * Profile Merging
+ * Merge clade abundance profiles into whole community profiles
  */
 (prof_out, merge_prof_in) = prof_out.into(2)
-merge_prof_in = merge_prof_in.groupBy{ it[0].selectedKey('seed', 'alpha') }
-        .flatMap{ it.collect { k,v -> [k] +  v.flatten() } }
-        .map{ [it[0], [it[2],it[4]]] }
 
-// merge the clade profiles together
+        // group by a reduced key that is only the random seed and alpha
+merge_prof_in = merge_prof_in.groupBy{ it[0].selectedKey('seed', 'alpha') }
+        // convert the resulting map of sweep point results into table format
+        .flatMap{ it.collect { k,v -> [k] +  v.flatten() } }
+        // include just the clade abundance profiles from each sweep point
+        .map { it.pick([2, 4]) }
+
 process ProfileMerge {
     publishDir ms.options.output, mode: 'copy', overwrite: 'true'
 
@@ -166,14 +169,17 @@ process ProfileMerge {
 }
 
 /**
- * Merge clades into communities
+ * Merge evolved sequences from the clades into whole communities
  */
 (evo_out, merge_seq_in) = evo_out.into(2)
-merge_seq_in = merge_seq_in.groupBy{ it[0].selectedKey('seed', 'alpha') }
-        .flatMap{it.collect { k,v -> [k] +  v.collect{cl -> [cl[1],cl[3]]}.flatten() } }
-        .map{ [it[0], [it[1],it[3]]] }
 
-// the sequences for all clades are concatenated together
+        // group by a reduced key that is only the random seed and alpha
+merge_seq_in = merge_seq_in.groupBy { it.getKey().selectedKey('seed', 'alpha') }
+        // convert the resulting map of sweep point results into table format
+        .flatMap { it.collect { k, v -> [k] +  v.collect { cl -> [cl[1], cl[3]] }.flatten() } }
+        // include just the clade sequences from each sweep point
+        .map { it.pick([1, 3]) }
+
 process MergeClades {
     publishDir ms.options.output, mode: 'copy', overwrite: 'true'
 
@@ -196,21 +202,31 @@ process MergeClades {
     }
 }
 
-
 /**
- * Make WGS reads
+ * Prepare a channel which is composed of paired community sequences and profiles
  */
 
-// join the results of both sequence and profile generation
-// pick out just the required variables.
-(merge_seq_out, wgs_in) = merge_seq_out.into(2)
+(merge_seq_out, seq_prof) = merge_seq_out.into(2)
 (merge_prof_out, tmp) = merge_prof_out.into(2)
-wgs_in = wgs_in.map{ [it[0], it[1]] }.phase(tmp).map{ [*it[0], it[1][1]]}
-// add WGS coverage to the sweep, extend our channel
-wgs_in = ms.withVariable('xfold').extend(wgs_in, 'xfold')
+
+        // select just the community sequences
+seq_prof = seq_prof.map { it.pick(1) }
+        // combine with their respective profiles, then flatten and simplify the rows
+        .phase(tmp).map { it = it.flatten(); it.pick(1, 3) }
+
+
+/**
+ * Generate shotgun sequencing reads for for each whole community
+ */
+(seq_prof, wgs_in) = seq_prof.into(2)
+
+        // Add WGS coverage to the sweep
+wgs_in = ms.withVariable('xfold')
+        // extend the channel
+        .extend(wgs_in, 'xfold')
+
 ms.describeSweep('WGS Read Generation')
 
-// from community sequences, generate simulated WGS reads
 process WGS_Reads {
     publishDir ms.options.output, mode: 'copy', overwrite: 'true'
 
@@ -246,18 +262,17 @@ process WGS_Reads {
 
 
 /**
- * Make 3C reads
+ * Generate 3C reads for each whole community
  */
-// join the results of both sequence and profile generation
-// pick out just the required variables.
-(merge_seq_out, hic_in) = merge_seq_out.into(2)
-(merge_prof_out, tmp) = merge_prof_out.into(2)
-hic_in = hic_in.map{ [it[0], it[1]]}.phase(tmp).map{ [*it[0], it[1][1]]}
-// add 3C coverage to the sweep, extend our channel
-hic_in = ms.withVariable('n3c').extend(hic_in, 'n3c')
+(seq_prof, hic_in) = seq_prof.into(2)
+
+        // Add 3C coverage to the sweep
+hic_in = ms.withVariable('n3c')
+        // extend the channel
+        .extend(hic_in, 'n3c')
+
 ms.describeSweep('HiC Read Generation')
 
-// from community sequences, generate 3C sequence
 process HIC_Reads {
     publishDir ms.options.output, mode: 'copy', overwrite: 'true'
 
@@ -289,9 +304,10 @@ process HIC_Reads {
  * Assemble WGS reads
  */
 (wgs_out, asm_in) = wgs_out.into(2)
-asm_in = asm_in.map{[it[0], it[1], it[2], it[3]]}
 
-// assemble each metagenome
+        // select just read-set files (R1, R2) and the community sequences
+asm_in = asm_in.map { it.pick(1, 2, 3) }
+
 process Assemble {
     publishDir ms.options.output, mode: 'copy', overwrite: 'true'
 
@@ -316,14 +332,14 @@ process Assemble {
     }
 }
 
-
 /**
- * Make Truth Tables
+ * Infer Truth Tables for each community by mapping contigs to community references
  */
 (asm_out, truth_in) = asm_out.into(2)
-truth_in = truth_in.map{ [it[0], it[1], it[4]] }
 
-// generate ground-truth tables by aligning assembly contigs to community references
+        // select just contigs and community sequences
+truth_in = truth_in.map{ it.pick(1, 4) }
+
 process Truth {
     publishDir ms.options.output, mode: 'copy', overwrite: 'true'
 
@@ -354,16 +370,16 @@ process Truth {
 
 }
 
-
 /**
  * Map HiC reads to assembled contigs
  */
 (asm_out, hicmap_in) = asm_out.into(2)
-// join 3C reads and assembly results
-hicmap_in = ms.joinChannels(hicmap_in, hic_out, 2)
-        .map{ [it[0], it[1], it[-1]] }
 
-// map 3C reads to assembly contigs
+        // join 3C reads and the results of assembly
+hicmap_in = ms.joinChannels(hicmap_in, hic_out, 2)
+        // select just contigs and 3C reads
+        .map{ it.pick(1, -1) }
+
 process HiCMap {
     publishDir ms.options.output, mode: 'copy', overwrite: 'true'
 
@@ -394,14 +410,14 @@ process HiCMap {
     }
 }
 
-
 /**
  * Generate contig graphs
  */
 (hicmap_out, graph_in) = hicmap_out.into(2)
-graph_in = graph_in.map{[it[0], it[1], it[2], it[3]]}
 
-// contig graphs are generated from 3C mappings
+        // select just hic bam, hic reads and contigs
+graph_in = graph_in.map{ it.pick(1,2,3) }
+
 process Graph {
 
     publishDir ms.options.output, mode: 'copy', overwrite: 'true'
@@ -434,9 +450,10 @@ process Graph {
  * Map WGS reads to contigs
  */
 (asm_out, wgsmap_in) = asm_out.into(2)
-wgsmap_in = wgsmap_in.map{ [it[0], it[1], it[2], it[3]]}
 
-// map WGS reads to contigs
+        // select just contigs, r1 and r2
+wgsmap_in = wgsmap_in.map{ it.pick(1, 2, 3) }
+
 process WGSMap {
     publishDir ms.options.output, mode: 'copy', overwrite: 'true'
 
@@ -469,9 +486,10 @@ process WGSMap {
  * Calculate assembly contig coverage
  */
 (wgsmap_out, cov_in) = wgsmap_out.into(2)
-cov_in = cov_in.map{[it[0], it[1], it[2]]}
 
-// depth inferred from WGS2CTG mapping
+        // select wgs bam and contigs
+cov_in = cov_in.map{ it.pick(1, 2) }
+
 process InferReadDepth {
     publishDir ms.options.output, mode: 'copy', overwrite: 'true'
 

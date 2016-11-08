@@ -70,6 +70,9 @@ class MetaSweeper {
         KryoHelper.register(Community)
         KryoHelper.register(Clade)
 
+        /**
+         * Get just the key from the list (table row)
+         */
         List.metaClass.getKey = { ->
             if (delegate[0] instanceof Key) {
                 return delegate[0]
@@ -77,6 +80,38 @@ class MetaSweeper {
             throw GroovyRuntimeException('The leading element was not an instance of Key')
         }
 
+        /**
+         * Convenience method for picking out list elements by index, where lists are conceptualised
+         * as rows in a table, each containing a leading @{link Key} element.
+         *
+         * The method always returns the first element and tests that it is an instance of Key.
+         * <br>
+         * Both integer indexes and lists of such integers can be supplied together. Lists imply that the
+         * returned elements should be wrapped in a list.
+         *
+         * Supplying no indices still returns the 1 element list containing the key.
+         *
+         * Ranges can be supplied, but will be interpreted as a list of integers and so be returned
+         * wrapped in a list.
+         */
+        List.metaClass.pick = { Object... indices ->
+            def key = delegate[0]
+            assert key instanceof Key : 'First element of row is not a Key. Perhaps unwrap nested elements first'
+            def out = [key]
+            indices.each { rr ->
+                if (rr instanceof List) {
+                    assert rr.any{ ri -> ri instanceof Integer } : 'List contains non-integers'
+                    out << delegate[rr]
+                }
+                else if (rr instanceof Integer) {
+                    out << delegate[rr]
+                }
+                else {
+                    throw new GroovyRuntimeException('arguments may ony be a combination of List<Integer> or Integer')
+                }
+            }
+            out
+        }
     }
 
     static class DataflowUtils {
