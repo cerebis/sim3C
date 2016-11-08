@@ -16,6 +16,7 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
+
 /**
  * Workflow to cluster the results of the primary hic sweep (hic-sweep.nf)
  *
@@ -38,9 +39,14 @@ truths = ms.keyedFrom(file("${ms.options.output}/*.truth"))
 graphs = ms.keyedFrom(file("${ms.options.output}/*.graphml"))
 graphs = ms.joinChannels(graphs, truths, 3)
 
+/**
+ * Cluster using louvain-soft
+ */
 // prepare input channel
 (ls_in, graphs) = graphs.into(2)
-ls_in = ls_in.map { t -> [ms.extendKey(t.getKey(), 'algo', 'louvsoft'), *t[1..-1] ] }
+
+        // extend the key to include cluster algorithm.
+ls_in = ls_in.map { [ ms.extendKey(it.getKey(), 'algo', 'louvsoft'), *it.dropKey() ] }
 
 process LouvSoft {
     publishDir ms.options.output, mode: 'copy', overwrite: 'true'
@@ -64,11 +70,14 @@ process LouvSoft {
     }
 }
 
-ls_out = ls_out.map { it.nameify(1, 'ls_clustering') }
-
+/**
+ * Cluster using louvain-hard
+ */
 // prepare input channel
 (lh_in, graphs) = graphs.into(2)
-lh_in = lh_in.map { t -> [ms.extendKey(t.getKey(), 'algo', 'louvhard'), *t[1..-1]] }
+
+        // extend the key to include cluster algorithm.
+lh_in = lh_in.map { [ ms.extendKey(it.getKey(), 'algo', 'louvhard'), *it.dropKey() ] }
 
 process LouvHard {
     publishDir ms.options.output, mode: 'copy', overwrite: 'true'
@@ -92,11 +101,14 @@ process LouvHard {
     }
 }
 
-lh_out = lh_out.map { it.nameify(1, 'lh_clustering') }
-
+/**
+ * Cluster using OClustR
+ */
 // prepare input channel
 (oc_in, graphs) = graphs.into(2)
-oc_in = oc_in.map { t -> [ms.extendKey(t.getKey(), 'algo', 'ocluster'), *t[1..-1]] }
+
+        // extend the key to include cluster algorithm.
+oc_in = oc_in.map { [ ms.extendKey(it.getKey(), 'algo', 'ocluster'), *it.dropKey() ] }
 
 process Oclustr {
     publishDir ms.options.output, mode: 'copy', overwrite: 'true'
@@ -120,9 +132,9 @@ process Oclustr {
     }
 }
 
-oc_out = oc_out.map { it.nameify(1, 'oc_clustering') }
-
-
+/**
+ * Compute graph statistics
+ */
 // copy channel
 (ginfo_in, graphs) = graphs.into(2)
 
@@ -150,11 +162,12 @@ process GraphInfo {
     }
 }
 
-ginfo_out = ginfo_out.map { it.nameify(1, 'gstat'); it.nameify(2, 'geigh') }
+/**
+ * Compute BCubed for reach clustering against its ground truth
+ */
 
-
-// Collect all clustering results and score
-bc_in = ls_out.mix(lh_out, oc_out).map { t -> t.unwrap() }
+    // Collect all clustering results into a single channel
+bc_in = ls_out.mix(lh_out, oc_out)
 
 process Bcubed  {
     publishDir ms.options.output, mode: 'copy', overwrite: 'true'
@@ -178,9 +191,11 @@ process Bcubed  {
     }
 }
 
-bc_out = bc_out.map { it.nameify(1, 'bc_scores') }
+/**
+ * Compute assembly statistics
+ */
 
-// fetch contig fastas from output dir
+        // fetch contig fastas from output dir
 contigs = ms.keyedFrom(file("${ms.options.output}/*.contigs.fasta"), 2)
 
 process AssemblyStats {
@@ -204,6 +219,3 @@ process AssemblyStats {
         """
     }
 }
-
-astat_out = astat_out.map { it.nameify(1, 'asmstat') }
-

@@ -74,10 +74,13 @@ class MetaSweeper {
          * Get just the key from the list (table row)
          */
         List.metaClass.getKey = { ->
-            if (delegate[0] instanceof Key) {
-                return delegate[0]
-            }
-            throw GroovyRuntimeException('The leading element was not an instance of Key')
+            assert delegate[0] instanceof Key : 'Leading element was not an instance of Key'
+            delegate[0]
+        }
+
+        List.metaClass.dropKey = { ->
+            assert delegate[0] instanceof Key : 'Leading element was not an instance of Key'
+            delegate[1..-1]
         }
 
         /**
@@ -111,6 +114,21 @@ class MetaSweeper {
                 }
             }
             out
+        }
+
+        List.metaClass.pickWithoutKey = { Object... indices ->
+            indices.collect { rr ->
+                if (rr instanceof List) {
+                    assert rr.any{ ri -> ri instanceof Integer } : 'List contains non-integers'
+                    delegate[rr]
+                }
+                else if (rr instanceof Integer) {
+                    delegate[rr]
+                }
+                else {
+                    throw new GroovyRuntimeException('arguments may ony be a combination of List<Integer> or Integer')
+                }
+            }
         }
     }
 
@@ -285,13 +303,12 @@ class MetaSweeper {
          * @return Map containing two keys: 'hi' and 'lo'
          */
         public Map splitKey(int level) {
-            //def values = varMap.values() as List
             List keys = keyList()
             assert level > 0 : 'Depth must be > 0'
             assert level <= keys.size() : "Requested cut point [$level] beyond end. Max [${keys.size()}] levels"
             def splitKey = ['lo': new Key(), 'hi': new Key()]
             splitKey.lo.varMap << this.varMap.subMap(keys[0..<level])
-            splitKey.hi.varMap << this.varMap.subMap(keys[level..-1])
+            splitKey.hi.varMap << this.varMap.subMap(keys[level-1..-1])
             return splitKey
         }
 
@@ -1054,7 +1071,7 @@ class MetaSweeper {
         def keyedFiles = files.collect { f ->
             Key key = new Key(f, numSuffix)
             key.varMap.collect{ k, v ->
-                toAdd[k].add(v.value)
+                toAdd[k].add(v)
             }
             [key, f]
         }
