@@ -17,18 +17,17 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """
+import argparse
+import atexit
+import os
+import subprocess
+import sys
+
+import numpy as np
 from Bio import SeqIO
 
 import abundance
 import io_utils
-
-import argparse
-import os
-import subprocess
-import sys
-import numpy
-import atexit
-
 
 TMP_INPUT = 'seq.tmp'
 TMP_OUTPUT = 'reads.tmp'
@@ -43,6 +42,8 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Simulate a metagenomic data set from an abundance profile')
     parser.add_argument('-C', '--compress', choices=['gzip', 'bzip2'], default=None, help='Compress output files')
     parser.add_argument('-n', '--output-name', metavar='PATH', help='Output file base name', required=True)
+    parser.add_argument('-P', '--profile', dest='profile', required=False,
+                        help='Community abundance profile', metavar='FILE')
     parser.add_argument('-M', '--max-coverage', metavar='INT', type=int, required=True,
                         help='Coverage of must abundant taxon')
     parser.add_argument('-S', '--seed', metavar='INT', type=int, required=True, help='Random seed')
@@ -55,7 +56,7 @@ if __name__ == '__main__':
                         help='Output file for simulated genome coverage table', required=False)
     parser.add_argument('-z', '--num-samples', metavar='INT', type=int, default='1', required=True,
                         help='Number of transect samples')
-    parser.add_argument('--dist', metavar='DISTNAME', choices=['equal', 'uniform', 'lognormal'], required=True,
+    parser.add_argument('--dist', metavar='DISTNAME', choices=['equal', 'uniform', 'lognormal'],
                         help='Abundance profile distribution [equal, uniform, lognormal]')
     parser.add_argument('--lognorm-mu', metavar='FLOAT', type=float, default='1', required=False,
                         help='Log-normal relative abundance mu parameter')
@@ -84,21 +85,28 @@ if __name__ == '__main__':
 
     coverage_file = open(os.path.join(args.output_dir, args.coverage_out), 'w')
 
-    RANDOM_STATE = numpy.random.RandomState(args.seed)
+    RANDOM_STATE = np.random.RandomState(args.seed)
     child_seeds = RANDOM_STATE.randint(LOW_SEED_VALUE, HIGH_SEED_VALUE, args.num_samples).tolist()
+
+    if args.profile:
+        # if specified, read the static profile table from disk rather than calculate at runtime.
+        # this will meant the same abundance profile is used in each sample -- in multisample mode.
+        profile = abundance.read_profile(args.profile)
 
     # generate N simulated communities
     for n in xrange(0, args.num_samples):
 
-        # generate abundance profile from global seeded random state.
-        profile = abundance.relative_profile(RANDOM_STATE, seq_index, mode=args.dist,
-                                             lognorm_mu=args.lognorm_mu, lognorm_sigma=args.lognorm_sigma)
+        # generate abundance profile from global seeded random state -- if not using a static table
+        if not args.profile:
+            profile = abundance.generate_profile(RANDOM_STATE, seq_index, mode=args.dist,
+                                                 lognorm_mu=args.lognorm_mu, lognorm_sigma=args.lognorm_sigma)
 
-        for i, sn in enumerate(profile, start=1):
-            coverage_file.write('{0}\t{1}\t{2}\t{3}\n'.format(n+1, i, sn, profile[sn]*args.max_coverage))
+        for i, chr_abn in enumerate(profile.values(), start=1):
+            coverage_file.write('{0}\t{1}\t{2}\t{3}\t{4}\n'.format(
+                n + 1, i, chr_abn.name, chr_abn.cell, chr_abn.val * args.max_coverage))
 
-        print "Sample {0} Relative Abundances {1}".format(n, ", ".join(
-            map(lambda v: '{0}:{1:.4f}'.format(v[0], v[1]), profile.items())))
+        print 'Sample {0} Relative Abundances:'.format(n)
+        profile.write_table(sys.stdout)
 
         r1_final = '{0}.{1}.r1.fq'.format(base_name, n+1)
         r2_final = '{0}.{1}.r2.fq'.format(base_name, n+1)
@@ -111,18 +119,17 @@ if __name__ == '__main__':
 
         try:
 
-            # iteratively call ART for each taxon, accumulate the results
-            for seq_id in profile:
+            # iteratively call ART for each chromosome in profile, accumulate the results
+            for chr_abn in profile:
 
-                coverage = profile[seq_id] * args.max_coverage
-                print '\tRequesting {0:.4f} coverage for {1}'.format(coverage, seq_id)
+                coverage = chr_abn.val * args.max_coverage
+                print '\tRequesting {0:.4f} coverage for {1}'.format(coverage, chr_abn.name)
 
                 # iteration target for ART
-                ref_seq = seq_index[seq_id]
-                ref_len = len(ref_seq)
-                SeqIO.write([ref_seq], seq_tmp, 'fasta')
-
                 try:
+                    ref_seq = seq_index[chr_abn.name]
+                    ref_len = len(ref_seq)
+                    SeqIO.write([ref_seq], seq_tmp, 'fasta')
 
                     subprocess.check_call([args.art_path,
                                            '-p',   # paired-end sequencing
@@ -153,14 +160,17 @@ if __name__ == '__main__':
                 for seq in SeqIO.parse(r2_tmp, 'fastq'):
                     r2_n += 1
 
+                assert r1_n == r2_n, 'Error: failed to generate an equal number of fwd and rev reads'
+
                 effective_cov = args.read_len * (r1_n + r2_n) / float(ref_len)
-                print '\tGenerated {0} paired-end reads for {1}, {2:.3f} coverage'.format(r1_n, seq_id, effective_cov)
+                print '\tGenerated {0} pairs for {1}, {2:.3f} coverage'.format(r1_n, chr_abn.name, effective_cov)
+
                 if r1_n != r2_n:
                     print 'Error: paired-end counts do not match {0} vs {1}'.format(r1_n, r2_n)
                     sys.exit(1)
 
                 io_utils.multicopy_tostream(r1_tmp, all_R1, output_R1)
-                io_utils.multicopy_tostream(r1_tmp, all_R2, output_R2)
+                io_utils.multicopy_tostream(r2_tmp, all_R2, output_R2)
 
                 os.remove(r1_tmp)
                 os.remove(r2_tmp)

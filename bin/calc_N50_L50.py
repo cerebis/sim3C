@@ -17,9 +17,8 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """
-
-from Bio import SeqIO
 import numpy as np
+from Bio import SeqIO
 
 
 def calculate_N50_and_L50(lengths):
@@ -38,7 +37,7 @@ def calculate_N50_and_L50(lengths):
 
 if __name__ == '__main__':
     import argparse
-    import pipeline_utils as pu
+    import io_utils
 
     def formatter(prog): return argparse.HelpFormatter(prog, width=100, max_help_position=100)
     parser = argparse.ArgumentParser(description='Calculate N50 and L50 from a set of sequences',
@@ -61,4 +60,4 @@ if __name__ == '__main__':
     if args.ofmt == 'plain':
         args.output.write('{N50}\t{L50}\n'.format(**stats))
     else:
-        pu.write_to_stream(args.output, stats, fmt=args.ofmt)
+        io_utils.write_to_stream(args.output, stats, fmt=args.ofmt)

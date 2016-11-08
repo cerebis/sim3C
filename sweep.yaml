@@ -1,0 +1,43 @@
+variables:
+  #level 0
+  seed: [1, 2, 3]
+  # level 1
+  community: !com
+    name: trial
+    clades:
+      - !clade
+        prefix: clade1
+        ancestor: test/ancestor.fa
+        donor: test/donor.fa
+        ntaxa: 5
+        tree: {birth: 0.9, death: 0.5}
+        profile: {mu: 0.1, sigma: 1}
+      - !clade
+        prefix: clade2
+        ancestor: test/ancestor.fa
+        donor: test/donor.fa
+        ntaxa: 3
+        tree: {birth: 0.7, death: 0.3}
+        profile: {mu: 0.2, sigma: 1.5}
+  # level 2
+  alpha: [1, 0.5]
+  # level 3
+  xfold: [1, 2]
+  # level 4
+  n3c: [5000, 10000]
+
+options:
+  num_samples: 1
+  evo:
+    indel_freq: 1e-4
+    small_ht_freq: 1e-4
+    large_ht_freq: 1e-4
+    inversion_freq: 1e-4
+  wgs:
+    read_len: 150
+    ins_len: 450
+    ins_std: 100
+  n3c:
+    inter_prob: 0.9
+    read_len: 150
+  output: out

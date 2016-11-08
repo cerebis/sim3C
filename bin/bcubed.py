@@ -101,7 +101,7 @@ def bcubed_F(td, cd, weights=None):
 if __name__ == '__main__':
 
     import truthtable as tt
-    import pipeline_utils as pu
+    import io_utils
     import argparse
     import sys
 
@@ -153,4 +153,4 @@ if __name__ == '__main__':
         sys.exit(1)
 
     result = bcubed_F(truth, clustering, weights)
-    pu.write_to_stream(args.output, result, fmt=args.ofmt)
+    io_utils.write_to_stream(args.output, result, fmt=args.ofmt)
