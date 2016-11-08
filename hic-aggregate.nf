@@ -20,23 +20,25 @@ import MetaSweeper
 
 MetaSweeper ms = MetaSweeper.fromFile(new File('sweep.yaml'))
 
+a_stats = ms.keyedFrom(file("$ms.options.output/*asmstat"))
 
 // collect grpahs and their statistics
-g_stats = ms.keyedFrom(file('out/*.graphml'))
-    .flatCross(ms.keyedFrom(file('out/*.gstat')))
-    .flatCross(ms.keyedFrom(file('out/*.geigh')))
-
+g_stats = ms.keyedFrom(file("$ms.options.output/*.graphml"))
+    .flatCross(ms.keyedFrom(file("$ms.options.output/*.gstat")))
+    .flatCross(ms.keyedFrom(file("$ms.options.output/*.geigh")))
 
 // collect clusterings and their statistics
-cl_stats = ms.keyedFrom(file('out/*.cl'))
-    .flatCross(ms.keyedFrom(file('out/*.bc')))
+cl_stats = ms.keyedFrom(file("$ms.options.output/*.cl"))
+    .flatCross(ms.keyedFrom(file("$ms.options.output/*.bc")))
 
-stat_sweep = ms.joinChannels(g_stats, cl_stats, 4)
+// join the three channels together at the appropriate sweep depths
+stat_sweep = ms.joinChannels(a_stats, g_stats, 3)
+stat_sweep = ms.joinChannels(stat_sweep, cl_stats, 4)
 
 process Aggregate {
 
     input:
-    set key, file('graph'), file('gstat'), file('geigh'), file('cl'), file('bc') from stat_sweep
+    set key, file('asmstat'), file('graph'), file('gstat'), file('geigh'), file('cl'), file('bc') from stat_sweep
 
     output:
     set key, stdout into all_stats
@@ -49,13 +51,13 @@ process Aggregate {
     }
     else {
         """
-        aggregate.py --fmt yaml gstat geigh bc
+        aggregate.py --fmt yaml asmstat gstat geigh bc
         """
     }
 }
 
 parser = ms.getYamlParser()
 all_stats = all_stats.map{ [ params: it.getKey().map() ] + parser.load(it[1]) }
-fout = file("${ms.options.output}/all_stats.yaml")
+fout = file("$ms.options.output/all_stats.yaml")
 fout.write(parser.dump(all_stats.toList().get()))
 fout << '\n'
