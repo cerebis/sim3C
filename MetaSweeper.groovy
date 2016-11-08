@@ -23,6 +23,8 @@ import groovy.transform.AutoClone
 import groovy.transform.Synchronized
 import groovyx.gpars.dataflow.DataflowChannel
 import groovyx.gpars.dataflow.DataflowQueue
+import org.apache.tools.ant.taskdefs.Sync
+
 import java.nio.file.Path
 import java.io.File
 import java.io.Writer
@@ -198,19 +200,24 @@ class MetaSweeper {
         }
 
         @Synchronized
+        Map map() {
+            this.varMap
+        }
+
+        @Synchronized
         List values() {
-            return varMap.values()
+            return this.varMap.values()
         }
 
         @Synchronized
         List keyList() {
-            return varMap.keySet() as List
+            return this.varMap.keySet() as List
         }
 
         @Synchronized
         Key copy() {
             Key newKey = new Key()
-            varMap.each{ k, v -> newKey.put(k, v)}
+            this.varMap.each{ k, v -> newKey.put(k, v)}
             return newKey
         }
 
@@ -223,7 +230,7 @@ class MetaSweeper {
 
         @Synchronized
         Object put(String k, Object v) {
-            assert varMap.putIfAbsent(k, v) == null : "attempted duplicate insertion of key [$k]"
+            assert this.varMap.putIfAbsent(k, v) == null : "attempted duplicate insertion of key [$k]"
         }
 
         @Synchronized

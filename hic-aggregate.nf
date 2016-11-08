@@ -24,12 +24,12 @@ a_stats = ms.keyedFrom(file("$ms.options.output/*asmstat"))
 
 // collect grpahs and their statistics
 g_stats = ms.keyedFrom(file("$ms.options.output/*.graphml"))
-    .flatCross(ms.keyedFrom(file("$ms.options.output/*.gstat")))
-    .flatCross(ms.keyedFrom(file("$ms.options.output/*.geigh")))
+        .flatCross(ms.keyedFrom(file("$ms.options.output/*.gstat")))
+        .flatCross(ms.keyedFrom(file("$ms.options.output/*.geigh")))
 
 // collect clusterings and their statistics
 cl_stats = ms.keyedFrom(file("$ms.options.output/*.cl"))
-    .flatCross(ms.keyedFrom(file("$ms.options.output/*.bc")))
+        .flatCross(ms.keyedFrom(file("$ms.options.output/*.bc")))
 
 // join the three channels together at the appropriate sweep depths
 stat_sweep = ms.joinChannels(a_stats, g_stats, 3)
@@ -57,7 +57,7 @@ process Aggregate {
 }
 
 parser = ms.getYamlParser()
-all_stats = all_stats.map{ [ params: it.getKey().map() ] + parser.load(it[1]) }
+all_stats = all_stats.map{ [ params: it.getKey().map() ] + parser.load(it.dropKey()) }
 fout = file("$ms.options.output/all_stats.yaml")
 fout.write(parser.dump(all_stats.toList().get()))
 fout << '\n'
