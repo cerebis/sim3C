@@ -54,10 +54,8 @@ process Aggregate {
     }
 }
 
-
 parser = ms.getYamlParser()
-all_stats = all_stats.map{ [params: it[0].varMap.each { entry -> entry.value = entry.value.value }] + parser.load(it[1]) }.toList()
+all_stats = all_stats.map{ [ params: it.getKey().map() ] + parser.load(it[1]) }
 fout = file("${ms.options.output}/all_stats.yaml")
-fout.write(parser.dump(all_stats.get()))
+fout.write(parser.dump(all_stats.toList().get()))
 fout << '\n'
-
