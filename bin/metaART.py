@@ -54,13 +54,13 @@ if __name__ == '__main__':
     parser.add_argument('--log', default='metaART.log', type=argparse.FileType('w'), help='Log file name')
     parser.add_argument('--coverage-out', metavar='FILE', default='coverage.tsv',
                         help='Output file for simulated genome coverage table', required=False)
-    parser.add_argument('-z', '--num-samples', metavar='INT', type=int, default='1', required=True,
+    parser.add_argument('-z', '--num-samples', metavar='INT', type=int, default=1, required=True,
                         help='Number of transect samples')
     parser.add_argument('--dist', metavar='DISTNAME', choices=['equal', 'uniform', 'lognormal'],
                         help='Abundance profile distribution [equal, uniform, lognormal]')
-    parser.add_argument('--lognorm-mu', metavar='FLOAT', type=float, default='1', required=False,
+    parser.add_argument('--lognorm-mu', metavar='FLOAT', type=float, default=1.0, required=False,
                         help='Log-normal relative abundance mu parameter')
-    parser.add_argument('--lognorm-sigma', metavar='FLOAT', type=float, default='1', required=False,
+    parser.add_argument('--lognorm-sigma', metavar='FLOAT', type=float, default=1.0, required=False,
                         help='Log-normal relative abundance sigma parameter')
     parser.add_argument('fasta', metavar='MULTIFASTA',
                         help='Input multi-fasta of all sequences')
@@ -79,9 +79,6 @@ if __name__ == '__main__':
     r1_tmp = os.path.join(args.output_dir, '{0}1.fq'.format(TMP_OUTPUT))
     r2_tmp = os.path.join(args.output_dir, '{0}2.fq'.format(TMP_OUTPUT))
     seq_tmp = os.path.join(args.output_dir, TMP_INPUT)
-
-    all_R1 = io_utils.open_output('{0}.r1.fq'.format(base_name), mode='w', compress=args.compress)
-    all_R2 = io_utils.open_output('{0}.r2.fq'.format(base_name), mode='w', compress=args.compress)
 
     coverage_file = open(os.path.join(args.output_dir, args.coverage_out), 'w')
 
@@ -109,8 +106,13 @@ if __name__ == '__main__':
         print 'Sample {0} Relative Abundances:'.format(n)
         profile.write_table(sys.stdout)
 
-        r1_final = '{0}.{1}.r1.fq'.format(base_name, n+1)
-        r2_final = '{0}.{1}.r2.fq'.format(base_name, n+1)
+        if args.num_samples > 1:
+            r1_final = '{0}.{1}.r1.fq'.format(base_name, n+1)
+            r2_final = '{0}.{1}.r2.fq'.format(base_name, n+1)
+        else:
+            r1_final = '{0}.r1.fq'.format(base_name)
+            r2_final = '{0}.r2.fq'.format(base_name)
+
 
         r1_tmp = os.path.join(args.output_dir, '{0}1.fq'.format(TMP_OUTPUT, n+1))
         r2_tmp = os.path.join(args.output_dir, '{0}2.fq'.format(TMP_OUTPUT, n+1))
@@ -170,8 +172,8 @@ if __name__ == '__main__':
                     print 'Error: paired-end counts do not match {0} vs {1}'.format(r1_n, r2_n)
                     sys.exit(1)
 
-                io_utils.multicopy_tostream(r1_tmp, all_R1, output_R1)
-                io_utils.multicopy_tostream(r2_tmp, all_R2, output_R2)
+                io_utils.multicopy_tostream(r1_tmp, output_R1)
+                io_utils.multicopy_tostream(r2_tmp, output_R2)
 
                 os.remove(r1_tmp)
                 os.remove(r2_tmp)
