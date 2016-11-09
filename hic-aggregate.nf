@@ -56,8 +56,13 @@ process Aggregate {
     }
 }
 
-parser = ms.getYamlParser()
-all_stats = all_stats.map{ [ params: it.getKey().map() ] + parser.load(it.dropKey()) }
-fout = file("$ms.options.output/all_stats.yaml")
-fout.write(parser.dump(all_stats.toList().get()))
-fout << '\n'
+if (params.debug) {
+    println "Debug does not attempt to serialize"
+}
+else {
+    parser = ms.getYamlParser()
+    all_stats = all_stats.map { [params: it.getKey().map()] + parser.load(it.dropKey()) }
+    fout = file("$ms.options.output/all_stats.yaml")
+    fout.write(parser.dump(all_stats.toList().get()))
+    fout << '\n'
+}
