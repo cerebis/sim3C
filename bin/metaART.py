@@ -98,7 +98,8 @@ if __name__ == '__main__':
 
         # generate abundance profile from global seeded random state -- if not using a static table
         if not args.profile:
-            profile = abundance.generate_profile(RANDOM_STATE, seq_index, mode=args.dist,
+            seq_names = [si for si in seq_index]
+            profile = abundance.generate_profile(RANDOM_STATE, seq_names, mode=args.dist,
                                                  lognorm_mu=args.lognorm_mu, lognorm_sigma=args.lognorm_sigma)
 
         for i, chr_abn in enumerate(profile.values(), start=1):
