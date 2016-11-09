@@ -30,7 +30,7 @@
  */
 import MetaSweeper
 
-MetaSweeper ms = MetaSweeper.fromFile(new File('sweep.yaml'))
+MetaSweeper ms = MetaSweeper.fromFile(new File('hic.yaml'))
 
 // fetch truth tables from sweep output directory
 truths = ms.keyedFrom(file("${ms.options.output}/*.truth"))

@@ -18,7 +18,7 @@
  */
 import MetaSweeper
 
-MetaSweeper ms = MetaSweeper.fromFile(new File('sweep.yaml'))
+MetaSweeper ms = MetaSweeper.fromFile(new File('hic.yaml'))
 
 a_stats = ms.keyedFrom(file("$ms.options.output/*asmstat"))
 

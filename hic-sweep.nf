@@ -19,7 +19,7 @@
 
 import MetaSweeper
 
-MetaSweeper ms = MetaSweeper.fromFile(new File('sweep.yaml'))
+MetaSweeper ms = MetaSweeper.fromFile(new File('hic.yaml'))
 
 /**
  * Generate phylogenetic trees for each clade within each community
