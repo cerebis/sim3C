@@ -23,8 +23,6 @@ import groovy.transform.AutoClone
 import groovy.transform.Synchronized
 import groovyx.gpars.dataflow.DataflowChannel
 import groovyx.gpars.dataflow.DataflowQueue
-import org.apache.tools.ant.taskdefs.Sync
-
 import java.nio.file.Path
 import java.io.File
 import java.io.Writer
