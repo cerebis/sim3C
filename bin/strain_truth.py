@@ -19,6 +19,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """
 import argparse
 import subprocess
+import os
 
 from Bio import SeqIO
 
@@ -45,18 +46,19 @@ if __name__ == '__main__':
 
         # align this seq with progressiveMauve and export SNVs
         try:
-            subprocess.call([args.mauve_path + "/linux-x64/progressiveMauve",
+            subprocess.call([os.path.join(args.mauve_path, "linux-x64/progressiveMauve"),
                              '--output=' + seq_id + ".xmfa",  # xmfa output file name
                              args.ref,  # reference genome file name
                              fname])
             subprocess.call(["java", '-cp',
-                             args.mauve_path + "/Mauve.jar",
+                             os.path.join(args.mauve_path, "Mauve.jar"),
                              'org.gel.mauve.analysis.SnpExporter',
                              '-f', seq_id + ".xmfa",
                              '-o', seq_id + ".snvs"])
         except OSError as ex:
-            print "There was an error starting the art_illumina subprocess."
+            print "There was an error starting the mauve subprocess."
             print "You may need to add its location to your PATH or specify it at runtime."
+            print "Mauve was expected at: {0}".format(args.mauve_path)
             raise ex
 
         # collate SNVs to a single table
