@@ -4,6 +4,8 @@ variables:
   # level 1
   community: !com
     name: trial
+    # This workflow is complicated by the need to refer to the clade's ancestral sequence
+    # for SNV detection. Only a single clade is supported for now.
     clades:
       - !clade
         prefix: clade1
@@ -20,7 +22,7 @@ variables:
   n3c: [50000, 100000]
 
 options:
-  num_samples: 8
+  num_samples: 4
   evo:
     indel_freq: 1e-4
     small_ht_freq: 1e-4
