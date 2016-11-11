@@ -254,42 +254,47 @@ process WGS_Reads {
 /**
  * Map WGS reads to reference sequences
  */
+// ancestral sequence for community
+ancestor_in = Channel.value(file(ms.variables.community.clades[0].ancestor))
+
 (wgs_out, map_in) = wgs_out.into(2)
 
         // ref, R1, R2
-map_in = map_in.map{ it.pick(3, 1, 2) }
+map_in = map_in.map{ it.pick(1, 2) }
         // pair the R1s and R2s -- might move this to a method in MetaSweeper
         // then flatten nested lists to become one row per read-pair
-        .flatMap{ GroovyCollections.transpose(it[2].sort(), it[3].sort())
+        .flatMap{ GroovyCollections.transpose(it[1].sort(), it[2].sort())
                     // extend the key to include sample number, extracting it from read-pair file names
                     .collect{ pair ->
                         def nsamp = pair.collect { ri -> (ri =~ /wgs\.(\d+)\.r[12].fq.*$/)[0][1] }
                         assert nsamp.size() == 2 && nsamp[0] == nsamp[1] : 'Error: read-pairs do not share the same sample index'
-                        [ms.extendKey(it.getKey(), 'nsamp', nsamp[0]), it[1]] + pair } }
+                        [ms.extendKey(it.getKey(), 'nsamp', nsamp[0]), *pair] } }
 
 process WGSMap {
     publishDir ms.options.output, mode: 'copy', overwrite: 'true'
 
     input:
-    set key, file(ref), file(reads1), file(reads2) from map_in
+    set key, file(reads1), file(reads2) from map_in
+    file(anc) from ancestor_in
 
     output:
-    set key, file("${key}.wgs2ref.bam"), file(reads1), file(reads2), file(ref) into map_out
+    set key, file("${key}.wgs2ref.bam"), file(reads1), file(reads2) into map_out
 
     script:
     if (params.debug) {
         """
+        if [ ! -e $anc ]; then echo "no ancestral sequence found"; exit 1; fi
         echo $key > ${key}.wgs2ref.bam
         """
     }
     else {
         """
         export PATH=\$EXT_BIN/a5/bin:\$PATH
-        if [ ! -e "${ref}.bwt" ]
+        if [ ! -e "${anc}.bwt" ]
         then
-            bwa index $ref
+            bwa index $anc
         fi
-        bwa mem -t 1 $ref $reads1 $reads2 | samtools view -bS - | samtools sort -l 9 - ${key}.wgs2ref
+        bwa mem -t 1 $anc $reads1 $reads2 | samtools view -bS - | samtools sort -l 9 - ${key}.wgs2ref
         """
     }
 }
@@ -297,18 +302,16 @@ process WGSMap {
 /**
  * Deconvolve the SNVs into strain genotypes
  */
-(map_out, deconv_in) = map_out.into(2)
-
 // ancestral sequence for community
 ancestor_in = Channel.value(file(ms.variables.community.clades[0].ancestor))
 
+(map_out, deconv_in) = map_out.into(2)
             // just the bam files
 deconv_in = deconv_in.map { it.pick(1) }
                 // remove the sample number from key
                 .map { [it.getKey().popLevels(1), *it.dropKey()] }
-                // group bams on new reduced key and sort by base filename
+                // group each samples time-series bams on the new reduced key and sort by base filename
                 .groupTuple(sort: {it.name})
-
 
 process Deconvolve {
     publishDir ms.options.output, mode: 'copy', overwrite: 'true'
@@ -341,7 +344,6 @@ process Deconvolve {
         """
     }
 }
-
 
 /**
  * Record the true strain genotypes
