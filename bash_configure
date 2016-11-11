@@ -36,6 +36,23 @@ then
     return 1
 fi
 
+# Check for Beagle lib
+printf "Checking for BEAGLE_LIB: "
+if [ -z $BEAGLE_LIB ]
+then
+    echo "$(tput setaf 3)Warning: BEAGLE_LIB not set.$(tput sgr0) At runtime Beast needs to locate libhmsbeagle-jni.so"
+else
+    printf "$(tput setaf 2)BEAGLE_LIB=$BEAGLE_LIB$(tput sgr0)"
+    if [ ! -e $BEAGLE_LIB/libhmsbeagle-jni.so ]
+    then
+        echo " $(tput setaf 1)Error: $BEAGLE_LIB/libhmsbeagle-jni.so not found$(tput sgr0)"
+        return 1
+    else
+        echo " $(tput setaf 2)[OK]$(tput sgr0)"
+    fi
+fi
+
+
 #
 # Extract the location of this script to determine the full path
 # for meta-sweeper home. This will be set as METASWEEPER_HOME.
