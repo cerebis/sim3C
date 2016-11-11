@@ -339,7 +339,7 @@ process Deconvolve {
         mv decon.csv ${key}.decon.csv
         mv elbos.csv ${key}.elbos.csv
         mv snv_file.data.R ${key}.snv_file.data.R
-        java -Xmx1000m \$JNI_LIB_PATH -jar \$EXT_BIN/beast/beast.jar beast.xml
+        java -Xmx1000m -jar \$EXT_BIN/beast/beast.jar beast.xml
         java -jar \$EXT_BIN/treeanno/treeannotator.jar -burnin 1000 -heights mean aln.trees ${key}.strains.tre
         """
     }
