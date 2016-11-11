@@ -1,3 +1,13 @@
+#!/usr/bin/env nextflow
+/**
+ * Aggregation of results from HiC clustering
+ *
+ * After hic-sweep.nf and hic-cluster.nf, this workflow to analyse the performance of
+ * each point in the iteration and produce a single file compiling the results. The
+ * results are formatted as an associative collection (Java map, Python dict) in YAML format.
+ *
+ * Usage: hic-aggregate.nf [--debug]
+ */
 /*
  * meta-sweeper - for performing parametric sweeps of simulated
  * metagenomic sequencing experiments.

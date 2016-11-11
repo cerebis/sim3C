@@ -1,3 +1,19 @@
+#!/usr/bin/env nextflow
+/**
+ * Clustering of HiC derived contig graphs (3C-contig graph)
+ *
+ * Input to this workflow are sourced from the output directory of the data generation
+ * workflow -- hic-sweep.nf.
+ *
+ * As the workflow is much simpler than the primary workflow,
+ * channels here are generated in a simpler fashion than with the sweep.
+ *
+ * A complication is the joining of truth tables and contig graphs into a
+ * single channel. This simplifies downstream processes which depend on
+ * both results; such as external scoring metrics./
+ *
+ * Usage: hic-cluster.nf [--debug]
+ */
 /*
  * meta-sweeper - for performing parametric sweeps of simulated
  * metagenomic sequencing experiments.
@@ -15,18 +31,6 @@
  *
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
- */
-
-/**
- * Workflow to cluster the results of the primary hic sweep (hic-sweep.nf)
- *
- * Input to this workflow are sourced from the output directory of the primary
- * sweep workflow. As the workflow is much simpler than the primary workflow,
- * channels here are generated in a simpler fashion than with the sweep.
- *
- * A complication is the joining of truth tables and contig graphs into a
- * single channel. This simplifies downstream processes which depend on
- * both results; such as external scoring metrics.
  */
 import MetaSweeper
 

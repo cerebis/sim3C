@@ -1,3 +1,19 @@
+#!/usr/bin/env nextflow
+/**
+ * HiC data generation workflow
+ *
+ * Using a parametric sweep defined in hic.yaml, generate a set of simulated sequencing data.
+ *
+ * By defining the variable values in hic.yaml, a sweep will be performed as a permutation of
+ * all variables. The results will be copied to the defined output folder (default: out).
+ *
+ * This folder is then used as input for subsequent workflows: hic-cluster.nf and hic-aggregate.nf
+ *
+ * Please note that the depth of the parametric sweep is such that choosing a wide range of values
+ * at multiple levels can result in a very large final set and long computation time.
+ *
+ * Usage: hic-sweep.nf [--debug]
+ */
 /*
  * meta-sweeper - for performing parametric sweeps of simulated
  * metagenomic sequencing experiments.
