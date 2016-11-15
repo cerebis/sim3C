@@ -77,13 +77,23 @@ Before running a meta-sweeper workflow, you must initialise the shell environmen
 3. Check that nextflow is installed and has been added to the path.
   - Either of the following should return the canonical path to the nextflow executable.
   - ```command -v nextflow``` or ```which nextflow```
-4. A further dependency on [beagle-lib](https://github.com/beagle-dev/beagle-lib) exists for the workflow ```timeseries-deconvolution.nf```. This is configured by setting the environmental variable BEAGLE_LIB to point to the directory containing ```libhmsbeagle-jni.so```. For some Linux distributions, beagle-lib can be satisfied through the system package manager. In other cases, users will need to download and [install beagle-lib](https://github.com/beagle-dev/beagle-lib/wiki/LinuxInstallInstructions). Please be certain that all prerequisites described therein are met prior to attempting compilation.
+4. A further dependency on [beagle-lib](https://github.com/beagle-dev/beagle-lib) exists for the [timeseries](#2-time-series-deconvolution) workflow.
+    
+    To use this workflow, users must set the environmental variable BEAGLE_LIB to point to the directory containing ```libhmsbeagle-jni.so``` shared library file. 
+    
+    E.g. ```BEAGLE_LIB=/usr/lib```
+    
+    For some Linux distributions, beagle-lib can be satisfied through the system package manager. In other cases, users will need to download and [install beagle-lib](https://github.com/beagle-dev/beagle-lib/wiki/LinuxInstallInstructions). Please be certain that all prerequisites described therein are met prior to attempting compilation.
 
-We have provided a Bash script which attempts to automate and verify this process. Sourcing this script is done as follows.
+We have provided a Bash script which attempts to automate and verify this process. Sourcing this script is done as follows. __Note__: as we are trying to initialise environmental variables in your shell, you must source this script (```. bash_configure``` OR ```source bash_configure```) rather than execute it (```./bash_configure```). Execution will prevent environmental variables from being set in your shell.
 
 ```bash
 . bash_configure
 ```
+
+Users should pay attention to the output from the script. Problems will be highlighted in red.
+
+
 #### Invocation
 
 After initialisation, users may start sweeps using standard Nextflow invocation syntax.
