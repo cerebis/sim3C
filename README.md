@@ -165,30 +165,50 @@ This topic was our original motivation for creating meta-sweeper. The work culmi
 
 __Configuration and sweep definition__ 
 
-The sweep and how parameters are varied are defined in the configuration file. Configuration file: *hic.yaml*
+The sweep and how parameters are varied are defined in the configuration file. 
+
++ Configuration file: *hic.yaml*
 
 The complete workflow is actually broken into three smaller stages:
 
 1. __Data Generation__ 
     
-    Script: *hic-sweep.nf*
++ Script: *hic-sweep.nf*
 
     Creation of communities, WGS and HiC read simulation, Metagenome assembly and read mapping. How each each parameter should vary within the sweep can be adjusted in the configuration file.
 
 2. __Clustering__
 
-   Script: *hic-cluster.nf*
++ Script: *hic-cluster.nf*
 
    After data generation, for each sample point within the sweep, 3C-contig clustering is preformed by Louvain-hard, Louvain-soft and OClustR algorithms. Afterwards, performance and quality metrics are applied. The BCubed external metric is used to assess the performance of each algorithm relative to the ground truth, while simple assembly (N50, L50) and graph (size, order) statistics are compiled alongside an entropic measure of graphical complexity (H<sub>L</sub>) 
 
 3. __Aggregation__
 
-   Script: *hic-aggregate.nf*
++ Script: *hic-aggregate.nf*
 
-   This is the simplest stage. Here the results from potentially many permuted outcomes are collected and aggregated into a single results file *all_stats.yaml*. The resulting text file in YAML syntax is structured as an array of associative collections, one per sweep point. Results are grouped by type: whether they be assembly, graphical, clustering in origin.
+   This is the simplest stage. Here the results from potentially many permuted outcomes are collected and aggregated into a single results file *all_stats.yaml*. The resulting text file in YAML syntax is structured as an array of associative collections, one per sweep point. Validation results are grouped by the queried target: whether that be the assembly, graph, clustering.
    
    The file can be easily deserialized to an object within any language where YAML support exists, which is widely avaiable: [Python](pyyaml.org), [Java & Groovy](www.snakeyaml.org), [Ruby](https://ruby-doc.org/stdlib-1.9.3/libdoc/yaml/rdoc/YAML.html), [C++](https://github.com/jbeder/yaml-cpp), etc. 
+
+   __Example of all_stats.yaml__
     
+    A single line from the resulting aggreation file, contains the following entries:
+    
+    - *params* - the set of input sweep parameters
+    - *asmstat* - common assembly statistics
+    - *bc* - the weighted BCubed external index (see manuscript)
+    - *geigh* - a entropic measure of graphical complexity (see manuscript)
+    - *gstat* - common graph statistics
+
+```yaml
+params: {seed: '2', alpha: '1', xfold: '1', n3c: '5000', algo: louvsoft}
+asmstat: {L50: 12, N50: 455}
+bc: {completeness: 0.964, f: 0.141, pre: 1.0, rec: 0.0757}
+geigh: {method: eigh, value: 0.1}
+gstat: {density: 0.074, inclusives: 28, isolates: 0, mean_deg: 2.0, median_deg: 2, modularity: 0.964, order: 28, size: 28}
+```
+
 
 ####2. Time-series Deconvolution
 

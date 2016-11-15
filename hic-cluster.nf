@@ -190,7 +190,7 @@ process Bcubed  {
     }
     else {
         """
-        bcubed.py --tfmt yaml --ofmt yaml truth clust ${key}.bc
+        bcubed.py --weighted --tfmt yaml --ofmt yaml truth clust ${key}.bc
         """
     }
 }
