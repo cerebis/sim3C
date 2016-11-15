@@ -169,6 +169,68 @@ The sweep and how parameters are varied are defined in the configuration file.
 
 + Configuration file: *hic.yaml*
 
+The composition of a community is defined under the ```community``` label, where each ```clade``` represents a single explicit phylum, with independent ancestral (VGT), and donar (HGT) sequences. The random seed is used to generate each clade's phylogenetic tree (birth-death) and abundance profile (log-norm). Users can set birth and death rates for trees, as well as log-normal parameters *µ* and *σ* for abundance profiles.  
+
+```yaml
+variables:
+  # level 0
+  # A complete sweep is run for each random seed
+  seed: [1, 2, 3]
+  # level 1
+  # communities are generated for each seed.
+  community: !com
+    name: trial
+    # This community has two clades. 
+    # Clades can have any ancestral/donar sequence, but here they use the same.
+    # Altogether there will be 8 taxa in the community.
+    clades:
+      - !clade
+        prefix: clade1
+        ancestor: test/ancestor.fa
+        donor: test/donor.fa
+        ntaxa: 5
+        tree: {birth: 0.9, death: 0.5}
+        profile: {mu: 0.1, sigma: 1}
+      - !clade
+        prefix: clade2
+        ancestor: test/ancestor.fa
+        donor: test/donor.fa
+        ntaxa: 3
+        tree: {birth: 0.7, death: 0.3}
+        profile: {mu: 0.2, sigma: 1.5}
+  # level 2
+  # phylogenetic scale factor [0..1]. 
+  # the smaller this value, the more closely related each
+  # taxon in a clade become (shorter branches)
+  alpha: [1, 0.5]
+  # level 3
+  # WGS sequencing depth, measured in times coverage
+  xfold: [1, 2]
+  # level 4
+  # The number of HiC read-pairs to generate 
+  n3c: [5000, 10000]
+options:
+  # how many samples. Non-timeseries, this is fixed to one
+  num_samples: 1
+  # probabiltiy factors for SGEvoler stage.
+  evo:
+    indel_freq: 1e-4
+    small_ht_freq: 1e-4
+    large_ht_freq: 1e-4
+    inversion_freq: 1e-4
+  # WGS sequencing factors.
+  wgs:
+    read_len: 150
+    ins_len: 450
+    ins_std: 100
+  # 3C/HiC sequencing factors
+  n3c:
+    inter_prob: 0.9
+    read_len: 150
+  # the outut directory
+  output: out
+```
+
 The complete workflow is actually broken into three smaller stages:
 
 1. __Data Generation__ 
