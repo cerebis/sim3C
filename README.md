@@ -63,7 +63,7 @@ Using '--upgrade' will ensure that the current version of each module is install
 pip install --upgrade -r requirements.txt
 ```
 
-### Usage
+### Basic Usage
 
 **Environmental Configuration**
 
@@ -76,45 +76,113 @@ Before running a meta-sweeper workflow, you must initialise the shell environmen
   - ```export NXF_CLASSPATH=$NXF_CLASSPATH:$METASWEEPER_HOME```
 3. Check that nextflow is installed and has been added to the path.
   - Either of the following should return the canonical path to the nextflow executable.
-  - ```command -v nextflow``` or ```which nextflow``` 
+  - ```command -v nextflow``` or ```which nextflow```
+4. A further dependency on [beagle-lib](https://github.com/beagle-dev/beagle-lib) exists for the workflow ```timeseries-deconvolution.nf```. This is configured by setting the environmental variable BEAGLE_LIB to point to the directory containing ```libhmsbeagle-jni.so```. For some Linux distributions, beagle-lib can be satisfied through the system package manager. In other cases, users will need to download and [install beagle-lib](https://github.com/beagle-dev/beagle-lib/wiki/LinuxInstallInstructions). Please be certain that all prerequisites described therein are met prior to attempting compilation.
 
-We have provided a Bash script which will automate this process. It can be invoked as follows.
+We have provided a Bash script which attempts to automate and verify this process. Sourcing this script is done as follows.
 
 ```bash
 . bash_configure
 ```
-**Sweep Invocation**
+#### Invocation
 
 After initialisation, users may start sweeps using standard Nextflow invocation syntax.
 
-A sweep is defined in the ```sweep.yaml``` configuration file, which employs YAML syntax. An example, along with supporting files in ```test```, has been provided.
+See below for an explanation of how a sweep is defined.
 
-#### Local execution
+__Default execution__
 
-Using regular local processes.
+Any workflow can be started either explicitly via nextflow's syntax:
+
 ```bash
 nextflow run hic-sweep.nf
 ```
 
+or by treating any of the workflows as executables:
+
+
+```bash
+./hic-sweep.nf
+```
+
 **Note:** the nature of mixing concurrency and potentially resource hungry processes (such as genome assembly) can mean that a basic local execution strategy may result in resource stravation and subsequently premature program termination. It is recommended that, in the long run, it is worthwhile for users to configure a [Nextflow supported distributed resource manager (DRM)](https://www.nextflow.io/docs/latest/executor.html) such as SGE, SLURM, etc. to take responsibility for managing available local resources.
 
-#### Distributed execution
+__Command-line options__
 
-With Nextflow, it is easy to submit work to a grid architecture. The specifics of such runtime environments can vary and therefore associated configuration detail can be encapsulated in Nextflow [config profiles](https://www.nextflow.io/docs/latest/config.html#config-profiles). We have provided a few simple examples of such profiles in the default nextflow configuration file ```nextflow.config```. This file is automatically sourced by nextflow at invocation time, so long as it the user does not override the behaviour by using Nextflow's ```-C``` *(capital C)* [command-line option](https://www.nextflow.io/docs/latest/config.html#configuration-file).
+Nextflow's base command structure can be seen by invoking ```nextflow``` with no options. While help with each internal command can be found by ```nextflow help [command]```.
 
-**Submission Examples for meta-sweeper**
+When invoking the ```nextflow run```, two important options are ```-profile``` and ```-resume```. The former permits a shorthand for including additional configuration details at runtime (perhaps when using different execution environments), while the latter informs Nextflow attempt and resume an interrupted workflow.
+
+__Execution Target__
+
+For even a relatively shallow parametric sweep, the sum total of computational resources required can be significant. Scheduling systems (SGE, PBS, SLURM, etc) are ideally suited to managing this task and Nextflow makes directing execution to them easy. 
+
+Specific scheduler submission details vary, as can the resources required for individual tasks. This information (executor, queue name, cpu, memory, disk) can be encapsulated either broadly in a [Config profile](https://www.nextflow.io/docs/latest/config.html#config-profiles) or per-Process using [Process directives](https://www.nextflow.io/docs/latest/process.html#directives).
+
+We have provided a few simple examples of such profiles within the default nextflow configuration file ```nextflow.config```, which unless overridden, is automatically sourced by Nextflow at invocation.
+
+__Submission Examples__
 
 Submit to SGE queue manager.
 
 ```bash
-nextflow run hic-sweep.nf --profile sge
+./hic-sweep.nf -profile sge
 ```
 
 Submit to a PBS queue manager.
 
 ```bash
-nextflow run hic-sweep.nf --profile pbs
+./hic-sweep.nf -profile pbs
 ```
+
+### Implemented Workflows
+
+In an effort to highlight meta-sweeper's utility, three workflows have been implemented covering different analysis topics, applicable to studied by parametric sweep. Each can be adjusted through their YAML configuration, and therefore can be tailored to user requirements.
+
+We encourage users to modify these examples for their own purposes.
+
+#### Sweep Definition
+
+For each workflow that follows, a configuration file exists which permits users to modify how the parameters involved vary. This text file is easy to understand and follows YAML syntax. There is a separate configuration file for each workflow, since they do not all share the same parameter set.
+  
+Users are free to extend or reduce the number of values taken on by any parameter but must define at least one value. Defining a single value essentially fixes a parameter in the sweep. Users should be aware that excessively fine sampling of even a few parameters can lead to an exponential explosion in the full parameter space, potentially outstripping the computational resources at hand.
+
+Replicates can be performed by defining more than one seed value.
+
+####1. Metagenomic HiC
+
+This topic was our original motivation for creating meta-sweeper. The work culminated in the publication [**Deconvoluting simulated metagenomes: the performance of hard- and soft- clustering algorithms applied to metagenomic chromosome conformation capture (3C)**](https://doi.org/10.7717/peerj.2676) and meta-sweeper is intended to allow for straightforward reproduction of that work.
+
+__Configuration and sweep definition__ 
+
+The sweep and how parameters are varied are defined in the configuration file. Configuration file: *hic.yaml*
+
+The complete workflow is actually broken into three smaller stages:
+
+1. __Data Generation__ 
+    
+    Script: *hic-sweep.nf*
+
+    Creation of communities, WGS and HiC read simulation, Metagenome assembly and read mapping. How each each parameter should vary within the sweep can be adjusted in the configuration file.
+
+2. __Clustering__
+
+   Script: *hic-cluster.nf*
+
+   After data generation, for each sample point within the sweep, 3C-contig clustering is preformed by Louvain-hard, Louvain-soft and OClustR algorithms. Afterwards, performance and quality metrics are applied. The BCubed external metric is used to assess the performance of each algorithm relative to the ground truth, while simple assembly (N50, L50) and graph (size, order) statistics are compiled alongside an entropic measure of graphical complexity (H<sub>L</sub>) 
+
+3. __Aggregation__
+
+   Script: *hic-aggregate.nf*
+
+   This is the simplest stage. Here the results from potentially many permuted outcomes are collected and aggregated into a single results file *all_stats.yaml*. The resulting text file in YAML syntax is structured as an array of associative collections, one per sweep point. Results are grouped by type: whether they be assembly, graphical, clustering in origin.
+   
+   The file can be easily deserialized to an object within any language where YAML support exists, which is widely avaiable: [Python](pyyaml.org), [Java & Groovy](www.snakeyaml.org), [Ruby](https://ruby-doc.org/stdlib-1.9.3/libdoc/yaml/rdoc/YAML.html), [C++](https://github.com/jbeder/yaml-cpp), etc. 
+    
+
+####2. Time-series Deconvolution
+
+####3. Euk 
 
 * * *
 
