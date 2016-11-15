@@ -1,4 +1,4 @@
-meta-sweeper
+Meta-Sweeper
 ============
 
 By expressing microbial community composition and the details of metagenomic experiments in parametric form, meta-sweeper aims to permit the assessment of analytical methods under variation in both community and experiment.
@@ -88,7 +88,7 @@ We have provided a Bash script which attempts to automate and verify this proces
 
 After initialisation, users may start sweeps using standard Nextflow invocation syntax.
 
-See below for an explanation of how a sweep is defined.
+[See below](#sweep-definition) for an explanation of how a sweep is defined.
 
 __Default execution__
 
