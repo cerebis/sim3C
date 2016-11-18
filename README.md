@@ -173,7 +173,7 @@ The sweep and how parameters are varied are defined in the configuration file.
 
 ![Alpha vs ANI][fig1-ani]
 
-[fig1-ani]:} /doc/ani.png ""Fig1. *ANI<sub>b</sub> as a function of *α<sub>BL</sub>*"
+[fig1-ani]: /doc/ani.png ""Fig1. *ANI<sub>b</sub> as a function of *α<sub>BL</sub>*"
 
 + Configuration file: *hic.yaml*
 
