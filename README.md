@@ -171,7 +171,9 @@ The sweep and how parameters are varied are defined in the configuration file.
     
     + ```n3c:``` the number of HiC read-pairs to generate from the given community. For very simple, evolutionarily divergent microbial communities (where assembly often is very complete) 50k to 100k pairs may prove sufficient, while for larger or more complex communities or those with highly similar taxa, gains have been seen with more than 1M pairs.
 
-![Alpha vs ANI](/doc/ani.png "Fig1. *ANI<sub>b</sub> as a function of *α<sub>BL</sub>*")
+![Alpha vs ANI][fig1-ani]
+
+[fig1-ani]:} /doc/ani.png ""Fig1. *ANI<sub>b</sub> as a function of *α<sub>BL</sub>*"
 
 + Configuration file: *hic.yaml*
 
