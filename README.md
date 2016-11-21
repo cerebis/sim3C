@@ -7,15 +7,30 @@ Prerequisites
 -------------
 
 ### Nextflow 
-- Presently requires **Oracle** Java 7+. 
-- Workflows require a *Linux x86-64* runtime environment due to dependence on external statically linked tools.
+
+- Requires **Java SE 8** or later.
+  - due to Groovy's use of java.util.function.BiFunction
+- Workflows require a *Linux x86-64* runtime environment 
+  - only external binary tools for this architecture are supplied
 
 ### Biopython from Pip
-- GCC or equivalent
-- Python libraries and header files needed for Python development (Debian: python-dev, Redhat: python-devel)
 
-### Pysam from Pip
-- zlib library and headers (Debian: zlib1g-dev, Redhat: zlib-devel)
+- GCC
+- Python libraries and header files needed for Python development
+  - Package for Debian: python-dev
+  - Package for Redhat: python-devel
+
+### PySAM from Pip
+
+- zlib library and headers
+  - Package for Debian: zlib1g-dev
+  - Package for Redhat: zlib-devel
+  
+### Beagle Library
+
+- Timeseries workflow requires beagle-lib
+  - Requires autoconf tool-chain.
+  - Well documented at: [beagle-lib](https://github.com/beagle-dev/beagle-lib/wiki/LinuxInstallInstructions)
 
 Installation
 ------------
@@ -30,7 +45,7 @@ assuming you have met the prerequisite of installing Java 7+. Note, you will nee
 
 In addition, meta-sweeper expects that the main executable ```nextflow``` is accessible on the path. Users can move this file to a location already on the path or add its parent directory to the path.
 
-#### Python modules
+### Python modules
 
 The workflows depend on the following Python modules, which must be installed prior to using it:
 
@@ -47,11 +62,11 @@ The workflows depend on the following Python modules, which must be installed pr
 
 Some of these dependencies can be installed using distributional package manager, but not all will be found.
 
-On ubuntu
+#### On ubuntu
 ```bash
 sudo apt-get install python-biopython python-pandas python-yaml python-networkx python-pysam
 ```
-On Redhat
+#### On Redhat
 ```bash
 sudo yum install python-biopython python-pandas python-yaml python-networkx python-pysam
 ```
@@ -59,13 +74,15 @@ A more general and complete solution is to use [pip](https://pip.pypa.io/en/stab
 
 Using '--upgrade' will ensure that the current version of each module is installed. Though we have not encountered this problem, a note of caution. Upgrading Python modules through Pip, and thus outside of your system's package manager, does incur the potential risk of version conflicts if your installed system packages depend on obsolete or otherwise deprecated functionality with a given Python module. If in doubt, you could try the same command below but omit the '--upgrade' option.
 
+#### Installing requirements with pip
 ```bash
 pip install --upgrade -r requirements.txt
 ```
 
-### Basic Usage
+Setup
+-----
 
-**Environmental Configuration**
+### Configuration Steps
 
 Before running a meta-sweeper workflow, you must initialise the shell environment. 
 
@@ -83,24 +100,28 @@ Before running a meta-sweeper workflow, you must initialise the shell environmen
     
     E.g. ```BEAGLE_LIB=/usr/lib```
     
-    For some Linux distributions, beagle-lib can be satisfied through the system package manager. In other cases, users will need to download and [install beagle-lib](https://github.com/beagle-dev/beagle-lib/wiki/LinuxInstallInstructions). Please be certain that all prerequisites described therein are met prior to attempting compilation.
+    For some Linux distributions, beagle-lib can be satisfied through the system package manager. In other cases, users will need to download and [install beagle-lib](https://github.com/beagle-dev/beagle-lib/wiki/LinuxInstallInstructions) manaully. Please be certain to their documentation and make sure that all listed prerequisites described therein are met prior to attempting compilation.
 
-We have provided a Bash script which attempts to automate and verify this process. Sourcing this script is done as follows. __Note__: as we are trying to initialise environmental variables in your shell, you must source this script (```. bash_configure``` OR ```source bash_configure```) rather than execute it (```./bash_configure```). Execution will prevent environmental variables from being set in your shell.
+### Automated Setup
 
+We have provided a Bash script which attempts to automate and verify the setup process. __Please Note__: as we are initialising environmental variables for your current shell, you must source this script (```. bash_configure``` OR ```source bash_configure```). Do not instead make it executable, as running it (```./bash_configure```) will not result in changes to your shell's environment.
+
+#### Sourcing setup script
 ```bash
 . bash_configure
 ```
 
-Users should pay attention to the output from the script. Problems will be highlighted in red.
+Users should pay attention to the output from the script. We attempt to highlight problems in red.
 
 
-#### Invocation
+Workflow Invocation
+-------------------
 
 After initialisation, users may start sweeps using standard Nextflow invocation syntax.
 
 [See below](#sweep-definition) for an explanation of how a sweep is defined.
 
-__Default execution__
+### Default execution
 
 Any workflow can be started either explicitly via nextflow's syntax:
 
@@ -117,13 +138,29 @@ or by treating any of the workflows as executables:
 
 **Note:** the nature of mixing concurrency and potentially resource hungry processes (such as genome assembly) can mean that a basic local execution strategy may result in resource stravation and subsequently premature program termination. It is recommended that, in the long run, it is worthwhile for users to configure a [Nextflow supported distributed resource manager (DRM)](https://www.nextflow.io/docs/latest/executor.html) such as SGE, SLURM, etc. to take responsibility for managing available local resources.
 
-__Command-line options__
+### Common command-line options
 
-Nextflow's base command structure can be seen by invoking ```nextflow``` with no options. While help with each internal command can be found by ```nextflow help [command]```.
+Nextflow will describe its' base interface by invoking ```nextflow``` with no options. While detailed help with each command can be accessed by ```nextflow help [command]```.
 
-When invoking the ```nextflow run```, two important options are ```-profile``` and ```-resume```. The former permits a shorthand for including additional configuration details at runtime (perhaps when using different execution environments), while the latter informs Nextflow attempt and resume an interrupted workflow.
+Workflows are executed using ```nextflow run [options] [workflow]``` command syntax. When invoking a workflow, two important options are: 
 
-__Execution Target__
+#### ```-profile [name]``` 
+
+Shorthand for including additional configuration details at runtime (perhaps when using different execution environments) and predefined in a nextflow configuration file. For simplicity, these can be placed in the default nextflow.config and we have provided a few examples for a few different execution targets [described below](#execution-target).
+    
+#### ```-resume``` 
+
+For many reasons, long running workflows may be interrupted either inadvertently or intentionally. For convenience and potentially a large time-saver, it is possible to restart or resume such jobs.
+ 
+ #### ```-queue-size [Int]```
+ 
+ Limit concurrency to __[Int]__ simultaneous running tasks.
+ 
+ #### ```-work-dir```
+ 
+ Specify a working directory other than the default ```work```. This can he useful when separately running multiple workflows and you wish to inspect the contents of working directories without having to also determine which sub-folders pertain to which workflow.
+
+### Execution Targets
 
 For even a relatively shallow parametric sweep, the sum total of computational resources required can be significant. Scheduling systems (SGE, PBS, SLURM, etc) are ideally suited to managing this task and Nextflow makes directing execution to them easy. 
 
@@ -131,16 +168,44 @@ Specific scheduler submission details vary, as can the resources required for in
 
 We have provided a few simple examples of such profiles within the default nextflow configuration file ```nextflow.config```, which unless overridden, is automatically sourced by Nextflow at invocation.
 
-__Submission Examples__
+#### Predefined Profiles in nextflow.conf
 
-Submit to SGE queue manager.
+Although we have attempeted to use the simplest appropriate defaults, queue names in particular often vary between deployments. Additionally, it is possible to specify many more criteria for your particular queuing system.
+```
+profiles {
+        
+        standard {
+                process.executor = 'local'
+        }
 
+        sge {
+                process.executor = 'sge'
+                queue = 'all.q'
+                clusterOptions = '-S /bin/bash'
+        }
+
+        pbs {
+                process.executor = 'pbs'
+                queue = 'batch'
+                clusterOptions = '-S /bin/bash'
+        }
+
+        pbspro {
+                process.executor = 'pbspro'
+                queue = 'workq'
+                clusterOptions = '-S /bin/bash'
+        }
+}
+```
+
+#### Submission Examples
+
+__Submit to SGE queue manager__
 ```bash
 ./hic-sweep.nf -profile sge
 ```
 
-Submit to a PBS queue manager.
-
+__Submit to a PBS queue manager__
 ```bash
 ./hic-sweep.nf -profile pbs
 ```
@@ -155,7 +220,7 @@ To tailor a sweep your preferences, users simply to extend or reduce the number 
 
 To generate replicates, simply define multiple seed values.
 
-__Configuration and sweep definition__ 
+#### Configuration and sweep definition 
 
 The sweep and how parameters are varied are defined in the configuration file. 
 
@@ -236,13 +301,15 @@ options:
   # the outut directory
   output: out
 ```
-### Implemented Workflows
+
+Implemented Workflows
+---------------------
 
 In an effort to highlight meta-sweeper's utility, three workflows have been implemented covering different analysis topics, applicable to studied by parametric sweep. Each can be adjusted through their YAML configuration, and therefore can be tailored to user requirements.
 
 We encourage users to modify these examples for their own purposes.
 
-####1. Metagenomic HiC
+### 1. Metagenomic HiC
 
 This topic was our original motivation for creating meta-sweeper. The work culminated in the publication [**Deconvoluting simulated metagenomes: the performance of hard- and soft- clustering algorithms applied to metagenomic chromosome conformation capture (3C)**](https://doi.org/10.7717/peerj.2676) and meta-sweeper is intended to allow for straightforward reproduction of that work.
 
@@ -269,15 +336,17 @@ The complete workflow is actually broken into three smaller stages:
    
    The file can be easily deserialized to an object within any language where YAML support exists, which is widely avaiable: [Python](pyyaml.org), [Java & Groovy](www.snakeyaml.org), [Ruby](https://ruby-doc.org/stdlib-1.9.3/libdoc/yaml/rdoc/YAML.html), [C++](https://github.com/jbeder/yaml-cpp), etc. 
 
-   __Example of all_stats.yaml__
+#### Explanation of results
     
-    A single line from the resulting aggreation file, contains the following entries:
+The resulting aggreation file ```all_stats.yaml``` lists both the input parameters  and their resulting outcomes one sweep point per line. The structure of each line is a map of maps (Java/Groovy) or dict of dicts (Python), which can be easily deserialized. We chose not to create a flat table by default as there is a loss of context in doing so. Users can create a flat CSV table using the supplied script ```tabular_results.py```, which can then be inspected in your chosen software (Excel, R, etc).
+
+The serialized YAML object contains the following entries:
     
-    - *params* - the set of input sweep parameters
-    - *asmstat* - common assembly statistics
-    - *bc* - the weighted BCubed external index (see manuscript)
-    - *geigh* - a entropic measure of graphical complexity (see manuscript)
-    - *gstat* - common graph statistics
+- *params* - the set of input sweep parameters
+- *asmstat* - common assembly statistics
+- *bc* - the weighted BCubed external index (see manuscript)
+- *geigh* - a entropic measure of graphical complexity (see manuscript)
+- *gstat* - common graph statistics
 
 ```yaml
 params: {seed: '2', alpha: '1', xfold: '1', n3c: '5000', algo: louvsoft}
@@ -287,10 +356,8 @@ geigh: {method: eigh, value: 0.1}
 gstat: {density: 0.074, inclusives: 28, isolates: 0, mean_deg: 2.0, median_deg: 2, modularity: 0.964, order: 28, size: 28}
 ```
 
+### 2. Time-series Deconvolution
 
-####2. Time-series Deconvolution
-
-####3. Euk 
 
 * * *
 
