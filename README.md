@@ -255,11 +255,9 @@ How parameters vary in a sweep are defined in the [configuration file](#configur
     
     + ```n3c:``` For those workflows which deal with HiC sequencing, this variable defines the number of HiC read-pairs generated from a given community. In the case of 3C-contig graphs, 100,000 to 1 million pairs may prove sufficient for a simple community of four bacterial species. For larger or more complex communities, resulting in more fragmented WGS assemblies, extending as sweep beyond 1 million pairs is recommended.
 
-![Alpha vs ANI][fig1-ani]
-
 <p>
 <img src="/doc/ani.png" alt="Figure 1: ANIb vs Alpha" height="364" width="450">
-<strong>Figure 1</strong>. Average nucleotide identity as a function of scale factor <strong>α<sub>BL</sub></strong>
+<br><br><strong>Figure 1</strong>. Average nucleotide identity as a function of scale factor <strong>α<sub>BL</sub></strong>
 </p>
 
 #### Configuration file example
