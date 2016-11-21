@@ -117,32 +117,34 @@ Users should pay attention to the output from the script. We attempt to highligh
 Workflow Invocation
 -------------------
 
-After initialisation, users may start sweeps using standard Nextflow invocation syntax.
+After initialisation, users may start sweeps using standard Nextflow invocation syntax or simply execute the chosen workflow scrip itself. Users will most likely wish to modify sweep to suit their own purposes, [see below](#sweep-definition) for an explanation of how a sweep is defined.
 
-[See below](#sweep-definition) for an explanation of how a sweep is defined.
+### Running a workflow
 
-### Default execution
+Any workflow can be started either using the following syntax:
+```bash
+nextflow run [options] <workflow>
+```
 
-Any workflow can be started either explicitly via nextflow's syntax:
-
+For instance, running Metagenomic-Hic stage 1 can be like so:
 ```bash
 nextflow run hic-sweep.nf
 ```
 
-or by treating any of the workflows as executables:
-
-
+or even more simply, by treating any workflows as an executable:
 ```bash
 ./hic-sweep.nf
 ```
 
-**Note:** the nature of mixing concurrency and potentially resource hungry processes (such as genome assembly) can mean that a basic local execution strategy may result in resource stravation and subsequently premature program termination. It is recommended that, in the long run, it is worthwhile for users to configure a [Nextflow supported distributed resource manager (DRM)](https://www.nextflow.io/docs/latest/executor.html) such as SGE, SLURM, etc. to take responsibility for managing available local resources.
+It is worth mentioning here that not all of our workflow scripts below are completely independent. For instance, Metagenomic-HiC is broken into three stages, with the second and third stages depending on the results of the previous stage. Therefore users must begin with stage 1 in this case.  
 
-### Common command-line options
+**Note:** the nature of mixing concurrency and potentially resource hungry processes (such as genome assembly) can mean that a simple local execution strategy may result in resource starvation and subsequently premature program termination. It is recommended, in the long run, that users make use of a [Nextflow supported distributed resource manager (DRM)](https://www.nextflow.io/docs/latest/executor.html) such as SGE, SLURM, etc. 
 
-Nextflow will describe its' base interface by invoking ```nextflow``` with no options. While detailed help with each command can be accessed by ```nextflow help [command]```.
+When a DRM is available as a [target of execution](#execution-targets), workflows can be easily submitted with only minimal configurational change to execute on potentially many physical nodes. Most frequently, this entails changes to the queue name for the target system. Even with only a single physical machine however, a well configured DRM can take better responsibility for managing available compute resources in completing a workflow's set of tasks.
 
-Workflows are executed using ```nextflow run [options] [workflow]``` command syntax. When invoking a workflow, two important options are: 
+### Common options
+
+Four options which users may frequently employ are (note: single hyphen) as follows.
 
 #### ```-profile [name]``` 
 
@@ -160,17 +162,30 @@ Limit concurrency to an integer number **[Int]** of simultaneous running tasks.
  
 Specify a working directory other than the default ```work```. This can he useful when separately running multiple workflows and you wish to inspect the contents of working directories without having to also determine which sub-folders pertain to which workflow.
 
+###  Further command-line options
+
+Nextflow will describe its' base interface by invoking it alone on the command-line:
+```bash
+nextflow
+``` 
+
+Detailed help with each command can be accessed as follows: 
+```bash
+nextflow help [command]
+```
+
 ### Execution Targets
 
 For even a relatively shallow parametric sweep, the sum total of computational resources required can be significant. Scheduling systems (SGE, PBS, SLURM, etc) are ideally suited to managing this task and Nextflow makes directing execution to them easy. 
 
-Specific scheduler submission details vary, as can the resources required for individual tasks. This information (executor, queue name, cpu, memory, disk) can be encapsulated either broadly in a [Config profile](https://www.nextflow.io/docs/latest/config.html#config-profiles) or per-Process using [Process directives](https://www.nextflow.io/docs/latest/process.html#directives).
+Specific scheduler submission details vary, as can the resources required for individual tasks. This information (executor, queue name, cpu, memory, disk) can be encapsulated either broadly in a [config profile](https://www.nextflow.io/docs/latest/config.html#config-profiles) or per-process using [process directives](https://www.nextflow.io/docs/latest/process.html#directives).
 
-We have provided a few simple examples of such profiles within the default nextflow configuration file ```nextflow.config```, which unless overridden, is automatically sourced by Nextflow at invocation.
+We have provided a few simple examples of such profiles within the default nextflow configuration file [nextflow.config](#predefined-profiles), which is automatically sourced by Nextflow at invocation.
 
-#### Predefined Profiles in nextflow.conf
+#### Predefined profiles
 
-Although we have attempeted to use the simplest appropriate defaults, queue names in particular often vary between deployments. Additionally, it is possible to specify many more criteria for your particular queuing system.
+We have attempted to use the simplest DRM-appropriate defaults, but queue names in particular frequently vary between deployments. Additionally, it is possible to specify [many more criteria](https://www.nextflow.io/docs/latest/config.html#scope-executor) for your particular queuing system.
+
 ```
 profiles {
         
@@ -212,46 +227,63 @@ __Submit to a PBS queue manager__
 
 ### Sweep Definition
 
-The parameters (termed variables) which define a sweep and other details which do not vary (termed options), are specified in a configuration file using YAML syntax. All varied parameters are found under the top label '*variables*', while the remainder are found under the top label '*options*'. 
+Primarily, a parametric sweep is defined by a set of variables which are sampled over a predefined range and granularity. In addition, there can be many other values held constant throughout the sweep, which are otherwise necessary and relevant to declare.
 
-For the workflows implemented below, the convention is a separate config file for each worflow. This may not be strictly necessary, but permits keeping the size and complexity of the configuration file to the minimum required for a given workflow. This can avoid unintended side-effects when changes with regard to one workflow are taken up in another.
+Effectively, the sweep is a sample-space where it is up to the user to decide on how finely the space is explored, whether the change between points is linear or otherwise. Once decided, the user declares the set of values for each variable in a simple configuration file. 
+
+Within the sweep configuration file, all varied parameters are grouped under the '*variables*' label, while the remaining fixed values are collected under the '*options*' label. 
+
+For the workflows implemented below, we have opted for a separate file for each worflow. Although not be strictly necessary, it permits keeping the size and complexity of the configuration file to a minimum, while more importantly avoiding unintended side-effects when changes with regard to one workflow are inadvertently taken up in another.
   
 To tailor a sweep your preferences, users simply to extend or reduce the number of values taken on by any parameter. Note that at least one value must be defined for any variable used in a workflow. By defining a single value, a parameter is effectively fixed in the sweep. Ambition can quickly get the best of you and users should keep in mind that fine sampling of even a few parameters can lead to an exponential explosion in the full parameter space, potentially outstripping the computational resources at hand.
 
-To generate replicates, simply define multiple seed values.
+For any workflow, replicates are easily generated by defining multiple seeds.
 
-#### Configuration and sweep definition 
+#### Sweep variables 
 
-The sweep and how parameters are varied are defined in the configuration file. 
+How parameters vary in a sweep are defined in the [configuration file](#configuration-file-example). For the implemented workflows, there are a few more common parameters which we will now mention.
 
-+ ```variables:``` This top most label is where values of all swept parameters are defined. Please note unfortunately that it is not possible to create new variables and have them dynamically added to a workflow.
++ ```variables:``` This top most label is where swept parameters are defined. **Please note**: unfortunately, it is not possible to create new variables and have them dynamically added to a workflow. Only the values taken on in each case  may be changed.
     
-    + ```seed:``` defining multiple seeds will result in replicates of the entire sweep.
+    + ```seed:``` 
+       
+      Where possible, all executables which rely on random seeds receive this value. Defining multiple seeds will result in replicates of the entire sweep.
     
-    + ```community:``` defines the composition of a community, where each ```clade``` represents a single explicit phylum, with independent ancestral, and donar (LGT) sequences. Phylogenetic trees are currently generated by birth-death simulation and abundance profiles are modeled as log-normal distributions. Additionally, users have access to the number of taxa per clade, birth and death rates and log-normal parameters *µ* and *σ*.
+    + ```community:``` 
+    
+      The critical entry defining the community to be analyzed. Here, a community is compose of an arbitrary number of phylogenetic clades. Each clade may use independent ancestral and donar (LGT) sequences. The per-clade phylogenetic trees are generated by birth-death simulation and pre-clade abundance profiles modeled as log-normal distributions. The size of each clade (number of taxa), the birth and death rates and log-normal parameters *µ* and *σ* are all user accessible. When multiple clades are defined, a final step merges them into a single normalized community.
      
-    + ```alpha:``` branch length scale factor *α<sub>BL</sub>*, which controls the degree of evolutionary divergence between related taxa. With an recommended range of [0..1], where for a star topology *α<sub>BL</sub>* ≅ 1, *ANI<sub>b</sub>* < 85% and *α<sub>BL</sub>* < 0.2, *ANI<sub>b</sub>* > 95% (Figure 1).
+    + ```alpha:``` 
+      
+      The branch length scale factor *α<sub>BL</sub>* controls the degree of evolutionary divergence between related taxa, with an recommended range of [0..1]. For a semi-qualitative perspective, evolutionary divergence measured in *ANI<sub>b</sub>* (average nucleotide identity by BLAST alignment) for an isotropic star topology will see *ANI<sub>b</sub>* < 85% (species divergence) when *α<sub>BL</sub>* ≅ 1 and *ANI<sub>b</sub>* > 95% (strain divergence) when *α<sub>BL</sub>* < 0.2 (Figure 1).
     
-    + ```xfold:``` times-coverage for conventional whole-genome shotgun sequencing of the given community. For a communit of 50 Mbp, xfold=10 would mean 500 Mbp of total sequencing or ~ 1.6M 150bp paired end reads.
+    + ```xfold:``` 
     
-    + ```n3c:``` the number of HiC read-pairs to generate from the given community. For very simple, evolutionarily divergent microbial communities (where assembly often is very complete) 50k to 100k pairs may prove sufficient, while for larger or more complex communities or those with highly similar taxa, gains have been seen with more than 1M pairs.
+      Coverage, as measured in "times-genome-size" and used for workflows which make reference to conventional whole-genome shotgun sequencing of a community. For a community of 50 Mbp, xfold=10 would mean 500 Mbp of total sequencing or ~ 1.6 million 150 bp paired-end reads.
+    
+    + ```n3c:```
+      
+      For those workflows which deal with HiC sequencing, this variable defines the number of HiC read-pairs generated from a given community. In the case of 3C-contig graphs, 100,000 to 1 million pairs may prove sufficient for a simple community of four bacterial species. For larger or more complex communities, resulting in more fragmented WGS assemblies, extending as sweep beyond 1 million pairs is recommended.
 
 ![Alpha vs ANI][fig1-ani]
 
 [fig1-ani]: /doc/ani.png ""Fig1. *ANI<sub>b</sub> as a function of *α<sub>BL</sub>*"
 
-+ Configuration file: *hic.yaml*
+#### Configuration file example
+
+Taken from Metagenomic-HiC workflow, the following is an example of a sweep configuration file in YAML syntax.
 
 ```yaml
 variables:
-  # level 0
-  # A complete sweep is run for each random seed
+  # Level 0
+  # A complete sweep is run for each random seed defined here. In this case
+  # we will have 3 replicates of the entire sweep.
   seed: [1, 2, 3]
-  # level 1
-  # communities are generated for each seed.
+  # Level 1
+  # Communities are generated for each seed.
   community: !com
     name: trial
-    # This community has two clades. 
+    # A community of two clades. 
     # Clades can have any ancestral/donar sequence, but here they use the same.
     # Altogether there will be 8 taxa in the community.
     clades:
@@ -269,36 +301,37 @@ variables:
         ntaxa: 3
         tree: {birth: 0.7, death: 0.3}
         profile: {mu: 0.2, sigma: 1.5}
-  # level 2
-  # phylogenetic scale factor [0..1]. 
-  # the smaller this value, the more closely related each
-  # taxon in a clade become (shorter branches)
-  alpha: [1, 0.5]
-  # level 3
+  # Level 2
+  # Phylogenetic scale factor [0..1]. 
+  # The smaller this value, the more closely related
+  # taxa in each clade become.
+  alpha: [1, 0.5, 0.1]
+  # Level 3
   # WGS sequencing depth, measured in times coverage
-  xfold: [1, 2]
-  # level 4
+  xfold: [1, 5, 10]
+  # Level 4
   # The number of HiC read-pairs to generate 
-  n3c: [5000, 10000]
+  n3c: [50000, 100000, 1000000]
+
 options:
-  # how many samples. Non-timeseries, this is fixed to one
+  # How many samples. For most workflows, this is set to 1.
   num_samples: 1
-  # probabiltiy factors for SGEvoler stage.
+  # Probabilties supplied to sgEvolver when generating community sequences.
   evo:
     indel_freq: 1e-4
     small_ht_freq: 1e-4
     large_ht_freq: 1e-4
     inversion_freq: 1e-4
-  # WGS sequencing factors.
+  # WGS sequencing.
   wgs:
     read_len: 150
     ins_len: 450
     ins_std: 100
-  # 3C/HiC sequencing factors
+  # 3C/HiC sequencing 
   n3c:
     inter_prob: 0.9
     read_len: 150
-  # the outut directory
+  # The output directory
   output: out
 ```
 
