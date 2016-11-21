@@ -152,13 +152,13 @@ Shorthand for including additional configuration details at runtime (perhaps whe
 
 For many reasons, long running workflows may be interrupted either inadvertently or intentionally. For convenience and potentially a large time-saver, it is possible to restart or resume such jobs.
  
- #### ```-queue-size [Int]```
+#### ```-queue-size [Int]```
  
- Limit concurrency to __[Int]__ simultaneous running tasks.
+Limit concurrency to __[Int]__ simultaneous running tasks.
  
- #### ```-work-dir```
+#### ```-work-dir```
  
- Specify a working directory other than the default ```work```. This can he useful when separately running multiple workflows and you wish to inspect the contents of working directories without having to also determine which sub-folders pertain to which workflow.
+Specify a working directory other than the default ```work```. This can he useful when separately running multiple workflows and you wish to inspect the contents of working directories without having to also determine which sub-folders pertain to which workflow.
 
 ### Execution Targets
 
@@ -338,7 +338,9 @@ The complete workflow is actually broken into three smaller stages:
 
 #### Explanation of results
     
-The resulting aggreation file ```all_stats.yaml``` lists both the input parameters  and their resulting outcomes one sweep point per line. The structure of each line is a map of maps (Java/Groovy) or dict of dicts (Python), which can be easily deserialized. We chose not to create a flat table by default as there is a loss of context in doing so. Users can create a flat CSV table using the supplied script ```tabular_results.py```, which can then be inspected in your chosen software (Excel, R, etc).
+The resulting aggreation file ```all_stats.yaml``` lists both the input parameters  and their resulting outcomes one sweep point per line. The structure of each line is a map of maps (Java/Groovy) or dict of dicts (Python), which can be easily deserialized. We chose not to create a flat table by default as there is a loss of context in doing so. 
+
+Users can create a flat CSV table using the supplied script ```tabular_results.py```, which can then be inspected in your chosen software (Excel, R, etc). The results, where each row refers to the input parameters and results for a single point in the sweep.
 
 The serialized YAML object contains the following entries:
     
