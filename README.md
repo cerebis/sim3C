@@ -259,7 +259,7 @@ How parameters vary in a sweep are defined in the [configuration file](#configur
 
 [fig1-ani]: /doc/ani.png ""Fig1. *ANI<sub>b</sub> as a function of *α<sub>BL</sub>*"
 
-<img src="/doc/ani.png" border="1" alt="Figure 1: ANIb vs Alpha" height="100" width="100">
+<img src="/doc/ani.png" border="2" alt="Figure 1: ANIb vs Alpha" height="240" width="240">
 
 #### Configuration file example
 
