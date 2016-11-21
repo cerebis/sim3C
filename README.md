@@ -257,12 +257,10 @@ How parameters vary in a sweep are defined in the [configuration file](#configur
 
 ![Alpha vs ANI][fig1-ani]
 
-[fig1-ani]: /doc/ani.png ""Fig1. *ANI<sub>b</sub> as a function of *α<sub>BL</sub>*"
-
-<figure>
+<p>
 <img src="/doc/ani.png" alt="Figure 1: ANIb vs Alpha" height="364" width="450">
-<figcaption>Figure 1. Average nucleotide identity as a function of scale factor <strong>α<sub>BL</sub></strong></figcaption>
-</figure>
+<strong>Figure 1</strong>. Average nucleotide identity as a function of scale factor <strong>α<sub>BL</sub></strong>
+</p>
 
 #### Configuration file example
 
