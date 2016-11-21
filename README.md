@@ -146,7 +146,7 @@ Workflows are executed using ```nextflow run [options] [workflow]``` command syn
 
 #### ```-profile [name]``` 
 
-Shorthand for including additional configuration details at runtime (perhaps when using different execution environments) and predefined in a nextflow configuration file. For simplicity, these can be placed in the default nextflow.config and we have provided a few examples for a few different execution targets [described below](#execution-target).
+Shorthand for including additional configuration details at runtime (perhaps when using different execution environments) and predefined in a nextflow configuration file under a given label **[name]**. For simplicity, these can be placed in the default nextflow.config and we have provided a few examples for a few different execution targets [described below](#execution-target).
     
 #### ```-resume``` 
 
@@ -154,7 +154,7 @@ For many reasons, long running workflows may be interrupted either inadvertently
  
 #### ```-queue-size [Int]```
  
-Limit concurrency to __[Int]__ simultaneous running tasks.
+Limit concurrency to an integer number **[Int]** of simultaneous running tasks.
  
 #### ```-work-dir```
  
