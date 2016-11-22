@@ -425,6 +425,14 @@ Example: two sweep points from all_stats.yaml
   gstat: {density: 0.006, inclusives: 342, isolates: 0, mean_deg: 2.006, median_deg: 2, modularity: 0.997, order: 342, size: 343}
 ```
 
+which when converted to tabular format would look like:
+
+```csv
+,params-xfold,params-alpha,params-n3c,params-seed,params-algo,asmstat-L50,asmstat-N50,gstat-mean_deg,gstat-density,gstat-modularity,gstat-median_deg,gstat-inclusives,gstat-isolates,gstat-order,gstat-size,geigh-method,geigh-value,bc-pre,bc-rec,bc-completeness,bc-f
+0,1,1,5000,2,louvsoft,12,455,2.0,0.0741,0.964,2,28,0,28,28,eigh,,1.0,0.0757,0.964,0.141
+1,2,1,5000,3,louvsoft,130,568,2.006,0.006,0.997,2,342,0,342,343,eigh,-0.0,1.0,0.008,0.953,0.0152
+```
+
 ### 2. Time-series Deconvolution
 
 A test case for metagenome deconvolution by non-negative matrix factorisation of a time-series data-set.
