@@ -2,6 +2,7 @@ Included Tools and Modules
 --------------------------
 
 ### Modules
++ __abundance.py__
 + __Art.py__
 + __empirical_model.py__
 + __io_utils.py__
@@ -10,7 +11,6 @@ Included Tools and Modules
 + __truthtable.py__
 
 ### Tools
-+ __abundance.py__
 + __aggregate.py__
 + __alignmentToTruth.py__
 + __bamToEdges.py__
