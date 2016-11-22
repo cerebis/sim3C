@@ -1,33 +1,14 @@
 Included Tools
 ---------------
 
-### 1. Art.py
-### 2. Psl.py
-### abundance.py
-### aggregate.py
-### alignmentToTruth.py
-### bamToEdges.py
-### bcubed.py
-### calc_N50_L50.py
-### cl2fa.py
-### empirical_model.py
-### filter_graph.py
-### graph_complexity.py
-### graph_stats.py
-### io_utils.py
-### louvain_cluster.py
-### measure_accuracy.py
-### metaART.py
-### oclustr.py
-### pipeline_utils.py
-### profile_generator.py
-### profile_merge.py
-### scale_tree.py
-### sim3C.py
-### simForward.py
-### snvbpnmft.py
-### strain_truth.py
-### tabular_results.py
-### tree_generator.py
-### truthtable.py
-### validate_sweep.py
+### 1. abundance.py
+### 2. aggregate.py
+### 3. alignmentToTruth.py
+### 4. Art.py
+### 5. bamToEdges.py
+### 6. bcubed.py
+### 7. calc_N50_L50.py
+### 8. cl2fa.py
+### 9. empirical_model.py
+### 10. filter_graph.py
+### 11. graph_complexity.py
