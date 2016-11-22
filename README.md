@@ -327,6 +327,32 @@ options:
   output: out
 ```
 
+#### Output file naming
+
+At each point in the sweep, files which are considered outputs from the workflow are copied to the output folder [default: out]. For each such output file, the file name is used to pass-on information about the the parameters used at that given point in the sweep. This information is encoded as a structured string using two delimiters. These delimiters were chosen to avoid conflicts with system constraints, avoid unicode and be at least *somewhat* human readable. 
+
+This string is then prepended to the respective file name, which afterwards follows the regular convention of encoding information about the type of file.
+
+__Name/Value encoding:__
+
+Per-parameter syntax is delimited by a ```#``` character as follows: 
+    
+    [parameter_name]#[parameter_value]
+
+__Chaining parameters:__
+
+Multiple parameters are joined by the three character string ```-+-```:
+
+    [parameter_name1]#[parameter_value1]-+-[parameter_name2]#[parameter_value2]
+
+__Example:__
+
+As an example, the following would be the file names for WGS reads R1/R2 pertaining to the sweep point seed=1, *α<sub>BL</sub>*=0.5, xfold=10:
+    
+     seed#1-+-alpha#0.5-+-xfold#10.wgs.r1.fq.gz
+     seed#1-+-alpha#0.5-+-xfold#10.wgs.r2.fq.gz
+
+
 Implemented Workflows
 ---------------------
 
@@ -334,29 +360,39 @@ In an effort to highlight the utility of Meta-Sweeper, we have implemented three
 
 We encourage users to modify these examples for their own purposes.
 
+The sweep is varied over five levels:
+
+1. Random seed
+2. Community structure
+3. Community divergence (*α<sub>BL</sub>*)
+4. WGS coverage (xfold)
+5. HiC depth (n3c)
+
 ### 1. Metagenomic-HiC
 
 This topic was our original motivation for creating Meta-Sweeper. The work culminated in the publication [**Deconvoluting simulated metagenomes: the performance of hard- and soft- clustering algorithms applied to metagenomic chromosome conformation capture (3C)**](https://doi.org/10.7717/peerj.2676), where Meta-Sweeper represents a refinement of the methods employed in that work, allowing for its straightforward reproduction.
 
-The complete workflow has been broken into three stages, which we feel are often of separate interest.
+The complete workflow has been broken into three stages, which we feel are often of separate interest. 
 
-1. #### Stage 1: Data Generation 
+__Sweep file:__ *hic.yaml*
+
+#### Stage 1: Data Generation 
     
-+ Script: *hic-sweep.nf*
++ __Script:__ *hic-sweep.nf*
 
     This first stage is responsible for the creation of communities, WGS and HiC read simulation, metagenome assembly and read mapping. The results from this stage are copied to the output folder [default: out]. How each each parameter should vary within the sweep can be adjusted in the configuration file. We would recommend users consider storage and CPU requirements prior to expanding the size of the sweep.
     
     __Note__: the definition as it stands in only toy-like in size.
     
-2. #### Stage 2: Clustering
+#### Stage 2: Clustering
 
-+ Script: *hic-cluster.nf*
++ __Script:__ *hic-cluster.nf*
 
    After stage 1 has completed, stage 2 out clustering of the 3C-contig graphs resulting from stage 1. At present, clustering is performed with the algorithms: Louvain-hard, Louvain-soft and OClustR. Afterwards, performance and quality metrics are applied. The BCubed external metric is used to assess the performance of each algorithm relative to the ground truth, while simple statistics for assembly (N50, L50) and graphs (size, order) are compiled alongside an entropic measure of graphical complexity (H<sub>L</sub>) 
 
-3. #### Stage 3: Aggregation
+#### Stage 3: Aggregation
 
-+ Script: *hic-aggregate.nf*
++ __Script:__ *hic-aggregate.nf*
 
    Acting effectively as a *reduce* function, this is the simplest stage. Here the results from potentially many permuted outcomes are collected and aggregated into a single results file *all_stats.yaml*.
    
@@ -388,8 +424,35 @@ Example: two sweep points from all_stats.yaml
   gstat: {density: 0.006, inclusives: 342, isolates: 0, mean_deg: 2.006, median_deg: 2, modularity: 0.997, order: 342, size: 343}
 ```
 
-### 2. Time-series Deconvolution
+- ###Time-series Deconvolution
 
+A test case for metagenome deconvolution by non-negative matrix factorisation of a time-series data-set.
+
+This workflow is implemented as a single script. Internally, the stages of execution involve:
+ 
+1. Community creation
+2. WGS read simulation
+3. WGS read mapping
+4. NNMF based deconvolution
+ 
+The sweep is varied over four levels:
+
+1. Random seed
+2. Community structure
+3. Community divergence (*α<sub>BL</sub>*)
+4. WGS coverage (xfold)
+
+This workflow does not involve HiC sequencing data.
+
+__Script:__ *timeseries-deconvolute.nf*
+
+__Sweep file:__ *timeseries.yaml*
+
+The final outcome of the deconvolution process for each sweep point can be found in ${key}.truth.report.txt, where ${key} is a structured string encoding information about the parameters used at a given point in the sweep.
+ 
+ E.g. For seed=1, *α<sub>BL</sub>*=0.5 and xfold=10, the report file would be named:
+    
+     seed#1-+-alpha#0.5-+-xfold#10.truth.report.txt
 
 * * *
 
