@@ -330,42 +330,41 @@ options:
 Implemented Workflows
 ---------------------
 
-In an effort to highlight meta-sweeper's utility, three workflows have been implemented covering different analysis topics, applicable to studied by parametric sweep. Each can be adjusted through their YAML configuration, and therefore can be tailored to user requirements.
+In an effort to highlight the utility of Meta-Sweeper, we have implemented three workflows covering different metagenomic analysis topics we feel applicable to study by parametric sweep. In each case, the workflow definition can be adjusted through the respective configuration file, tailoring it to user requirements.
 
 We encourage users to modify these examples for their own purposes.
 
-### 1. Metagenomic HiC
+### 1. Metagenomic-HiC
 
-This topic was our original motivation for creating meta-sweeper. The work culminated in the publication [**Deconvoluting simulated metagenomes: the performance of hard- and soft- clustering algorithms applied to metagenomic chromosome conformation capture (3C)**](https://doi.org/10.7717/peerj.2676) and meta-sweeper is intended to allow for straightforward reproduction of that work.
+This topic was our original motivation for creating Meta-Sweeper. The work culminated in the publication [**Deconvoluting simulated metagenomes: the performance of hard- and soft- clustering algorithms applied to metagenomic chromosome conformation capture (3C)**](https://doi.org/10.7717/peerj.2676), where Meta-Sweeper represents a refinement of the methods employed in that work, allowing for its straightforward reproduction.
 
+The complete workflow has been broken into three stages, which we feel are often of separate interest.
 
-The complete workflow is actually broken into three smaller stages:
-
-1. __Data Generation__ 
+1. #### Stage 1: Data Generation 
     
 + Script: *hic-sweep.nf*
 
-    Creation of communities, WGS and HiC read simulation, Metagenome assembly and read mapping. How each each parameter should vary within the sweep can be adjusted in the configuration file.
-
-2. __Clustering__
+    This first stage is responsible for the creation of communities, WGS and HiC read simulation, metagenome assembly and read mapping. The results from this stage are copied to the output folder [default: out]. How each each parameter should vary within the sweep can be adjusted in the configuration file. We would recommend users consider storage and CPU requirements prior to expanding the size of the sweep.
+    
+    __Note__: the definition as it stands in only toy-like in size.
+    
+2. #### Stage 2: Clustering
 
 + Script: *hic-cluster.nf*
 
-   After data generation, for each sample point within the sweep, 3C-contig clustering is preformed by Louvain-hard, Louvain-soft and OClustR algorithms. Afterwards, performance and quality metrics are applied. The BCubed external metric is used to assess the performance of each algorithm relative to the ground truth, while simple assembly (N50, L50) and graph (size, order) statistics are compiled alongside an entropic measure of graphical complexity (H<sub>L</sub>) 
+   After stage 1 has completed, stage 2 out clustering of the 3C-contig graphs resulting from stage 1. At present, clustering is performed with the algorithms: Louvain-hard, Louvain-soft and OClustR. Afterwards, performance and quality metrics are applied. The BCubed external metric is used to assess the performance of each algorithm relative to the ground truth, while simple statistics for assembly (N50, L50) and graphs (size, order) are compiled alongside an entropic measure of graphical complexity (H<sub>L</sub>) 
 
-3. __Aggregation__
+3. #### Stage 3: Aggregation
 
 + Script: *hic-aggregate.nf*
 
-   This is the simplest stage. Here the results from potentially many permuted outcomes are collected and aggregated into a single results file *all_stats.yaml*. The resulting text file in YAML syntax is structured as an array of associative collections, one per sweep point. Validation results are grouped by the queried target: whether that be the assembly, graph, clustering.
+   Acting effectively as a *reduce* function, this is the simplest stage. Here the results from potentially many permuted outcomes are collected and aggregated into a single results file *all_stats.yaml*.
    
-   The file can be easily deserialized to an object within any language where YAML support exists, which is widely avaiable: [Python](pyyaml.org), [Java & Groovy](www.snakeyaml.org), [Ruby](https://ruby-doc.org/stdlib-1.9.3/libdoc/yaml/rdoc/YAML.html), [C++](https://github.com/jbeder/yaml-cpp), etc. 
+   This results file (e.g. ```out/all_stats.yaml```) is organized as a list, where each element encompasses both the input parameters and resulting outcomes from one sweep point. The elements are stored as associative collections, one per sweep point, where validation results from stage 2 are grouped by the statistical test performed. 
+   
+   The file can be deserialized to an object within any language where support for YAML exists (i.e. [Python](pyyaml.org), [Java & Groovy](www.snakeyaml.org), [Ruby](https://ruby-doc.org/stdlib-1.9.3/libdoc/yaml/rdoc/YAML.html), [C++](https://github.com/jbeder/yaml-cpp), etc.) If users do not wish to deal with a serialized object, the result file can be converted to a flat table using the script ```tabular_results.py```. When converted to tabular form, rows represent the results for each point in the sweep.
 
-#### Explanation of results
-    
-The resulting aggreation file ```all_stats.yaml``` lists both the input parameters  and their resulting outcomes one sweep point per line. The structure of each line is a map of maps (Java/Groovy) or dict of dicts (Python), which can be easily deserialized. We chose not to create a flat table by default as there is a loss of context in doing so. 
-
-Users can create a flat CSV table using the supplied script ```tabular_results.py```, which can then be inspected in your chosen software (Excel, R, etc). The results, where each row refers to the input parameters and results for a single point in the sweep.
+#### Results file definition
 
 The serialized YAML object contains the following entries:
     
@@ -375,12 +374,18 @@ The serialized YAML object contains the following entries:
 - *geigh* - a entropic measure of graphical complexity (see manuscript)
 - *gstat* - common graph statistics
 
+Example: two sweep points from all_stats.yaml
 ```yaml
-params: {seed: '2', alpha: '1', xfold: '1', n3c: '5000', algo: louvsoft}
-asmstat: {L50: 12, N50: 455}
-bc: {completeness: 0.964, f: 0.141, pre: 1.0, rec: 0.0757}
-geigh: {method: eigh, value: 0.1}
-gstat: {density: 0.074, inclusives: 28, isolates: 0, mean_deg: 2.0, median_deg: 2, modularity: 0.964, order: 28, size: 28}
+- params: {seed: '2', alpha: '1', xfold: '1', n3c: '5000', algo: louvsoft}
+  asmstat: {L50: 12, N50: 455}
+  bc: {completeness: 0.964, f: 0.141, pre: 1.0, rec: 0.0757}
+  geigh: {method: eigh, value: null}
+  gstat: {density: 0.0741, inclusives: 28, isolates: 0, mean_deg: 2.0, median_deg: 2, modularity: 0.964, order: 28, size: 28}
+- params: {seed: '3', alpha: '1', xfold: '2', n3c: '5000', algo: louvsoft}
+  asmstat: {L50: 130, N50: 568}
+  bc: {completeness: 0.953, f: 0.0152, pre: 1.0, rec: 0.008}
+  geigh: {method: eigh, value: -0.0}
+  gstat: {density: 0.006, inclusives: 342, isolates: 0, mean_deg: 2.006, median_deg: 2, modularity: 0.997, order: 342, size: 343}
 ```
 
 ### 2. Time-series Deconvolution
