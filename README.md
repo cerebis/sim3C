@@ -457,7 +457,7 @@ __Script:__ *timeseries-deconvolute.nf*
 
 __Sweep file:__ *timeseries.yaml*
 
-The final outcome of the deconvolution process for each sweep point can be found in ${key}.truth.report.txt, where ${key} is a structured string encoding information about the parameters used at a given point in the sweep.
+The final outcome of the deconvolution process for each sweep point can be found in the files following the naming strategy: ${key}.truth.report.txt. Here, the variable ${key} represents the structured string encoding information about the parameters used at a given point in the sweep. [This is explained above](#output-file-naming)
  
  E.g. For seed=1, *α<sub>BL</sub>*=0.5 and xfold=10, the report file would be named:
     
