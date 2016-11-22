@@ -361,6 +361,10 @@ In an effort to highlight the utility of Meta-Sweeper, we have implemented three
 
 We encourage users to modify these examples for their own purposes.
 
+### 1. Metagenomic-HiC
+
+This topic was our original motivation for creating Meta-Sweeper. The work culminated in the publication [**Deconvoluting simulated metagenomes: the performance of hard- and soft- clustering algorithms applied to metagenomic chromosome conformation capture (3C)**](https://doi.org/10.7717/peerj.2676), where Meta-Sweeper represents a refinement of the methods employed in that work, allowing for its straightforward reproduction.
+
 The sweep is varied over five levels:
 
 1. Random seed
@@ -369,13 +373,9 @@ The sweep is varied over five levels:
 4. WGS coverage (xfold)
 5. HiC depth (n3c)
 
-### 1. Metagenomic-HiC
-
-This topic was our original motivation for creating Meta-Sweeper. The work culminated in the publication [**Deconvoluting simulated metagenomes: the performance of hard- and soft- clustering algorithms applied to metagenomic chromosome conformation capture (3C)**](https://doi.org/10.7717/peerj.2676), where Meta-Sweeper represents a refinement of the methods employed in that work, allowing for its straightforward reproduction.
+__Sweep file:__ *hic.yaml*
 
 The complete workflow has been broken into three stages, which we feel are often of separate interest. 
-
-__Sweep file:__ *hic.yaml*
 
 #### Stage 1: Data Generation 
     
