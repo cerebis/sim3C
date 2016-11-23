@@ -1,7 +1,28 @@
 Meta-Sweeper
 ============
 
-By expressing microbial community composition and the details of metagenomic experiments in parametric form, meta-sweeper aims to permit the assessment of analytical methods under variation in both community and experiment.
+### Table of Contents
+
+1. [__Introduction__](#introduction)
+2. [__Prerequisites__](#prerequisites)
+3. [__Installation__](#installation)
+4. [__Setup__](#setup)
+5. [__Workflow Invocation__](#workflow-invocation)
+6. [__Sweep Definition__](#sweep-definition)
+7. [__Implemented Workflows__](#implemented-workflows)
+8. [__Included Tools__](#included-tools)
+    - [Read simulation](#read-simulation)
+    - [Clustering algorithms](#clustering-algorithms)
+
+Introduction
+------------
+
+Meta-Sweeper represents a refinement of our ongoing work, where we have been aiming to explore the value of introducing HiC sequencing data to conventional whole-genome shotgun DNA sequencing. To accomplish this, we set out to conduct a parametric sweep of select experimental parameters associated with such things as depth of coverage and within-community evolutionary divergence. At each sample point in the sweep, we applied an analysis meant to deconvolve this simulated community and the work culminated in the publication: [**Deconvoluting simulated metagenomes: the performance of hard- and soft- clustering algorithms applied to metagenomic chromosome conformation capture (3C)**](https://doi.org/10.7717/peerj.2676).
+
+We believe parametric sweeps have general applicability within bioinformatics beyond our own topic of research. That this approach could potentially be useful to other researchers; whether that be developing algorithms, exploring questions of necessary (or perhaps even optimal) experimental conditions or simply the comparative assessment of existing tools.
+
+To that end, we decided to invest the time necessary to resolve our processes into a more coherent and easily deployed system. We hope this will prove useful to others.  
+
 
 Prerequisites
 -------------
@@ -258,7 +279,7 @@ How parameters vary in a sweep are defined in the [configuration file](#configur
 
 <p>
 <br>
-<img src="/doc/ani.png" alt="Figure 1: ANIb vs Alpha" height="364" width="450">
+<img src="/docs/ani.png" alt="Figure 1: ANIb vs Alpha" height="364" width="450">
 <br><strong>Figure 1</strong>. Average nucleotide identity as a function of scale factor <strong>α<sub>BL</sub></strong>
 </p>
 
@@ -462,6 +483,27 @@ The final outcome of the deconvolution process for each sweep point can be found
  E.g. For seed=1, *α<sub>BL</sub>*=0.5 and xfold=10, the report file would be named:
     
      seed#1-+-alpha#0.5-+-xfold#10.truth.report.txt
+
+
+Included Tools
+--------------
+
+### Read Simulation
+
+- __metaART –__ Simulation of whole-genome shotgun paired-end reads from communities. 
+  
+  metaART simply wraps the art_illumina binary from ART ([Huang et al, 2012](https://doi.org/10.1093/bioinformatics/btr708)), which among many machine types and sequencing modes, simulates Illumina paired-end reads. Our extension allows users to associate relative abundances with the supplied reference sequences. Profiles can be either supplied in the form of a pre-cast table or determined at runtime from a chosen distribution. The association of abundance profiles with the reference sequences, permits the simulated sampling of metagenomic communities or multi-chromosomal clonal sequencing projects with variable copy-number.
+
+- __sim3C –__ Simulation of HiC/3C read-pairs.
+Art module -- full read error model. noise. duplication of sites, etc.
+
+### Clustering Algorithms
+- __louvain_cluster –__ Louvain community detection based graph clustering. Both traditional hard-clustering solutions of the best partition and a naive soft-clustering option ([DeMaere and Darling, 2016](https://doi.org/10.7717/peerj.2676)).
+
+- __oclustr –__ An implementation of the OClustR graph hard-clustering algorithm ([Pérez-Suárez et al, 2013](http://dx.doi.org/10.1016/j.neucom.2013.04.025)).
+
+
+
 
 * * *
 
