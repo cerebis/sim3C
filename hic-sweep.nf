@@ -299,16 +299,17 @@ process HIC_Reads {
     set key, file("${key}.hic.fa.gz") into hic_out
 
     script:
+    hic_sites = ms.options.n3c.hic_sites ? '--site-dup' : ''
     if (params.debug) {
         """
-        echo "sim3C.py -C gzip -r ${key['seed']} -n $n3c -l ${ms.options['n3c']['read_len']} \
+        echo "sim3C.py $hic_sites -C gzip -r ${key['seed']} -n $n3c -l ${ms.options['n3c']['read_len']} \
             --inter-prob ${ms.options['n3c']['inter_prob']} --profile $comm_prof $comm_seq \
             ${key}.hic.fa.gz" > ${key}.hic.fa.gz
         """
     }
     else {
         """
-        sim3C.py -C gzip -r ${key['seed']} -n $n3c -l ${ms.options['n3c']['read_len']} \
+        sim3C.py $hic_sites -C gzip -r ${key['seed']} -n $n3c -l ${ms.options['n3c']['read_len']} \
             --inter-prob ${ms.options['n3c']['inter_prob']} --profile $comm_prof $comm_seq ${key}.hic.fa.gz
         wait_on_openfile.sh ${key}.hic.fa.gz
         """
