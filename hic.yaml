@@ -40,4 +40,5 @@ options:
   n3c:
     inter_prob: 0.9
     read_len: 150
+    hic_site: true
   output: out
