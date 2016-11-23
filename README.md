@@ -6,10 +6,25 @@ Meta-Sweeper
 1. [__Introduction__](#introduction)
 2. [__Prerequisites__](#prerequisites)
 3. [__Installation__](#installation)
+    - [Nextflow](#nextflow)
+    - [Python modules](#python-modules)
 4. [__Setup__](#setup)
+    - [Configuration steps](#configuration-steps)
+    - [Automated setup](#automated-setup)
 5. [__Workflow Invocation__](#workflow-invocation)
+    - [Running a workflow](#running-a-workflow)
+    - [Common options](#common-options)
+    - [Further options](#further-command-line-options)
+    - [Execution targets](#execution-targets)
+    - [Predefined profiles](#predefined-profiles)
+    - [Submission examples](#submission-examples)
 6. [__Sweep Definition__](#sweep-definition)
+    - [Sweep variables](#sweep-variables)
+    - [Configuration file](#configuration-file-example)
+    - [Output files](#output-file-naming)
 7. [__Implemented Workflows__](#implemented-workflows)
+    - [Metagenomic HiC](#1-metagenomic-hic)
+    - [Time-series deconvolution](#2-time-series-deconvolution)
 8. [__Included Tools__](#included-tools)
     - [Read simulation](#read-simulation)
     - [Clustering algorithms](#clustering-algorithms)
@@ -27,31 +42,23 @@ To that end, we decided to invest the time necessary to resolve our processes in
 Prerequisites
 -------------
 
-### Nextflow 
-
-- Requires **Java SE 8** or later.
+- __Python 2.7__
+- __Java SE 8+__
   - due to Groovy's use of java.util.function.BiFunction
-- Workflows require a *Linux x86-64* runtime environment 
-  - only external binary tools for this architecture are supplied
-
-### Biopython from Pip
-
-- GCC
-- Python libraries and header files needed for Python development
-  - Package for Debian: python-dev
-  - Package for Redhat: python-devel
-
-### PySAM from Pip
-
-- zlib library and headers
-  - Package for Debian: zlib1g-dev
-  - Package for Redhat: zlib-devel
-  
-### Beagle Library
-
-- Timeseries workflow requires beagle-lib
-  - Requires autoconf tool-chain.
-  - Well documented at: [beagle-lib](https://github.com/beagle-dev/beagle-lib/wiki/LinuxInstallInstructions)
+- __Linux x86-64 runtime environment__ 
+  - supplied external binary tools
+- __GCC__
+  - if building Biopython (via pip)
+- __Python development library and headers__
+  - Debian package: _python-dev_
+  - Redhat package: _python-devel_
+- __zlib library and headers__
+  - Package for Debian: _zlib1g-dev_
+  - Package for Redhat: _zlib-devel_
+- __Beagle Library__
+  - if using time-series workflow
+  - requires autoconf tool-chain.
+  - process well documented at: [beagle-lib](https://github.com/beagle-dev/beagle-lib/wiki/LinuxInstallInstructions)
 
 Installation
 ------------
