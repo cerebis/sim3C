@@ -261,15 +261,32 @@ __Submit to a PBS queue manager__
 
 All of our [implemented workflows below](#implemented-workflows) accept the double-hyphen runtime option ```--debug```. 
 
-Including this option at invocation time will test your environmental setup and the workflow processing logic but will not execute any actual bioinformatics tools. Workflows will execute very quickly in this mode and, if all is well, will complete without emitting an error. The mode creates only mock output files to meet inter-process dependencies. This mode is helpful when first configuring your system, particularly when first configuring submissions to a queue manager.
+Including this option at invocation time will test your environmental setup and the workflow processing logic but will not execute any actual bioinformatics tools. Workflows will execute very quickly in this mode and, if all is well, will complete without emitting an error. The mode creates only mock output files to meet inter-process dependencies. This mode is helpful when first configuring your system, particularly when configuring submission to a queue manager.
 
 #### Nextflow log
 
-Nextflow writes to a hidden log file (```.nextflow.log```), which it manages in a rotation akin to Linux logrotate. If an error occurs during a workflow, it is very likely that Nextflow will expose it as a message to stdout, prompting the user to inspect the log file. In most cases, Nextflow will provide the user details on which task failed and its working directory. This directory should be the first port of call when troubleshooting a new problem. We would recommend inspecting both command.err (.command.err) and command.out (.command.out) files to check to see if what went wrong can be  ascertained.
+Nextflow writes to a hidden log file (.nextflow.log), which it manages in a rotation akin to Linux logrotate. If an error occurs during a workflow, it is very likely that Nextflow will expose it as a message to stdout, prompting the user to inspect the log file. In most cases, Nextflow will provide details on which task failed and its working directory. This directory should be the first port of call when troubleshooting a new problem. We would recommend inspecting both command.err (.command.err) and command.out (.command.out) to see if what went wrong can be ascertained. If not, inspect command.sh (.command.sh) and verify that the issued command is properly formed. 
 
-In more severe cases, the Nextflow script might itself have failed to compile (groovy scripts are built at invocation time). In this situation, errors can be harder to decrypt and we would encourage users to contact us.
+It is our experience that runtime errors are often caused by unset environmental variables. This can be as simple as inadvertantly switching shell terminals, where the second shell has not been configured. Therefore, even when you think you have done so already, please double check that you have initialized the environment as [outlined above](#configuration-steps).
 
-It is our experience that errors are often caused by unset environmental variables. This can be as simple as inadvertantly switching shell terminals, where the second has not been configured. Therefore, even when you think you have done so already, please double check that you have initialized the environment as [outlined above](#configuration-steps).
+#### Some Error Sources
+1. Unset environmental variables
+2. Incorrect runtime architecture on execution host (requires x86_64)
+3. Incorrect Java JVM. Please try using Java 8 or later.
+4. Out of storage space. Sweeps can occupy significant space.
+5. Exceeding CPU or other resource limits on execution host.
+6. Missing Python dependencies for invoked interpreter.
+   
+   If using a Python interpreter _other than_ the system default, make sure that the alternate's path _(/home/foobar/bin)_ preceeds that of the system's default _(/usr/bin)_.
+
+    e.g. PATH=/home/foobar/bin:/usr/bin
+7. No internet access.
+
+    If necessary, Meta-Sweeper uses [Groovy Grape](http://docs.groovy-lang.org/latest/html/documentation/grape.html) to automatically satisfy a few dependencies from internet repositories. Without access, compliation of our workflows will fail (see below).
+
+#### Script Compilation Errors.
+
+In more severe cases, the Nextflow script might itself have failed to compile _(groovy scripts are built at invocation time)_. In this situation, errors can be harder to decrypt and we would encourage users to contact us.
 
 Sweep Definition
 ----------------
