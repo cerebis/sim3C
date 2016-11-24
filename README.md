@@ -32,12 +32,13 @@ Meta-Sweeper
 Introduction
 ------------
 
-Meta-Sweeper represents a refinement of our ongoing work, where we have been aiming to explore the value of introducing HiC sequencing data to conventional whole-genome shotgun DNA sequencing. To accomplish this, we set out to conduct a parametric sweep of select experimental parameters associated with such things as depth of coverage and within-community evolutionary divergence. At each sample point in the sweep, we applied an analysis meant to deconvolve this simulated community and the work culminated in the publication: [**Deconvoluting simulated metagenomes: the performance of hard- and soft- clustering algorithms applied to metagenomic chromosome conformation capture (3C)**](https://doi.org/10.7717/peerj.2676).
+Meta-Sweeper is the culmination and refinement of a central process employed in our ongoing work exploring how to obtain the maximum value when integrating HiC/3C sequencing data with conventional whole-genome shotgun DNA sequencing. To accomplish this, we conducted a parametric sweep of select experimental and model parameters such as sequencing depth, community composition and evolutionary divergence. At each sampled point in the sweep, we pitted a set of algorithms against each-other, where their aim was (in a sense) the deconvolution of the simulated community. This work culminated in the publication: [**Deconvoluting simulated metagenomes: the performance of hard- and soft- clustering algorithms applied to metagenomic chromosome conformation capture (3C)**](https://doi.org/10.7717/peerj.2676).
 
-We believe parametric sweeps have general applicability within bioinformatics beyond our own topic of research. That this approach could potentially be useful to other researchers; whether that be developing algorithms, exploring questions of necessary (or perhaps even optimal) experimental conditions or simply the comparative assessment of existing tools.
+Parametric sweeps, and the sampling of parameter spaces in general, have reoccurring applicability within bioinformatics beyond our own topic of research. We believe that this systematic approach is potentially useful to a broad range of research topics; providing a thorough means of quality assurance and performance testing, where previously often difficult to reproduce ad-hoc approaches have been used. Some potential applications are such things as algorithm development, the exploration of experimental requirements for new techniques or simply the comparative assessment of existing tools. 
 
-To that end, we decided to invest the time necessary to resolve our processes into a more coherent and easily deployed system. We hope this will prove useful to others.  
+Although numerous workflow management systems exist, we feel there is a lack of facility for parametric sweeps. Further, ease of deployment to various high-throughput computing environments is a crucial feature, when so many bioinformatics tasks can be computationally expensive in terms of CPU and/or memory resources.
 
+To that end, we invested the time to resolve our processes into a more coherent and easily deployed system. We hope this will prove useful to others.  
 
 Prerequisites
 -------------
