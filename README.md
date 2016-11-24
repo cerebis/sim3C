@@ -18,6 +18,7 @@ Meta-Sweeper
     - [Execution targets](#execution-targets)
     - [Predefined profiles](#predefined-profiles)
     - [Submission examples](#submission-examples)
+    - [Trouble shooting](#trouble-shooting)
 6. [__Sweep Definition__](#sweep-definition)
     - [Sweep variables](#sweep-variables)
     - [Configuration file](#configuration-file-example)
@@ -68,9 +69,9 @@ Installation
 
 The [Nextflow](http://www.nextflow.io/) framework, which can be installed easily using either of the following:
 
-```wget -qO- get.nextflow.io | bash``` or ```curl -fsSL get.nextflow.io | bash```
+```wget -qO- get.nextflow.io | bash``` __or__ ```curl -fsSL get.nextflow.io | bash```
 
-assuming you have met the prerequisite of installing Java 7+. Note, you will need to have ```wget``` or ```curl``` installed depending on your choice above. Whether either is installed by default is dependent on which distribution of Linux you are using.
+This assumes you have met the prerequisite of installing Java 8+. Note, you will need to have ```wget``` or ```curl``` installed depending on your choice above. Whether either is installed by default is dependent on which distribution of Linux you are using.
 
 In addition, meta-sweeper expects that the main executable ```nextflow``` is accessible on the path. Users can move this file to a location already on the path or add its parent directory to the path.
 
@@ -253,6 +254,22 @@ __Submit to a PBS queue manager__
 ```bash
 ./hic-sweep.nf -profile pbs
 ```
+
+### Trouble Shooting
+
+#### ```--debug```
+
+All of our [implemented workflows below](#implemented-workflows) accept the double-hyphen runtime option ```--debug```. 
+
+Including this option at invocation time will test your environmental setup and the workflow processing logic but will not execute any actual bioinformatics tools. Workflows will execute very quickly in this mode and, if all is well, will complete without emitting an error. The mode creates only mock output files to meet inter-process dependencies. This mode is helpful when first configuring your system, particularly when first configuring submissions to a queue manager.
+
+#### Nextflow log
+
+Nextflow writes to a hidden log file (```.nextflow.log```), which it manages in a rotation akin to Linux logrotate. If an error occurs during a workflow, it is very likely that Nextflow will expose it as a message to stdout, prompting the user to inspect the log file. In most cases, Nextflow will provide the user details on which task failed and its working directory. This directory should be the first port of call when troubleshooting a new problem. We would recommend inspecting both command.err (.command.err) and command.out (.command.out) files to check to see if what went wrong can be  ascertained.
+
+In more severe cases, the Nextflow script might itself have failed to compile (groovy scripts are built at invocation time). In this situation, errors can be harder to decrypt and we would encourage users to contact us.
+
+It is our experience that errors are often caused by unset environmental variables. This can be as simple as inadvertantly switching shell terminals, where the second has not been configured. Therefore, even when you think you have done so already, please double check that you have initialized the environment as [outlined above](#configuration-steps).
 
 Sweep Definition
 ----------------
