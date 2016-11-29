@@ -33,13 +33,17 @@ Meta-Sweeper
 Introduction
 ------------
 
+Meta-Sweeper is a tool for conducting parametric (combinatorial) sweeps of selected experimental variables relevant to metagenomics research. In particular, we have implemented workflows which enable the generation of simulated microbial communties and their simulated sequecing (WGS and HiC/3C). Downstream of simulation, specific topics of analysis in HiC/3C clustering and Non-negative matrix factorization have been provided. Built upon the [Nextflow framework](http://nextflow.io), Meta-Sweeper is remains general enough that there is no reason that alternative workflows or extensions to existing workflows could not be implemented.
+
 Meta-Sweeper is the culmination and refinement of a central process employed in our ongoing work exploring how to obtain the maximum value when integrating HiC/3C sequencing data with conventional whole-genome shotgun DNA sequencing. To accomplish this, we conducted a parametric sweep of select experimental and model parameters such as sequencing depth, community composition and evolutionary divergence. At each sampled point in the sweep, we pitted a set of algorithms against each-other, where their aim was (in a sense) the deconvolution of the simulated community. This work culminated in the publication: [**Deconvoluting simulated metagenomes: the performance of hard- and soft- clustering algorithms applied to metagenomic chromosome conformation capture (3C)**](https://doi.org/10.7717/peerj.2676).
 
-Parametric sweeps, and the sampling of parameter spaces in general, have reoccurring applicability within bioinformatics beyond our own topic of research. We believe that this systematic approach is potentially useful to a broad range of research topics; providing a thorough means of quality assurance and performance testing, where previously often difficult to reproduce ad-hoc approaches have been used. Some potential applications are such things as algorithm development, the exploration of experimental requirements for new techniques or simply the comparative assessment of existing tools. 
+Parametric sweeps, and the sampling of parameter spaces in general, have reoccurring applicability within bioinformatics beyond our own topic of research. We believe that this systematic approach is potentially useful to a broad range of research topics, offering a means for more thorough quality assurance and performance testing. Aside from explicit testing, the process of sampling a parameter space can also be used simply as an exploratory technique. In all cases, a reproducible approach is preferable to one-off ad-hoc approaches that can prove difficult to reproduce even for the original authors. 
 
-Although numerous workflow management systems exist, we feel there is a lack of facility for parametric sweeps. Further, ease of deployment to various high-throughput computing environments is a crucial feature, when so many bioinformatics tasks can be computationally expensive in terms of CPU and/or memory resources.
+Some suggested applications are such things as: algorithm development, the exploration of experimental requirements for new techniques or simply the comparative assessment of existing tools. 
 
-To that end, we invested the time to resolve our processes into a more coherent and easily deployed system. We hope this will prove useful to others.  
+Although numerous workflow management systems exist, we feel there is a lack of facility for parametric sweeps. Further, ease of deployment to various high-throughput computing environments is a crucial feature, when bioinformatics tasks are often computationally expensive in terms of CPU and/or memory resources.
+
+To that end, we invested the time to resolve our processes into a more coherent and easily deployed system. We hope this will prove useful to others.
 
 Prerequisites
 -------------
@@ -280,6 +284,7 @@ It is our experience that runtime errors are often caused by unset environmental
    If using a Python interpreter _other than_ the system default, make sure that the alternate's path _(/home/foobar/bin)_ preceeds that of the system's default _(/usr/bin)_.
 
     e.g. PATH=/home/foobar/bin:/usr/bin
+    
 7. No internet access.
 
     If necessary, Meta-Sweeper uses [Groovy Grape](http://docs.groovy-lang.org/latest/html/documentation/grape.html) to automatically satisfy a few dependencies from internet repositories. Without access, compliation of our workflows will fail (see below).
