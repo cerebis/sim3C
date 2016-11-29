@@ -158,20 +158,24 @@ for line in vcf_file:
         continue
     line.rstrip()
     d = line.split("\t")
+
+    # make sure all references can be found in dict
+    chromo = d[0]
+    if chromo not in variant_sites:
+        variant_sites[chromo] = {}
+
     if not d[6].startswith("PASS"):
         continue    # didnt pass filters
     mo = re.search('DP4=.+,.+,(.+),(.+)', d[7])
     mo1 = int(mo.group(1))
     mo2 = int(mo.group(2))
+    print line
     if(mo1 < min_strand_cov or mo2 < min_strand_cov):
         continue    # variant not observed on both strands. unreliable.
 
-    chromo = d[0]
     site = int(d[1])
 
-    if not chromo in variant_sites:
-        variant_sites[chromo] = dict()
-    variant_sites[chromo][site]=[d[3],d[4]] # store the ref & variant allele
+    variant_sites[chromo][site] = [d[3], d[4]]  # store the ref & variant allele
 
 # destroy the evidence
 #os.remove("merged.bam")
@@ -212,13 +216,13 @@ for i in range(num_samples):
         site = int(d[1])
 
         # check whether this is a known variant site
-        if not site in variant_sites[chromo]:
+        if site not in variant_sites[chromo]:
             continue
 
-        if not chromo in depths[i]:
+        if chromo not in depths[i]:
             depths[i][chromo] = dict()
             found[i][chromo] = dict()
-        if not chromo in variant_sites:
+        if chromo not in variant_sites:
             variant_sites[chromo] = dict()
         depths[i][chromo][site] = [m.group(1), int(vac)]
         variant_sites[chromo][site]=[d[3],d[4]] # store the ref & variant allele
@@ -231,12 +235,12 @@ for i in range(num_samples):
     for line in pileup_file:
         d = line.split("\t")
         chromo = d[0]
-        if not chromo in depths[i]:
+        if chromo not in depths[i]:
             depths[i][chromo] = dict()
         site = int(d[1])
-        if not chromo in variant_sites:
+        if chromo not in variant_sites:
             variant_sites[chromo] = dict()
-        if not chromo in found[i]:
+        if chromo not in found[i]:
             found[i][chromo] = dict()
         if site in variant_sites[chromo] and not site in found[i][chromo]:
             depths[i][chromo][site] = [d[3],0]
