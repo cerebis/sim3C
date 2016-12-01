@@ -146,12 +146,10 @@ process ProfileGen {
  */
 (prof_out, merge_prof_in) = prof_out.into(2)
 
-// group by a reduced key that is only the random seed and alpha
+        // group by a reduced key that is only the random seed and alpha
 merge_prof_in = merge_prof_in.groupBy{ it[0].selectedKey('seed', 'alpha') }
-// convert the resulting map of sweep point results into table format
-        .flatMap{ it.collect { k,v -> [k] +  v.flatten() } }
-// include just the clade abundance profiles from each sweep point
-        .map { it.pick([2, 4]) }
+        // convert the resulting map of sweep point results into table format and sort by file name
+        .flatMap { it.collect { k, v -> [k, v.collect { vi -> vi[1] }.toSorted { a, b -> a.name <=> b.name }] } }
 
 process ProfileMerge {
     publishDir ms.options.output, mode: 'copy', overwrite: 'true'
@@ -179,12 +177,10 @@ process ProfileMerge {
  */
 (evo_out, merge_seq_in) = evo_out.into(2)
 
-// group by a reduced key that is only the random seed and alpha
+        // group by a reduced key that is only the random seed and alpha
 merge_seq_in = merge_seq_in.groupBy { it.getKey().selectedKey('seed', 'alpha') }
-// convert the resulting map of sweep point results into table format
-        .flatMap { it.collect { k, v -> [k] +  v.collect { cl -> [cl[1], cl[3]] }.flatten() } }
-// include just the clade sequences from each sweep point
-        .map { it.pick([1, 3]) }
+        // convert the resulting map of sweep point results into table format and sort by file name
+        .flatMap { it.collect { k, v -> [k, v.collect { vi -> vi[1] }.toSorted { a, b -> a.name <=> b.name }] } }
 
 process MergeClades {
     publishDir ms.options.output, mode: 'copy', overwrite: 'true'
