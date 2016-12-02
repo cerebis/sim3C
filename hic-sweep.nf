@@ -133,7 +133,6 @@ process Evolve {
 
 }
 
-/*
 //
 // Merge evolved sequences from the clades into whole communities
 //
@@ -143,12 +142,9 @@ process Evolve {
 merge_seq_in = merge_seq_in.groupBy { it.getKey().selectedKey('seed', 'alpha') }
 // convert the resulting map of sweep point results into table format and sort by file name
         .flatMap { it.collect { k, v ->
-            v.each{ xi -> println "$k xi=$xi" }
             [k, v.collect { vi -> vi[1] }.toSorted { a, b -> a.name <=> b.name }] } }
-        .subscribe{println it}
 
-
-/*process MergeClades {
+process MergeClades {
     publishDir ms.options.output, mode: 'copy', overwrite: 'true'
 
     input:
@@ -170,6 +166,7 @@ merge_seq_in = merge_seq_in.groupBy { it.getKey().selectedKey('seed', 'alpha') }
     }
 }
 
+/*
 //
 // Generate abundance profiles for each clade within each community
 //
