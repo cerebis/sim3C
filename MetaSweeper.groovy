@@ -338,7 +338,7 @@ class MetaSweeper {
         // just a human centric name for a community
         public String name
         // the list of clades/groups to generate
-        private List<Clade> clades
+        public List<Clade> clades
         // parameters involved in generating the profile
         public Map<String, Float> profile
 
@@ -446,14 +446,6 @@ class MetaSweeper {
         @Override
         int hashCode() {
             Objects.hash(hash())
-        }
-
-        List<Clade> getClades() {
-            return this.clades
-        }
-        void setClades(List<Clade> clades) {
-            this.clades = clades
-            clades.each { it.community = this }
         }
 
     }
@@ -777,8 +769,6 @@ class MetaSweeper {
         public Integer ntaxa
         // parameters involved in generating the tree
         public Map<String, Object> tree
-        // parent community
-        public Community community
 
         void setAncestor(String ancestor) {
             this.ancestor = Nextflow.file(ancestor)
