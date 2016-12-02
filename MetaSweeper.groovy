@@ -742,6 +742,78 @@ class MetaSweeper {
             return df
         }
 
+        /**
+         * Group the elements of a channel by a common key at a specific level in the
+         * sweep hierarchy.
+         *
+         * It is expected that the specified level would be such that multiple rows in
+         * the table will share a common key value. i.e 1 < level < max_level
+         *
+         * The returned map is indexed by the common key. Its elements are lists which
+         * hold the "overhang" (remaining key levels dropped for this grouping) and the
+         * row values for each grouped set of values.
+         *
+         * @param df - channel to group
+         * @param level - sweep level to group at
+         * @return map of grouped rows.
+         */
+        static Map groupAtLevel(DataflowQueue df, int level) {
+            List list = df.toList().get()
+            return list.inject([:]) { acc, row ->
+                def k = row[0].splitKey(level)
+                if (!acc[k.lo]) {
+                    acc[k.lo] = []
+                }
+                acc[k.lo].add( ['overhang': k.hi, 'values':row[1..-1]] )
+                acc
+            }
+        }
+
+        /**
+         * Join two channels together at a given level in the sweep hierarchy. This is used
+         * when merging the results of two branches in the sweep.
+         *
+         * Such cases arise when inputs from a single point are used by two different tasks (branch point)
+         * and then their output channels merged together for further processing (merge point).
+         *
+         * The merged channel elements are lists (table rows) composed of a leading key (which reflects the join point)
+         * and followed by all the per-task output values which were emitted by both channels. As such, it can be
+         * a good idea to reduce rows to only the output values which will be required in subsequent tasks. This can be
+         * accomplished using helper meta-method "List.pick(varname1, varname2...).
+         *
+         * Eg. If two output columns were 'reads' and 'contigs', using the map operator in Nextflow
+         *
+         *      chan.map{ it.pick('reads', 'contigs') }
+         *
+         * @param df1 - channel 1
+         * @param df2 - channel 2
+         * @param level - the level of the sweep hierarchy to merge at.
+         * @return channel of merged values
+         */
+        DataflowQueue joinChannels(DataflowQueue df1, DataflowQueue df2, int level) {
+            Map g1 = groupAtLevel(df1, level)
+            Map g2 = groupAtLevel(df2, level)
+
+            // combine values from each input channel for common keys
+            List ret = g1.keySet().inject([]) { acc, k ->
+                if (g2[k]) {
+                    def x = [g1[k], g2[k]].combinations()
+                    x = [[k], x].combinations{ a, b ->
+                        [a, b['overhang'].flatten(), b['values'].flatten()]
+                    }
+                    acc.addAll(x)
+                }
+                acc
+            }
+
+            // rejoin keys and return rows as [key, output_values]
+            ret = ret.collect { row ->
+                Key joined = orderKey(row[0] + row[1][0] + row[1][1])
+                [joined, *row[2]]
+            }
+
+            return Channel.from(ret)
+        }
     }
 
     /**
@@ -887,109 +959,6 @@ class MetaSweeper {
      */
     static Sweep createSweep() {
         new Sweep()
-    }
-
-    /**
-     * Extend a channel by adding the named configuration variable to the sweep and
-     * then permute the passed Channel.
-     *
-     * @param df -- the existing channel to extend
-     * @param varNames -- the named variable with which to extend the channel
-     * @return the extended Channel
-     */
-    DataflowChannel extend(DataflowQueue df, String... varNames) {
-        sweep.extendChannel(df, varNames)
-    }
-
-    /**
-     * Add a configuration variable to sweep of this MetaSweeper instance.
-     * @param name - the configuration variable to add
-     * @param stepInto - for non-collections which are iterable, step into the object and retrieve
-     * the elements instead
-     * @return MetaSweeper instance
-     */
-    MetaSweeper withVariable(String name, Boolean stepInto=false) {
-        if (stepInto) {
-            // step into a variable which itself iterable but not a plain collection
-            sweep[name] = variables[name].collect()
-        }
-        else {
-            sweep[name] = variables[name]
-        }
-        return this
-    }
-
-    /**
-     * Group the elements of a channel by a common key at a specific level in the
-     * sweep hierarchy.
-     *
-     * It is expected that the specified level would be such that multiple rows in
-     * the table will share a common key value. i.e 1 < level < max_level
-     *
-     * The returned map is indexed by the common key. Its elements are lists which
-     * hold the "overhang" (remaining key levels dropped for this grouping) and the
-     * row values for each grouped set of values.
-     *
-     * @param df - channel to group
-     * @param level - sweep level to group at
-     * @return map of grouped rows.
-     */
-    static Map groupAtLevel(DataflowQueue df, int level) {
-        List list = df.toList().get()
-        return list.inject([:]) { acc, row ->
-            def k = row[0].splitKey(level)
-            if (!acc[k.lo]) {
-                acc[k.lo] = []
-            }
-            acc[k.lo].add( ['overhang': k.hi, 'values':row[1..-1]] )
-            acc
-        }
-    }
-
-    /**
-     * Join two channels together at a given level in the sweep hierarchy. This is used
-     * when merging the results of two branches in the sweep.
-     *
-     * Such cases arise when inputs from a single point are used by two different tasks (branch point)
-     * and then their output channels merged together for further processing (merge point).
-     *
-     * The merged channel elements are lists (table rows) composed of a leading key (which reflects the join point)
-     * and followed by all the per-task output values which were emitted by both channels. As such, it can be
-     * a good idea to reduce rows to only the output values which will be required in subsequent tasks. This can be
-     * accomplished using helper meta-method "List.pick(varname1, varname2...).
-     *
-     * Eg. If two output columns were 'reads' and 'contigs', using the map operator in Nextflow
-     *
-     *      chan.map{ it.pick('reads', 'contigs') }
-     *
-     * @param df1 - channel 1
-     * @param df2 - channel 2
-     * @param level - the level of the sweep hierarchy to merge at.
-     * @return channel of merged values
-     */
-    DataflowQueue joinChannels(DataflowQueue df1, DataflowQueue df2, int level) {
-        Map g1 = groupAtLevel(df1, level)
-        Map g2 = groupAtLevel(df2, level)
-
-        // combine values from each input channel for common keys
-        List ret = g1.keySet().inject([]) { acc, k ->
-            if (g2[k]) {
-                def x = [g1[k], g2[k]].combinations()
-                x = [[k], x].combinations{ a, b ->
-                    [a, b['overhang'].flatten(), b['values'].flatten()]
-                }
-                acc.addAll(x)
-            }
-            acc
-        }
-
-        // rejoin keys and return rows as [key, output_values]
-        ret = ret.collect { row ->
-            Key joined = sweep.orderKey(row[0] + row[1][0] + row[1][1])
-            [joined, *row[2]]
-        }
-
-        return Channel.from(ret)
     }
 
     /**

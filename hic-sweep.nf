@@ -67,7 +67,7 @@ process TreeGen {
     else {
         if (clade.isDefined()) {
             """
-            echo "${clade.getDefined()}" > ${key}.nwk
+            echo "${clade.getDefined()}" | tree_scaler.py --max-height 0.1 - ${key}.nwk
             """
         }
         else {
@@ -188,71 +188,35 @@ process ProfileGen {
     else {
         """
         profile_generator.py --seed ${key['seed']} --dist lognormal --lognorm-mu $mu \
-            --lognorm-sigma $sigma clade_seq ${key}.prf
-        """
-    }
-}
-
-/*
-
-//
-// Merge clade abundance profiles into whole community profiles
-//
-(prof_out, merge_prof_in) = prof_out.into(2)
-
-        // group by a reduced key that is only the random seed and alpha
-merge_prof_in = merge_prof_in.groupBy{ it[0].selectedKey('seed', 'alpha') }
-        // convert the resulting map of sweep point results into table format and sort by file name
-        .flatMap { it.collect { k, v -> [k, v.collect { vi -> vi[1] }.toSorted { a, b -> a.name <=> b.name }] } }
-
-process ProfileMerge {
-    publishDir ms.options.output, mode: 'copy', overwrite: 'true'
-
-    input:
-    set key, file('clade_profile') from merge_prof_in
-
-    output:
-    set key, file("${key}.mprf") into merge_prof_out
-
-    script:
-    if (params.debug) {
-        """
-        echo $key > "${key}.mprf"
-        """
-    } else {
-        """
-        profile_merge.py clade_profile* ${key}.mprf
+            --lognorm-sigma $sigma community.fa ${key}.prf
         """
     }
 }
 
 
-
-
 //
-// Prepare a channel which is composed of paired community sequences and profiles
+// Merge and pair community sequences and profiles
 //
 
 (merge_seq_out, seq_prof) = merge_seq_out.into(2)
-(merge_prof_out, tmp) = merge_prof_out.into(2)
+(merge_prof_out, tmp) = prof_out.into(2)
 
-        // select just the community sequences
+// select just the community sequences
 seq_prof = seq_prof.map { it.pick(1) }
         // combine with their respective profiles, then flatten and simplify the rows
         .phase(tmp).map { it = it.flatten(); it.pick(1, 3) }
-
 
 //
 // Generate shotgun sequencing reads for for each whole community
 //
 (seq_prof, wgs_in) = seq_prof.into(2)
 
-        // Add WGS coverage to the sweep
-wgs_in = ms.withVariable('xfold')
-        // extend the channel
-        .extend(wgs_in, 'xfold')
+// Add wgs coverage to sweep
+sweep.withVariable('xfold', ms.variables.xfold)
+        .describe('WGS Read Generation')
 
-ms.describeSweep('WGS Read Generation')
+// extend the channel
+wgs_in = sweep.extendChannel(wgs_in, 'xfold')
 
 process WGS_Reads {
     publishDir ms.options.output, mode: 'copy', overwrite: 'true'
@@ -293,12 +257,13 @@ process WGS_Reads {
 //
 (seq_prof, hic_in) = seq_prof.into(2)
 
-        // Add 3C coverage to the sweep
-hic_in = ms.withVariable('n3c')
-        // extend the channel
-        .extend(hic_in, 'n3c')
+// Add 3C coverage to sweep
+sweep.withVariable('n3c', ms.variables.n3c)
+        .describe('HiC Read Generation')
 
-ms.describeSweep('HiC Read Generation')
+// extend the channel
+hic_in = sweep.extendChannel(hic_in, 'n3c')
+
 
 process HIC_Reads {
     publishDir ms.options.output, mode: 'copy', overwrite: 'true'
@@ -327,13 +292,12 @@ process HIC_Reads {
     }
 }
 
-
 //
 // Assemble WGS reads
 //
 (wgs_out, asm_in) = wgs_out.into(2)
 
-        // select just read-set files (R1, R2) and the community sequences
+// select just read-set files (R1, R2) and the community sequences
 asm_in = asm_in.map { it.pick(1, 2, 3) }
 
 process Assemble {
@@ -403,8 +367,8 @@ process Truth {
 //
 (asm_out, hicmap_in) = asm_out.into(2)
 
-        // join 3C reads and the results of assembly
-hicmap_in = ms.joinChannels(hicmap_in, hic_out, 2)
+// join 3C reads and the results of assembly
+hicmap_in = sweep.joinChannels(hicmap_in, hic_out, 2)
         // select just contigs and 3C reads
         .map{ it.pick(1, -1) }
 
@@ -443,7 +407,7 @@ process HiCMap {
 //
 (hicmap_out, graph_in) = hicmap_out.into(2)
 
-        // select just hic bam, hic reads and contigs
+// select just hic bam, hic reads and contigs
 graph_in = graph_in.map{ it.pick(1,2,3) }
 
 process Graph {
@@ -479,7 +443,7 @@ process Graph {
 //
 (asm_out, wgsmap_in) = asm_out.into(2)
 
-        // select just contigs, r1 and r2
+// select just contigs, r1 and r2
 wgsmap_in = wgsmap_in.map{ it.pick(1, 2, 3) }
 
 process WGSMap {
@@ -515,7 +479,7 @@ process WGSMap {
 //
 (wgsmap_out, cov_in) = wgsmap_out.into(2)
 
-        // select wgs bam and contigs
+// select wgs bam and contigs
 cov_in = cov_in.map{ it.pick(1, 2) }
 
 process InferReadDepth {
@@ -558,4 +522,3 @@ process InferReadDepth {
         """
     }
 }
-*/

@@ -90,7 +90,7 @@ if __name__ == '__main__':
     parser.add_argument('--mode', choices=['star', 'random'], required=True,
                         help='Tree generation mode [star, random]')
     parser.add_argument('--max-height', type=float, metavar='FLOAT', default=0.1,
-                        help='Maximum height of resulting tree [0.1]')
+                        help='Scale longest branch to max height [0.1]')
     parser.add_argument('--birth-rate', type=float, metavar='FLOAT', default=1.0,
                         help='Birth rate [1.0]')
     parser.add_argument('--death-rate', type=float, metavar='FLOAT', default=0.5,
