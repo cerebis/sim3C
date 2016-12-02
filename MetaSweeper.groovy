@@ -548,24 +548,32 @@ class MetaSweeper {
         @Delegate
         Map varRegistry = [:]
 
-        Sweep withVariable(String name, Collection values) {
-            varRegistry[name] = values
+        Sweep withVariable(String name, Object values) {
+            put(name, values)
+            return this
+        }
+
+        Sweep dropVariable(String name) {
+            varRegistry.remove(name)
             return this
         }
 
         Object put(Object key, Object value) {
-            if (value instanceof String) {
+            if (!(value instanceof Collection)) {
                 varRegistry[key] = [value]
-            }
-            else if (value instanceof Collection) {
-                varRegistry[key] = value.collect()
             }
             else {
-                varRegistry[key] = [value]
+                varRegistry[key] = value.collect()
             }
         }
 
-        void description(String title=null) {
+        /**
+         * Print a tabular description of the present state of the sweep.
+         * @param title - an optional title
+         * @return this {@link Sweep}
+         */
+        Sweep describe(String title=null) {
+
             if (title) {
                 println title
             }
@@ -588,6 +596,8 @@ class MetaSweeper {
             desc.append(hline + '\n')
             desc.append("Total combinations: $num\n")
             println desc.toString()
+
+            return this
         }
 
         Collection permuteAll() {

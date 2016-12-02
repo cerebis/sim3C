@@ -41,21 +41,13 @@ MetaSweeper ms = MetaSweeper.fromFile(new File('hic.yaml'))
 // Generate phylogenetic trees for each clade within each community
 //
 
-// Initial sweep begins with seeds and community's clades
-//gen_in = ms.createSweep()
-//        .withVariable('seed')
-//        .withVariable('community', true)
-//        .permute()
-//
-//ms.describeSweep('Tree Generation')
-
 def sweep = MetaSweeper.createSweep()
+                .withVariable('seed', ms.variables.seed)
+                .withVariable('clade', ms.variables.community.clades)
+                .describe('Tree Generation')
 
-gen_in = sweep.withVariable('seed', ms.variables.seed)
-            .withVariable('clade', ms.variables.community.clades)
-            .permutedChannel()
-
-sweep.description('Tree Generation')
+// channel composed of the permutation of variables
+gen_in = sweep.permutedChannel()
 
 process TreeGen {
     publishDir ms.options.output, mode: 'copy', overwrite: 'true'
@@ -97,11 +89,12 @@ process TreeGen {
 
 (tree_out, evo_in) = tree_out.into(2)
 
-        // extend the sweep to include alpha
-evo_in = sweep.withVariable('alpha', ms.variables.alpha)
-            .extendChannel(evo_in, 'alpha')
+// add variation on alpha
+sweep.withVariable('alpha', ms.variables.alpha)
+        .describe('Evolve Clades')
 
-sweep.description('Evovle Clades')
+// extend the channel to include new parameter
+evo_in = sweep.extendChannel(evo_in, 'alpha')
 
 process Evolve {
     publishDir ms.options.output, mode: 'copy', overwrite: 'true'
@@ -133,16 +126,17 @@ process Evolve {
 
 }
 
+
 //
 // Merge evolved sequences from the clades into whole communities
 //
+
 (evo_out, merge_seq_in) = evo_out.into(2)
 
 // group by a reduced key that is only the random seed and alpha
 merge_seq_in = merge_seq_in.groupBy { it.getKey().selectedKey('seed', 'alpha') }
-// convert the resulting map of sweep point results into table format and sort by file name
-        .flatMap { it.collect { k, v ->
-            [k, v.collect { vi -> vi[1] }.toSorted { a, b -> a.name <=> b.name }] } }
+        // convert the resulting map of sweep point results into table format and sort by file name
+        .flatMap { it.collect { k, v -> [k, v.collect { vi -> vi[1] }.toSorted { a, b -> a.name <=> b.name }] } }
 
 process MergeClades {
     publishDir ms.options.output, mode: 'copy', overwrite: 'true'
@@ -166,25 +160,26 @@ process MergeClades {
     }
 }
 
-/*
 //
 // Generate abundance profiles for each clade within each community
 //
 (merge_seq_out, prof_in) = merge_seq_out.into(2)
+
+community = Channel.value(ms.variables['community'])
 
 process ProfileGen {
     publishDir ms.options.output, mode: 'copy', overwrite: 'true'
 
     input:
     set key, file('community.fa') from prof_in
+    val community
 
     output:
     set key, file("${key}.prf") into prof_out
 
     script:
-    println key['community']
-    def mu = key['community'].community.profile.mu
-    def sigma = key['community'].community.profile.sigma
+    def mu = community.profile.mu
+    def sigma = community.profile.sigma
     if (params.debug) {
         """
         echo "$key $mu $sigma" > "${key}.prf"
@@ -198,6 +193,7 @@ process ProfileGen {
     }
 }
 
+/*
 
 //
 // Merge clade abundance profiles into whole community profiles
