@@ -29,9 +29,9 @@ import groovy.util.GroovyCollections
 
 MetaSweeper ms = MetaSweeper.fromFile(new File('timeseries.yaml'))
 
-/**
- * Generate phylogenetic trees for each clade within each community
- */
+//
+// Generate phylogenetic trees for each clade within each community
+//
 
 // Initial sweep begins with seeds and community's clades
 gen_in = ms.createSweep()
@@ -42,7 +42,7 @@ gen_in = ms.createSweep()
 ms.describeSweep('Tree Generation')
 
 process TreeGen {
-    publishDir ms.options.output, mode: 'copy', overwrite: 'true'
+    publishDir ms.options.output, mode: 'copy', overwrite: false
 
     input:
     set key, seed, clade from gen_in
@@ -65,9 +65,9 @@ process TreeGen {
     }
 }
 
-/**
- * Generate evolved sequences for each clade from each community
- */
+//
+// Generate evolved sequences for each clade from each community
+//
 
 (tree_out, evo_in) = tree_out.into(2)
 
@@ -77,7 +77,7 @@ evo_in = ms.withVariable('alpha').extend(evo_in, 'alpha')
 ms.describeSweep('Evolve Clades')
 
 process Evolve {
-    publishDir ms.options.output, mode: 'copy', overwrite: 'true'
+    publishDir ms.options.output, mode: 'copy', overwrite: false
 
     input:
     set key, tree_file, seed, clade, alpha from evo_in
@@ -106,17 +106,16 @@ process Evolve {
 
 }
 
-/**
- * Generate abundance profiles for each clade within each community
- */
-
+//
+// Generate abundance profiles for each clade within each community
+//
 (evo_out, prof_in) = evo_out.into(2)
 
 // just the clade sequences, which are used to obtain taxon ids.
 prof_in = prof_in.map { it.pick(1) }
 
 process ProfileGen {
-    publishDir ms.options.output, mode: 'copy', overwrite: 'true'
+    publishDir ms.options.output, mode: 'copy', overwrite: false
 
     input:
     set key, file('clade_seq') from prof_in
@@ -141,9 +140,9 @@ process ProfileGen {
 }
 
 
-/**
- * Merge clade abundance profiles into whole community profiles
- */
+//
+// Merge clade abundance profiles into whole community profiles
+//
 (prof_out, merge_prof_in) = prof_out.into(2)
 
         // group by a reduced key that is only the random seed and alpha
@@ -152,7 +151,7 @@ merge_prof_in = merge_prof_in.groupBy{ it[0].selectedKey('seed', 'alpha') }
         .flatMap { it.collect { k, v -> [k, v.collect { vi -> vi[1] }.toSorted { a, b -> a.name <=> b.name }] } }
 
 process ProfileMerge {
-    publishDir ms.options.output, mode: 'copy', overwrite: 'true'
+    publishDir ms.options.output, mode: 'copy', overwrite: false
 
     input:
     set key, file('clade_profile') from merge_prof_in
@@ -172,9 +171,9 @@ process ProfileMerge {
     }
 }
 
-/**
- * Merge evolved sequences from the clades into whole communities
- */
+//
+// Merge evolved sequences from the clades into whole communities
+//
 (evo_out, merge_seq_in) = evo_out.into(2)
 
         // group by a reduced key that is only the random seed and alpha
@@ -183,7 +182,7 @@ merge_seq_in = merge_seq_in.groupBy { it.getKey().selectedKey('seed', 'alpha') }
         .flatMap { it.collect { k, v -> [k, v.collect { vi -> vi[1] }.toSorted { a, b -> a.name <=> b.name }] } }
 
 process MergeClades {
-    publishDir ms.options.output, mode: 'copy', overwrite: 'true'
+    publishDir ms.options.output, mode: 'copy', overwrite: false
 
     input:
     set key, file('clade_seq') from merge_seq_in
@@ -216,9 +215,9 @@ seq_prof = seq_prof.map { it.pick(1) }
         // combine with their respective profiles, then flatten and simplify the rows
         .phase(tmp).map { it = it.flatten(); it.pick(1, 3) }
 
-/**
- * Generate shotgun sequencing reads for for each whole community
- */
+//
+// Generate shotgun sequencing reads for for each whole community
+//
 (seq_prof, wgs_in) = seq_prof.into(2)
 
 // Add WGS coverage to the sweep
@@ -229,13 +228,13 @@ wgs_in = ms.withVariable('xfold')
 ms.describeSweep('WGS Read Generation')
 
 process WGS_Reads {
-    publishDir ms.options.output, mode: 'copy', overwrite: 'true'
+    publishDir ms.options.output, mode: 'copy', overwrite: false
 
     input:
     set key, file(comm_seq), file(comm_prof), xfold from wgs_in
 
     output:
-    set key, file("${key}.wgs.*.r1.fq.gz"), file("${key}.wgs.*.r2.fq.gz"), file(comm_seq), file("${key}.cov") into wgs_out
+    set key, file("${key}.wgs.*.r1.fq.gz"), file("${key}.wgs.*.r2.fq.gz"), file("${key}.cov") into wgs_out
 
     script:
     if (params.debug) {
@@ -266,9 +265,10 @@ process WGS_Reads {
     }
 }
 
-/**
- * Map WGS reads to reference sequences
- */
+//
+// Map WGS reads to reference sequences
+//
+
 // ancestral sequence for community
 ancestor_in = Channel.value(file(ms.variables.community.clades[0].ancestor))
 
@@ -286,7 +286,7 @@ map_in = map_in.map{ it.pick(1, 2) }
                         [ms.extendKey(it.getKey(), 'nsamp', nsamp[0]), *pair] } }
 
 process WGSMap {
-    publishDir ms.options.output, mode: 'copy', overwrite: 'true'
+    publishDir ms.options.output, mode: 'copy', overwrite: false
 
     input:
     set key, file(reads1), file(reads2) from map_in
@@ -314,9 +314,10 @@ process WGSMap {
     }
 }
 
-/**
- * Deconvolve the SNVs into strain genotypes
- */
+//
+// Deconvolve the SNVs into strain genotypes
+//
+
 // ancestral sequence for community
 ancestor_in = Channel.value(file(ms.variables.community.clades[0].ancestor))
 
@@ -329,7 +330,7 @@ deconv_in = deconv_in.map { it.pick(1) }
                 .groupTuple(sort: {it.name})
 
 process Deconvolve {
-    publishDir ms.options.output, mode: 'copy', overwrite: 'true'
+    publishDir ms.options.output, mode: 'copy', overwrite: false
 
     input:
     set key, file('tp*.bam') from deconv_in
@@ -360,9 +361,10 @@ process Deconvolve {
     }
 }
 
-/**
- * Record the true strain genotypes
- */
+//
+// Record the true strain genotypes
+//
+
 (seq_prof, truth_in) = seq_prof.into(2)
 
 // ancestral sequence for community
@@ -372,7 +374,7 @@ ancestor_in = Channel.value(file(ms.variables.community.clades[0].ancestor))
 truth_in = truth_in.map{ it.pick(1) }
 
 process Truth {
-    publishDir ms.options.output, mode: 'copy', overwrite: 'true'
+    publishDir ms.options.output, mode: 'copy', overwrite: false
 
     input:
     set key, file(ref) from truth_in
@@ -394,21 +396,21 @@ process Truth {
     }
 }
 
-/**
- * Measure accuracy of strain genotypes
- */
+//
+// Measure accuracy of strain genotypes
+//
 
 // join truth and deconv outputs at sweep depth of 2.
 accuracy_in = ms.joinChannels(truth_out, deconv_out, 2)
 
 process Accuracy {
-    publishDir ms.options.output, mode: 'copy', overwrite: 'true'
+    publishDir ms.options.output, mode: 'copy', overwrite: false
 
     input:
     set key, file(truthfile), file(snvbpnmf), file(snv_file), file(tree_file) from accuracy_in
 
     output:
-    set file("${key}.truth.report.txt") into accuracy_out
+    file("${key}.truth.report.txt") into accuracy_out
 
     script:
     if (params.debug) {

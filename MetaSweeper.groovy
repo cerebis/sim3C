@@ -46,7 +46,7 @@ import com.google.common.hash.Funnels
 class MetaSweeper {
     public Map<String, Object> variables = [:]
     public Map<String, Object> options = [:]
-    public sweep
+//    public sweep
 
     // NOTE: File system dependent! Both separator patterns must be composed of
     // legal, non-escaped characters of the underlying filesystem. Escaped characters
@@ -339,9 +339,11 @@ class MetaSweeper {
         // just a human centric name for a community
         public String name
         // the list of clades/groups to generate
-        public List<Clade> clades
+        private List<Clade> clades
+        // parameters involved in generating the profile
+        public Map<String, Float> profile
 
-        public Iterator iterator() {
+        Iterator iterator() {
             clades.iterator()
         }
 
@@ -365,19 +367,19 @@ class MetaSweeper {
          * @return
          */
         static private Hasher hashFileContent(Hasher hasher, File file) {
-            OutputStream output = Funnels.asOutputStream(hasher);
+            OutputStream output = Funnels.asOutputStream(hasher)
             try {
-                Files.copy(file.toPath(), output);
+                Files.copy(file.toPath(), output)
             }
             catch( IOException e ) {
-                throw new IllegalStateException("Unable to hash content: ${file}", e);
+                throw new IllegalStateException("Unable to hash content: ${file}", e)
             }
             finally {
                 if (output) {
                     output.close()
                 }
             }
-            return hasher;
+            return hasher
         }
 
         /**
@@ -394,30 +396,42 @@ class MetaSweeper {
          *
          * @return String representation of community hash
          */
-        public String hash() {
+        String hash() {
 
             HashFunction hf = Hashing.murmur3_32()
             Hasher hshr = hf.newHasher()
 
+            // include the definition of profile
+            profile.collect { e ->
+                hshr.putUnencodedChars(e.getKey())
+                        .putFloat(e.getValue())
+            }
+
             // hash clades definitions
             clades.each { cl ->
-                // deeply hash ancestor and donor
+                // deeply hash clade's ancestor and donor
                 hashFileContent(hshr, cl.ancestor)
                 hashFileContent(hshr, cl.donor)
 
                 hshr.putUnencodedChars(cl.prefix)
                 hshr.putInt(cl.ntaxa)
 
-                // include the definition of tree and profile
+                // include the definition of clade's tree
                 cl.tree.collect { e ->
                     hshr.putUnencodedChars(e.getKey())
-                            .putFloat(e.getValue())
-                }
-                cl.profile.collect { e ->
-                    hshr.putUnencodedChars(e.getKey())
-                            .putFloat(e.getValue())
+                    if (e.value instanceof String)
+                        hshr.putUnencodedChars(e.getValue())
+                    else if (e.value instanceof Float)
+                        hshr.putFloat(e.getValue())
+                    else if (e.value instanceof Double)
+                        hshr.putDouble(e.getValue())
+                    else if (e.value instanceof Integer)
+                        hshr.putInt(e.getValue())
+                    else if (e.value instanceof Long)
+                        hshr.putLong(e.getValue())
                 }
             }
+
             hshr.hash().toString()
         }
 
@@ -427,7 +441,7 @@ class MetaSweeper {
          */
         @Override
         String toString() {
-            "${name}-${hash()}".toString()
+            "${name}_${hash()}".toString()
         }
 
         @Override
@@ -435,81 +449,39 @@ class MetaSweeper {
             Objects.hash(hash())
         }
 
+        List<Clade> getClades() {
+            return this.clades
+        }
+        void setClades(List<Clade> clades) {
+            this.clades = clades
+            clades.each { it.community = this }
+        }
+
     }
 
     /**
-     * A Clade represents set of related genomes evolved from
-     * a common ancestor. How these sequences are different
-     * is dictated by a phylogenetic tree and how they would
-     * manifest in a ecosystem by an abundance profile.
+     * Extend an existing list key (index) by adding the supplied key/value pair.
      *
-     * Both trees and profiles are expected to be generated
-     * through simulation -- which itself is defined by a set
-     * of parameters. These simulation parameters are stored
-     * as a map for either property and intended simulation
-     * tool/algorithm.
+     * This also updates the sweep definition.
      *
-     * How many taxa in exist in the clade is defined by ntaxa.
+     * @param key -- target key to extend
+     * @param name -- variable name to add
+     * @param value -- value corresponding to this variable
+     * @return a new instance of Key
      */
-    static class Clade {
-        //
-        public String prefix
-        // common ancestor
-        private Path ancestor
-        // donor used for htg
-        private Path donor
-        // number of leaves/tips.
-        public Integer ntaxa
-        // parameters involved in generating the tree
-        public Map<String, Float> tree
-        // parameters involved in generating the profile
-        public Map<String, Float> profile
-
-        public void setAncestor(String ancestor) {
-            this.ancestor = Nextflow.file(ancestor)
+    public Key extendKey(Key key, String name, Object value) {
+        Class clazz
+        if (variables[name]) {
+            clazz = variables[name][0].getClass()
         }
-        public String getAncestor() {
-            return ancestor.toString()
+        else {
+            variables[name] = []
         }
-        public Path getAncestorPath() {
-            return ancestor
-        }
-
-        public void setDonor(String donor) {
-            this.donor = Nextflow.file(donor)
-        }
-        public String getDonor() {
-            return donor.toString()
-        }
-        public Path getDonorPath() {
-            return donor
-        }
-
-        /**
-         * String representation of the Clade as a concatenated set of its parameters
-         * @return String
-         */
-        public String describe() {
-            def l = [prefix, simpleSafeString(ancestor), simpleSafeString(donor), ntaxa] +
-                    mapString(tree) + mapString(profile)
-            l.flatten().join(PARAM_SEP)
-        }
-
-        @Override
-        public String toString() {
-            prefix
-        }
-
-        @Override
-        public int hashCode() {
-            return Objects.hash(this.prefix)
-        }
-
-        protected static List mapString(Map<?,?> m) {
-            def sorted_keys = m.sort()*.key
-            sorted_keys.collect{ k -> "${m[k]}" }
-        }
-
+        variables[name].add(clazz ? clazz.cast(value) : value)
+        withVariable(name)
+        Key newKey = key.clone()
+        newKey.put(name, value)
+        return newKey
     }
 
     /**
@@ -585,14 +557,27 @@ class MetaSweeper {
         @Delegate
         Map varRegistry = [:]
 
-        public Object put(Object key, Object value) {
-            if (value instanceof String) {
-                value = [value]
-            }
-            varRegistry[key] = value.collect()
+        Sweep withVariable(String name, Collection values) {
+            varRegistry[name] = values
+            return this
         }
 
-        public String description() {
+        public Object put(Object key, Object value) {
+            if (value instanceof String) {
+                varRegistry[key] = [value]
+            }
+            else if (value instanceof Collection) {
+                varRegistry[key] = value.collect()
+            }
+            else {
+                varRegistry[key] = [value]
+            }
+        }
+
+        void description(String title=null) {
+            if (title) {
+                println title
+            }
             int width = varRegistry.keySet().inject(0) {
                 acc, it -> acc = it.length() > acc ? it.length() : acc
             }
@@ -611,7 +596,7 @@ class MetaSweeper {
             }
             desc.append(hline + '\n')
             desc.append("Total combinations: $num\n")
-            return desc.toString()
+            println desc.toString()
         }
 
         public Collection permuteAll() {
@@ -759,31 +744,6 @@ class MetaSweeper {
     }
 
     /**
-     * Extend an existing list key (index) by adding the supplied key/value pair.
-     *
-     * This also updates the sweep definition.
-     *
-     * @param key -- target key to extend
-     * @param name -- variable name to add
-     * @param value -- value corresponding to this variable
-     * @return a new instance of Key
-     */
-    public Key extendKey(Key key, String name, Object value) {
-        Class clazz
-        if (variables[name]) {
-            clazz = variables[name][0].getClass()
-        }
-        else {
-            variables[name] = []
-        }
-        variables[name].add(clazz ? clazz.cast(value) : value)
-        withVariable(name)
-        Key newKey = key.clone()
-        newKey.put(name, value)
-        return newKey
-    }
-
-    /**
      * Read a configuration from file and return an instance of MetaSweeper
      * @param config -- YAML format configuration file.
      * @return new MetaSweeper instance
@@ -793,23 +753,154 @@ class MetaSweeper {
     }
 
     /**
+     * A Clade represents set of related genomes evolved from
+     * a common ancestor. How these sequences are different
+     * is dictated by a phylogenetic tree.
+     *
+     * Both trees are expected to be generated either through simulation -- which
+     * itself is defined by a set of parameters -- or defined explicitly either
+     * as a string directly in the YAML file or as a reference to an external
+     * URL (file, http, etc).
+     *
+     * How many taxa in exist in the clade is defined by ntaxa.
+     */
+    static class Clade {
+        private static final String REF_TAG = 'ref'
+        private static final String ALGO_TAG = 'algo'
+
+        // a short id or name
+        public String prefix
+        // common ancestor
+        private Path ancestor
+        // donor used for htg
+        private Path donor
+        // number of leaves/tips.
+        public Integer ntaxa
+        // parameters involved in generating the tree
+        public Map<String, Object> tree
+        // parent community
+        public Community community
+
+        void setAncestor(String ancestor) {
+            this.ancestor = Nextflow.file(ancestor)
+        }
+        String getAncestor() {
+            return ancestor.toString()
+        }
+        Path getAncestorPath() {
+            return ancestor
+        }
+
+        void setDonor(String donor) {
+            this.donor = Nextflow.file(donor)
+        }
+        String getDonor() {
+            return donor.toString()
+        }
+        Path getDonorPath() {
+            return donor
+        }
+
+        /**
+         * Check that the algorithm is supported by the workflow.
+         * Note: At present we only support birth_death
+         */
+        boolean isSupportedAlgorithm() {
+            ALGO_TAG in tree && tree[ALGO_TAG] == 'birth_death'
+        }
+
+        /**
+         * Test whether this clade uses a user defined tree.
+         *
+         * Checks for the existence of {@link Clade#REF_TAG} in the tree map.
+         */
+        boolean isDefined() {
+            REF_TAG in tree
+        }
+
+        /**
+         * Test whether this clade uses a procedurally generated tree.
+         *
+         * Checks for the existence of {@link Clade#ALGO_TAG} in the tree map.
+         */
+        boolean isProcedural() {
+            ALGO_TAG in tree
+        }
+
+        /**
+         * Return the user defined NEWICK format tree as a string.
+         *
+         * Tree definitions may be provided either as a plain string in the YAML config.
+         * or as a URL.
+         *
+         * When using a URL, please note that a http-get is performed each time this method
+         * is called. Therefore, attention should be paid to not make redundant calls to
+         * this method in cases where a remote server might interpret repeated calls as
+         * something to block.
+         *
+         * Examples.
+         *
+         * ref: "(A:0.5, B:0.1);"
+         * ref: "file:a/relative/path/tree.nwk"
+         * ref: "file:/an/absolute/path/tree.nwk"
+         * ref: "http://remote.server.io/a/tree.nwk"
+         *
+         * @return a string representaing a NEWICK format tree
+         */
+        String getDefined() {
+            try {
+                tree[REF_TAG].toURL().getText()
+            }
+            catch (MalformedURLException ex) {
+                tree[REF_TAG]
+            }
+        }
+
+        /**
+         * String representation of the Clade as a concatenated set of its parameters
+         * @return String
+         */
+        public String describe() {
+            def l = [prefix, simpleSafeString(ancestor), simpleSafeString(donor), ntaxa] + mapString(tree)
+            l.flatten().join(PARAM_SEP)
+        }
+
+        @Override
+        public String toString() {
+            prefix
+        }
+
+        @Override
+        public int hashCode() {
+            return Objects.hash(this.prefix)
+        }
+
+        protected static List mapString(Map<?,?> m) {
+            def sorted_keys = m.sort()*.key
+            sorted_keys.collect{ k -> "${m[k]}" }
+        }
+
+    }
+
+    /**
      * Print a table describing the current sweep.
      * @param msg -- an additional message to include
      */
-    public void describeSweep(String msg=null) {
-        if (msg) {
-            println msg
-        }
-        println this.sweep.description()
-    }
+//    public void describeSweep(String msg=null) {
+//        if (msg) {
+//            println msg
+//        }
+//        println this.sweep.description()
+//    }
 
     /**
      * Initialize the sweep.
      * @return This MetaSweeper instance
      */
-    public MetaSweeper createSweep() {
-        sweep = new Sweep()
-        return this
+    static Sweep createSweep() {
+//        sweep = new Sweep()
+//        return this
+        new Sweep()
     }
 
     /**

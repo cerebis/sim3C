@@ -37,17 +37,25 @@ import MetaSweeper
 
 MetaSweeper ms = MetaSweeper.fromFile(new File('hic.yaml'))
 
-/**
- * Generate phylogenetic trees for each clade within each community
- */
+//
+// Generate phylogenetic trees for each clade within each community
+//
 
 // Initial sweep begins with seeds and community's clades
-gen_in = ms.createSweep()
-        .withVariable('seed')
-        .withVariable('community', true)
-        .permute()
+//gen_in = ms.createSweep()
+//        .withVariable('seed')
+//        .withVariable('community', true)
+//        .permute()
+//
+//ms.describeSweep('Tree Generation')
 
-ms.describeSweep('Tree Generation')
+def sweep = MetaSweeper.createSweep()
+
+gen_in = sweep.withVariable('seed', ms.variables.seed)
+            .withVariable('clade', ms.variables.community.clades)
+            .permutedChannel()
+
+sweep.description('Tree Generation')
 
 process TreeGen {
     publishDir ms.options.output, mode: 'copy', overwrite: 'true'
@@ -61,29 +69,39 @@ process TreeGen {
     script:
     if (params.debug) {
         """
-        echo $key > "${key}.nwk"
+        echo "$key ${clade.tree}" > "${key}.nwk"
         """
     }
     else {
-        """
-        tree_generator.py --seed $seed --prefix ${clade.prefix} --suppress-rooting --mode random \
-            --max-height 0.1 --birth-rate ${clade.tree.birth} --death-rate ${clade.tree.death} \
-            --format newick --num-taxa ${clade.ntaxa} ${key}.nwk
-        """
+        if (clade.isDefined()) {
+            """
+            echo "${clade.getDefined()}" > ${key}.nwk
+            """
+        }
+        else {
+            // presently we always assume birth-death
+            assert clade.isSupportedAlgorithm() : 'Only birth_death is currently supported'
+            """
+            tree_generator.py --seed $seed --prefix ${clade.prefix} --suppress-rooting --mode random \
+                --max-height 0.1 --birth-rate ${clade.tree.birth_rate} --death-rate ${clade.tree.death_rate} \
+                --format newick --num-taxa ${clade.ntaxa} ${key}.nwk
+            """
+        }
     }
 }
 
 
-/**
- * Generate evolved sequences for each clade from each community
- */
+//
+// Generate evolved sequences for each clade from each community
+//
 
 (tree_out, evo_in) = tree_out.into(2)
 
         // extend the sweep to include alpha
-evo_in = ms.withVariable('alpha').extend(evo_in, 'alpha')
+evo_in = sweep.withVariable('alpha', ms.variables.alpha)
+            .extendChannel(evo_in, 'alpha')
 
-ms.describeSweep('Evolve Clades')
+sweep.description('Evovle Clades')
 
 process Evolve {
     publishDir ms.options.output, mode: 'copy', overwrite: 'true'
@@ -115,34 +133,67 @@ process Evolve {
 
 }
 
+/*
+//
+// Merge evolved sequences from the clades into whole communities
+//
+(evo_out, merge_seq_in) = evo_out.into(2)
 
-/**
- * Generate abundance profiles for each clade within each community
- */
+// group by a reduced key that is only the random seed and alpha
+merge_seq_in = merge_seq_in.groupBy { it.getKey().selectedKey('seed', 'alpha') }
+// convert the resulting map of sweep point results into table format and sort by file name
+        .flatMap { it.collect { k, v ->
+            v.each{ xi -> println "$k xi=$xi" }
+            [k, v.collect { vi -> vi[1] }.toSorted { a, b -> a.name <=> b.name }] } }
+        .subscribe{println it}
 
-(evo_out, prof_in) = evo_out.into(2)
 
-    // just the clade sequences, which are used to obtain taxon ids.
-prof_in = prof_in.map { it.pick(1) }
+/*process MergeClades {
+    publishDir ms.options.output, mode: 'copy', overwrite: 'true'
+
+    input:
+    set key, file('clade_seq') from merge_seq_in
+
+    output:
+    set key, file("${key}.community.fa") into merge_seq_out
+
+    script:
+    if (params.debug) {
+        """
+        echo $key > "${key}.community.fa"
+        """
+    }
+    else {
+        """
+        cat clade_seq* >> ${key}.community.fa
+        """
+    }
+}
+
+//
+// Generate abundance profiles for each clade within each community
+//
+(merge_seq_out, prof_in) = merge_seq_out.into(2)
 
 process ProfileGen {
     publishDir ms.options.output, mode: 'copy', overwrite: 'true'
 
     input:
-    set key, file('clade_seq') from prof_in
+    set key, file('community.fa') from prof_in
 
     output:
     set key, file("${key}.prf") into prof_out
 
     script:
+    println key['community']
+    def mu = key['community'].community.profile.mu
+    def sigma = key['community'].community.profile.sigma
     if (params.debug) {
         """
-        echo $key > "${key}.prf"
+        echo "$key $mu $sigma" > "${key}.prf"
         """
     }
     else {
-        def mu = key['community'].profile.mu
-        def sigma = key['community'].profile.sigma
         """
         profile_generator.py --seed ${key['seed']} --dist lognormal --lognorm-mu $mu \
             --lognorm-sigma $sigma clade_seq ${key}.prf
@@ -151,9 +202,9 @@ process ProfileGen {
 }
 
 
-/**
- * Merge clade abundance profiles into whole community profiles
- */
+//
+// Merge clade abundance profiles into whole community profiles
+//
 (prof_out, merge_prof_in) = prof_out.into(2)
 
         // group by a reduced key that is only the random seed and alpha
@@ -182,41 +233,12 @@ process ProfileMerge {
     }
 }
 
-/**
- * Merge evolved sequences from the clades into whole communities
- */
-(evo_out, merge_seq_in) = evo_out.into(2)
 
-        // group by a reduced key that is only the random seed and alpha
-merge_seq_in = merge_seq_in.groupBy { it.getKey().selectedKey('seed', 'alpha') }
-        // convert the resulting map of sweep point results into table format and sort by file name
-        .flatMap { it.collect { k, v -> [k, v.collect { vi -> vi[1] }.toSorted { a, b -> a.name <=> b.name }] } }
 
-process MergeClades {
-    publishDir ms.options.output, mode: 'copy', overwrite: 'true'
 
-    input:
-    set key, file('clade_seq') from merge_seq_in
-
-    output:
-    set key, file("${key}.community.fa") into merge_seq_out
-
-    script:
-    if (params.debug) {
-        """
-        echo $key > "${key}.community.fa"
-        """
-    }
-    else {
-        """
-        cat clade_seq* >> ${key}.community.fa
-        """
-    }
-}
-
-/**
- * Prepare a channel which is composed of paired community sequences and profiles
- */
+//
+// Prepare a channel which is composed of paired community sequences and profiles
+//
 
 (merge_seq_out, seq_prof) = merge_seq_out.into(2)
 (merge_prof_out, tmp) = merge_prof_out.into(2)
@@ -227,9 +249,9 @@ seq_prof = seq_prof.map { it.pick(1) }
         .phase(tmp).map { it = it.flatten(); it.pick(1, 3) }
 
 
-/**
- * Generate shotgun sequencing reads for for each whole community
- */
+//
+// Generate shotgun sequencing reads for for each whole community
+//
 (seq_prof, wgs_in) = seq_prof.into(2)
 
         // Add WGS coverage to the sweep
@@ -273,9 +295,9 @@ process WGS_Reads {
 }
 
 
-/**
- * Generate 3C reads for each whole community
- */
+//
+// Generate 3C reads for each whole community
+//
 (seq_prof, hic_in) = seq_prof.into(2)
 
         // Add 3C coverage to the sweep
@@ -313,9 +335,9 @@ process HIC_Reads {
 }
 
 
-/**
- * Assemble WGS reads
- */
+//
+// Assemble WGS reads
+//
 (wgs_out, asm_in) = wgs_out.into(2)
 
         // select just read-set files (R1, R2) and the community sequences
@@ -345,9 +367,9 @@ process Assemble {
     }
 }
 
-/**
- * Infer Truth Tables for each community by mapping contigs to community references
- */
+//
+// Infer Truth Tables for each community by mapping contigs to community references
+//
 (asm_out, truth_in) = asm_out.into(2)
 
         // select just contigs and community sequences
@@ -383,9 +405,9 @@ process Truth {
 
 }
 
-/**
- * Map HiC reads to assembled contigs
- */
+//
+// Map HiC reads to assembled contigs
+//
 (asm_out, hicmap_in) = asm_out.into(2)
 
         // join 3C reads and the results of assembly
@@ -423,9 +445,9 @@ process HiCMap {
     }
 }
 
-/**
- * Generate contig graphs
- */
+//
+// Generate contig graphs
+//
 (hicmap_out, graph_in) = hicmap_out.into(2)
 
         // select just hic bam, hic reads and contigs
@@ -459,9 +481,9 @@ process Graph {
 }
 
 
-/**
- * Map WGS reads to contigs
- */
+//
+// Map WGS reads to contigs
+//
 (asm_out, wgsmap_in) = asm_out.into(2)
 
         // select just contigs, r1 and r2
@@ -495,9 +517,9 @@ process WGSMap {
 }
 
 
-/**
- * Calculate assembly contig coverage
- */
+//
+// Calculate assembly contig coverage
+//
 (wgsmap_out, cov_in) = wgsmap_out.into(2)
 
         // select wgs bam and contigs
@@ -543,3 +565,4 @@ process InferReadDepth {
         """
     }
 }
+*/
