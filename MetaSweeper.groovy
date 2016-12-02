@@ -46,7 +46,6 @@ import com.google.common.hash.Funnels
 class MetaSweeper {
     public Map<String, Object> variables = [:]
     public Map<String, Object> options = [:]
-//    public sweep
 
     // NOTE: File system dependent! Both separator patterns must be composed of
     // legal, non-escaped characters of the underlying filesystem. Escaped characters
@@ -279,7 +278,7 @@ class MetaSweeper {
          * @param depth - the depth to retain
          * @return reduced key
          */
-        public Key subKey(int depth) {
+        Key subKey(int depth) {
             assert depth > 0 : 'Depth must be a positive integer'
             List keys = keyList()
             assert depth <= keys.size() : "Requested depth [$depth] exceeds defined variable count [${keys.size()}]"
@@ -293,7 +292,7 @@ class MetaSweeper {
          * @param numLevels -- the number of levels to remove
          * @return the Key after removing @{numLevels} levels.
          */
-        public Key popLevels(int numLevels) {
+        Key popLevels(int numLevels) {
             assert numLevels >= 0 : 'Number of levels must be >= 0'
             assert numLevels < this.varMap.size() : 'Action would remove all levels from key'
             return subKey(this.varMap.size() - numLevels)
@@ -307,7 +306,7 @@ class MetaSweeper {
          * @param level - the sweep level at which to split (0 > level < max_level)
          * @return Map containing two keys: 'hi' and 'lo'
          */
-        public Map splitKey(int level) {
+        Map splitKey(int level) {
             List keys = keyList()
             assert level > 0 : 'Depth must be > 0'
             assert level <= keys.size() : "Requested cut point [$level] beyond end. Max [${keys.size()}] levels"
@@ -317,7 +316,7 @@ class MetaSweeper {
             return splitKey
         }
 
-        public Key selectedKey(String... names) {
+        Key selectedKey(String... names) {
             assert names.size() > 0 : 'Must have at least one element selected'
             Map m = varMap.subMap(names)
             assert m.size() > 0 : "No elements matched [$names]"
@@ -445,7 +444,7 @@ class MetaSweeper {
         }
 
         @Override
-        public int hashCode() {
+        int hashCode() {
             Objects.hash(hash())
         }
 
@@ -469,7 +468,7 @@ class MetaSweeper {
      * @param value -- value corresponding to this variable
      * @return a new instance of Key
      */
-    public Key extendKey(Key key, String name, Object value) {
+    Key extendKey(Key key, String name, Object value) {
         Class clazz
         if (variables[name]) {
             clazz = variables[name][0].getClass()
@@ -517,7 +516,7 @@ class MetaSweeper {
          * @param file -- YAML file to read
          * @return MetaSweeper
          */
-        public static MetaSweeper read(File file) {
+        static MetaSweeper read(File file) {
             Yaml yaml = threadLocal.get()
             yaml.load(new FileReader(file))
         }
@@ -527,7 +526,7 @@ class MetaSweeper {
          * @param doc -- String to read
          * @return MetaSweeper
          */
-        public static Map read(String doc) {
+        static Map read(String doc) {
             Yaml yaml = threadLocal.get()
             yaml.load(doc)
         }
@@ -537,7 +536,7 @@ class MetaSweeper {
          * @param ms -- Object to convert
          * @return String (YAML)
          */
-        public static String write(MetaSweeper ms) {
+        static String write(MetaSweeper ms) {
             Yaml yaml = threadLocal.get()
             yaml.dump(ms)
         }
@@ -547,7 +546,7 @@ class MetaSweeper {
          * @param ms - Object to write
          * @param writer - output writer
          */
-        public static void write(MetaSweeper ms, Writer writer) {
+        static void write(MetaSweeper ms, Writer writer) {
             Yaml yaml = threadLocal.get()
             yaml.dump(ms, writer)
         }
@@ -562,7 +561,7 @@ class MetaSweeper {
             return this
         }
 
-        public Object put(Object key, Object value) {
+        Object put(Object key, Object value) {
             if (value instanceof String) {
                 varRegistry[key] = [value]
             }
@@ -599,7 +598,7 @@ class MetaSweeper {
             println desc.toString()
         }
 
-        public Collection permuteAll() {
+        Collection permuteAll() {
             permute(values())
         }
 
@@ -608,7 +607,7 @@ class MetaSweeper {
          * @param varNames the variables to permut
          * @return all permutations as a list
          */
-        public Collection permuteNames(Object... varNames) {
+        Collection permuteNames(Object... varNames) {
             def ln = varNames.collect()
             // delegated subMap
             ln = subMap(ln)
@@ -616,7 +615,7 @@ class MetaSweeper {
             permute(ln.collect{ k, v -> GroovyCollections.combinations([k], v) })
         }
 
-        public Collection permuteLevels(int begin = 0, int end = -1) {
+        Collection permuteLevels(int begin = 0, int end = -1) {
             def names = keySet() as List
             permute(subMap(names[begin..end]).values())
         }
@@ -659,7 +658,7 @@ class MetaSweeper {
          * Permute the entire sweep.
          * @return the permutations as a channel
          */
-        public  DataflowQueue permutedChannel() {
+        DataflowQueue permutedChannel() {
             List allVars = varRegistry.keySet() as List
             permutedChannel(*allVars)
         }
@@ -670,7 +669,7 @@ class MetaSweeper {
          * @param varNames the specified variables to include
          * @return the permutations as a channel
          */
-        public DataflowQueue permutedChannel(Object... varNames) {
+        DataflowQueue permutedChannel(Object... varNames) {
             def pn = permuteNames(varNames)
 
             Channel.from(pn).map{ row ->
@@ -695,7 +694,7 @@ class MetaSweeper {
          * @param key - the key to reorder
          * @return the reordered key
          */
-        public Key orderKey(Key key) {
+        Key orderKey(Key key) {
             return varRegistry.inject(new Key()) { ordKey, name, values ->
                 if (key[name]) {
                     ordKey.put(name, key[name])
@@ -713,7 +712,7 @@ class MetaSweeper {
          * @param varNames -- the variables, referenced by their sweep names
          * @return an extended channel
          */
-        public DataflowQueue extendChannel(DataflowQueue df, String... varNames) {
+        DataflowQueue extendChannel(DataflowQueue df, String... varNames) {
             assert varNames.size() > 0 : "Error, no variables named in extendChannel"
 
             def p = permuteNames(varNames)
@@ -860,18 +859,18 @@ class MetaSweeper {
          * String representation of the Clade as a concatenated set of its parameters
          * @return String
          */
-        public String describe() {
+        String describe() {
             def l = [prefix, simpleSafeString(ancestor), simpleSafeString(donor), ntaxa] + mapString(tree)
             l.flatten().join(PARAM_SEP)
         }
 
         @Override
-        public String toString() {
+        String toString() {
             prefix
         }
 
         @Override
-        public int hashCode() {
+        int hashCode() {
             return Objects.hash(this.prefix)
         }
 
@@ -883,23 +882,10 @@ class MetaSweeper {
     }
 
     /**
-     * Print a table describing the current sweep.
-     * @param msg -- an additional message to include
-     */
-//    public void describeSweep(String msg=null) {
-//        if (msg) {
-//            println msg
-//        }
-//        println this.sweep.description()
-//    }
-
-    /**
-     * Initialize the sweep.
+     * Initialize a sweep.
      * @return This MetaSweeper instance
      */
     static Sweep createSweep() {
-//        sweep = new Sweep()
-//        return this
         new Sweep()
     }
 
@@ -911,7 +897,7 @@ class MetaSweeper {
      * @param varNames -- the named variable with which to extend the channel
      * @return the extended Channel
      */
-    public DataflowChannel extend(DataflowQueue df, String... varNames) {
+    DataflowChannel extend(DataflowQueue df, String... varNames) {
         sweep.extendChannel(df, varNames)
     }
 
@@ -922,7 +908,7 @@ class MetaSweeper {
      * the elements instead
      * @return MetaSweeper instance
      */
-    public MetaSweeper withVariable(String name, Boolean stepInto=false) {
+    MetaSweeper withVariable(String name, Boolean stepInto=false) {
         if (stepInto) {
             // step into a variable which itself iterable but not a plain collection
             sweep[name] = variables[name].collect()
@@ -931,15 +917,6 @@ class MetaSweeper {
             sweep[name] = variables[name]
         }
         return this
-    }
-
-    /**
-     * For a given sweep defintion, create a channel which represents all the permutations.
-     *
-     * @return channel of perumuted sweep parameters.
-     */
-    public DataflowQueue permute() {
-        sweep.permutedChannel()
     }
 
     /**
@@ -957,7 +934,7 @@ class MetaSweeper {
      * @param level - sweep level to group at
      * @return map of grouped rows.
      */
-    public static Map groupAtLevel(DataflowQueue df, int level) {
+    static Map groupAtLevel(DataflowQueue df, int level) {
         List list = df.toList().get()
         return list.inject([:]) { acc, row ->
             def k = row[0].splitKey(level)
@@ -990,7 +967,7 @@ class MetaSweeper {
      * @param level - the level of the sweep hierarchy to merge at.
      * @return channel of merged values
      */
-    public DataflowQueue joinChannels(DataflowQueue df1, DataflowQueue df2, int level) {
+    DataflowQueue joinChannels(DataflowQueue df1, DataflowQueue df2, int level) {
         Map g1 = groupAtLevel(df1, level)
         Map g2 = groupAtLevel(df2, level)
 
@@ -1086,7 +1063,7 @@ class MetaSweeper {
      * @param path sweep file or list of files
      * @return Channel with a leading key for use in joins
      */
-    public static DataflowChannel simpleKeyedFrom(path, int numSuffix=1) {
+    static DataflowChannel simpleKeyedFrom(path, int numSuffix=1) {
         assert path instanceof Path || path instanceof List<Path> : 'Error: supplied path must be an instance of ' +
                 'java.nio.Path or Collection<Path>'
 
@@ -1152,7 +1129,7 @@ class MetaSweeper {
      * iterations which were observed.
      * @return a channel of iterations, possibly part or all of a sweep depending on the paths parsed
      */
-    public DataflowChannel keyedFrom(path, int numSuffix=1, boolean permute=false) {
+    DataflowChannel keyedFrom(path, int numSuffix=1, boolean permute=false) {
         assert path instanceof Path || path instanceof List<Path> : 'Error: supplied path must be an instance of ' +
                 'java.nio.Path or Collection<Path>'
 
