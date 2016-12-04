@@ -36,27 +36,37 @@ import MetaSweeper
 
 MetaSweeper ms = MetaSweeper.fromFile(new File('hic.yaml'))
 
+def sweep = MetaSweeper.createSweep()
+
 // fetch truth tables from sweep output directory
-truths = ms.keyedFrom(file("${ms.options.output}/*.truth"))
+truths = ms.keyedFrom(sweep, file("${ms.options.output}/*.truth"))
 
 // fetch contig graphs from output dir and pair with respective truth table
-graphs = ms.keyedFrom(file("${ms.options.output}/*.graphml"))
-graphs = ms.joinChannels(graphs, truths, 3)
+graphs = ms.keyedFrom(sweep, file("${ms.options.output}/*.graphml"))
+graphs = sweep.joinChannels(graphs, truths, 3)
 
-/**
- * Cluster using louvain-soft
- */
-// prepare input channel
-(ls_in, graphs) = graphs.into(2)
+//
+// Perform Clustering
+//
 
-        // extend the key to include cluster algorithm.
-ls_in = ls_in.map { [ ms.extendKey(it.getKey(), 'algo', 'louvsoft'), *it.dropKey() ] }
+// prepare input channels, one per clustering algorithm
+(cl_in, graphs) = graphs.into(2)
+
+cl_in = sweep.withVariable('algo', ['louvsoft', 'louvhard', 'oclustr'])
+            .describe('Clustering Algorithms')
+            .extendChannel(cl_in, 'algo')
+
+chanMap = sweep.forkOnVariable(cl_in, 'algo')
+
+//
+// Cluster using Louvain-soft
+//
 
 process LouvSoft {
     publishDir ms.options.output, mode: 'copy', overwrite: 'true'
 
     input:
-    set key, file('g.graphml'), truth from ls_in
+    set key, file('g.graphml'), truth, algo from chanMap['louvsoft']
 
     output:
     set key, file("${key}.cl"), truth into ls_out
@@ -74,20 +84,15 @@ process LouvSoft {
     }
 }
 
-/**
- * Cluster using louvain-hard
- */
-// prepare input channel
-(lh_in, graphs) = graphs.into(2)
-
-        // extend the key to include cluster algorithm.
-lh_in = lh_in.map { [ ms.extendKey(it.getKey(), 'algo', 'louvhard'), *it.dropKey() ] }
+//
+// Cluster using Louvain-hard
+//
 
 process LouvHard {
     publishDir ms.options.output, mode: 'copy', overwrite: 'true'
 
     input:
-    set key, file('g.graphml'), truth from lh_in
+    set key, file('g.graphml'), truth, algo from chanMap['louvhard']
 
     output:
     set key, file("${key}.cl"), truth into lh_out
@@ -105,20 +110,16 @@ process LouvHard {
     }
 }
 
-/**
- * Cluster using OClustR
- */
-// prepare input channel
-(oc_in, graphs) = graphs.into(2)
 
-        // extend the key to include cluster algorithm.
-oc_in = oc_in.map { [ ms.extendKey(it.getKey(), 'algo', 'ocluster'), *it.dropKey() ] }
+//
+// Cluster using OClustR
+//
 
 process Oclustr {
     publishDir ms.options.output, mode: 'copy', overwrite: 'true'
 
     input:
-    set key, file('g.graphml'), truth from oc_in
+    set key, file('g.graphml'), truth, algo from chanMap['oclustr']
 
     output:
     set key, file("${key}.cl"), truth into oc_out
@@ -136,9 +137,10 @@ process Oclustr {
     }
 }
 
-/**
- * Compute graph statistics
- */
+//
+// Compute graph statistics
+//
+
 // copy channel
 (ginfo_in, graphs) = graphs.into(2)
 
@@ -166,11 +168,12 @@ process GraphInfo {
     }
 }
 
-/**
- * Compute BCubed for reach clustering against its ground truth
- */
 
-    // Collect all clustering results into a single channel
+//
+// Compute BCubed for reach clustering against its ground truth
+//
+
+// Collect all clustering results into a single channel
 bc_in = ls_out.mix(lh_out, oc_out)
 
 process Bcubed  {
@@ -195,12 +198,13 @@ process Bcubed  {
     }
 }
 
-/**
- * Compute assembly statistics
- */
 
-        // fetch contig fastas from output dir
-contigs = ms.keyedFrom(file("${ms.options.output}/*.contigs.fasta"), 2)
+//
+// Compute assembly statistics
+//
+
+// fetch contig fastas from output dir
+contigs = ms.keyedFrom(sweep, file("${ms.options.output}/*.contigs.fasta"), 2)
 
 process AssemblyStats {
     publishDir ms.options.output, mode: 'copy', overwrite: 'true'

@@ -814,6 +814,36 @@ class MetaSweeper {
 
             return Channel.from(ret)
         }
+
+
+        /**
+         * Fork the contents of an existing channel into multiple output channels,
+         * where there will be one output channel per-value of the specified
+         * sweep variable. Matches are complete (^..$) on the values.
+         *
+         * @param df -- DataflowChannel to fork
+         * @param name -- Sweep variable name to fork on
+         * @return the split channel as a list of channels.
+         */
+        Map<String, DataflowChannel> forkOnVariable(DataflowChannel df, String name) {
+            assert name in varRegistry : "Error: ${name} is not a registered variable name"
+            def values = this.varRegistry[name]
+            // create the empty destination channels
+            def forkedChans = values.collect { Channel.create() }
+            // the result is returned a map, named by the values for the specified variable
+            def chanMap = values.inject([:]) { acc, it -> acc[it] = []; acc}
+            // fork the channel
+            df.choice( forkedChans ) {
+                def key = it.getKey()
+                def idx = values.findIndexOf { vi -> key[name] =~ /$vi/ }
+                assert idx != -1 : "Error: failed to find ${vi} in key ${key}"
+                idx
+            }
+            // put the split channels into map. Assumes order is preserved
+            values.eachWithIndex { it, n -> chanMap[it] = forkedChans[n] }
+            chanMap
+        }
+
     }
 
     /**
@@ -1091,21 +1121,20 @@ class MetaSweeper {
     }
 
     /**
-     * Create a channel using the keys as found on a path or list of paths.
+     * Create a sweep, initialized using the keys as found on a path or list of paths. This
+     * also overrides variables with the same entry keys in this MetaSweeper instance.
+     *
+     * @param sweep -- sweep instance to initialize from path parsing
      * @param path -- one or a list of @{link java.nio.Path}
      * @param numSuffix -- the number of dot '.' suffixes to remove, leaving only the key data.
-     * @param permute -- if true, create a permutation of all parameters. Otherwise just return those
-     * iterations which were observed.
+     * @param permute -- create a permutation channel from all variables
      * @return a channel of iterations, possibly part or all of a sweep depending on the paths parsed
      */
-    DataflowChannel keyedFrom(path, int numSuffix=1, boolean permute=false) {
+    DataflowChannel keyedFrom(sweep, path, int numSuffix=1, boolean permute=false) {
         assert path instanceof Path || path instanceof List<Path> : 'Error: supplied path must be an instance of ' +
                 'java.nio.Path or Collection<Path>'
 
-        if (! sweep) {
-            createSweep()
-        }
-
+        // why make a list when we shold be able to iterate on channel
         List files = Channel.from(path).toList().get()
         def toAdd = [:].withDefault{[] as Set}
 
@@ -1122,13 +1151,15 @@ class MetaSweeper {
         // existing definition of that variable or create a new one. Finally, add the variable
         // to the sweep.
         toAdd.each { k, v ->
+            // add to set of defined variables for this instance
             variables[k] = implicitValueOf(v).sort(false)
-            withVariable(k)
+            // also add immediately to sweep
+            sweep.withVariable(k, variables[k])
         }
 
         // create a channel which is a permutation of all the discovered variables and their values.
         if (permute) {
-            return permute()
+            return sweep.permutedChannel()
         }
         else {
             return Channel.from(keyedFiles)
