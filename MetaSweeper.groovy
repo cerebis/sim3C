@@ -24,8 +24,6 @@ import groovy.transform.Synchronized
 import groovyx.gpars.dataflow.DataflowChannel
 import groovyx.gpars.dataflow.DataflowQueue
 import java.nio.file.Path
-import java.io.File
-import java.io.Writer
 import java.nio.file.Files
 import java.util.regex.Pattern
 import nextflow.Channel
@@ -143,7 +141,24 @@ class MetaSweeper {
 
     }
 
-
+    /**
+     * A {@link Key} acts as an identifier for a single iteration within a parameter sweep.
+     *
+     * Within {@link MetaSweeper} channels are best conceptualised as tables. Each element in
+     * a channel element corresponds to a row and each element within a row corresponds to a
+     * column. MetaSweeper attempts to maintan a key as the first element of each row, providing
+     * a means of recording variable state for each result in the workflow and permit the joining
+     * of output channels which split at an earlier stage.
+     *
+     * As the depth of the sweep varies, the number of elements stored in the Key varies in accordance.
+     * When represented as a string, keys are doubly delimited, first as variable-name/variable-value
+     * pairs for each active variable, and then as the set of active variables.
+     *
+     * The presently used delimiters have been chosen so as to avoid conflicts with common filesystems,
+     * but provide a basic degree of human-readability.
+     *
+     * Eg. "seed#123-+-xfold#10-+-n3c#100000"
+     */
     @AutoClone
     static class Key {
         LinkedHashMap varMap = [:]
@@ -331,208 +346,41 @@ class MetaSweeper {
     }
 
     /**
-     * Community represents a collection of clades/groups of related genomes.
-     * Together it can be regarded as a simulated community.
+     * Primary class representing a parameter sweep.
      */
-    static class Community implements Iterable {
-        // just a human centric name for a community
-        public String name
-        // the list of clades/groups to generate
-        public List<Clade> clades
-        // parameters involved in generating the profile
-        public Map<String, Float> profile
-
-        Iterator iterator() {
-            clades.iterator()
-        }
-
-        /**
-         * Hash file content from file name
-         * @param hasher
-         * @param fileName
-         * @return
-         */
-        static private Hasher hashFileContent(Hasher hasher, String fileName) {
-            hashFileContent(hasher, new File(fileName))
-        }
-
-        /**
-         * Hash file content. Appropriated from nextflow.util.CacheHelper as it
-         * has been defined private. (removed further nextflow specific helper
-         * classes)
-         *
-         * @param hasher
-         * @param file
-         * @return
-         */
-        static private Hasher hashFileContent(Hasher hasher, File file) {
-            OutputStream output = Funnels.asOutputStream(hasher)
-            try {
-                Files.copy(file.toPath(), output)
-            }
-            catch( IOException e ) {
-                throw new IllegalStateException("Unable to hash content: ${file}", e)
-            }
-            finally {
-                if (output) {
-                    output.close()
-                }
-            }
-            return hasher
-        }
-
-        /**
-         * Create a hash for a given community definition. This is used
-         * as a shorthand identifier when naming files. Everything involved
-         * in the definition of a community is used except the name -- which would
-         * play no role in structure.
-         *
-         * Both ancestor and donor sequences are deeply hashed.
-         *
-         * Only mumur3_32 is used since we do not desire an enormously long
-         * string and we doubt that there would be clashes for any realistic
-         * range of communities in a given experiment.
-         *
-         * @return String representation of community hash
-         */
-        String hash() {
-
-            HashFunction hf = Hashing.murmur3_32()
-            Hasher hshr = hf.newHasher()
-
-            // include the definition of profile
-            profile.collect { e ->
-                hshr.putUnencodedChars(e.getKey())
-                        .putFloat(e.getValue())
-            }
-
-            // hash clades definitions
-            clades.each { cl ->
-                // deeply hash clade's ancestor and donor
-                hashFileContent(hshr, cl.ancestor)
-                hashFileContent(hshr, cl.donor)
-
-                hshr.putUnencodedChars(cl.prefix)
-                hshr.putInt(cl.ntaxa)
-
-                // include the definition of clade's tree
-                cl.tree.collect { e ->
-                    hshr.putUnencodedChars(e.getKey())
-                    if (e.value instanceof String)
-                        hshr.putUnencodedChars(e.getValue())
-                    else if (e.value instanceof Float)
-                        hshr.putFloat(e.getValue())
-                    else if (e.value instanceof Double)
-                        hshr.putDouble(e.getValue())
-                    else if (e.value instanceof Integer)
-                        hshr.putInt(e.getValue())
-                    else if (e.value instanceof Long)
-                        hshr.putLong(e.getValue())
-                }
-            }
-
-            hshr.hash().toString()
-        }
-
-        /**
-         * Represented by the name and hash
-         * @return String
-         */
-        @Override
-        String toString() {
-            "${name}_${hash()}".toString()
-        }
-
-        @Override
-        int hashCode() {
-            Objects.hash(hash())
-        }
-
-    }
-
-    /**
-     * Read sweep configurations in YAML format
-     *
-     * Should be threadsafe.
-     */
-    static class ConfigLoader {
-
-        private static ThreadLocal<Yaml> threadLocal
-
-        static {
-            /**
-             * ThreadLocal instance of Yaml read/write object
-             */
-            threadLocal = new ThreadLocal<Yaml>() {
-                @Override
-                protected Yaml initialValue() {
-                    // constructor root is MetaSweeper
-                    Constructor cnstr = new Constructor(MetaSweeper.class)
-                    // two tags are used to instantiate custom classes from
-                    // within the map hierarchy
-                    cnstr.addTypeDescription(new TypeDescription(Community.class, '!com'))
-                    cnstr.addTypeDescription(new TypeDescription(Clade.class, '!clade'))
-                    cnstr.addTypeDescription(new TypeDescription(File.class))
-                    new Yaml(cnstr)
-                }
-            }
-        }
-
-        /**
-         * Read a configuration from a file.
-         * @param file -- YAML file to read
-         * @return MetaSweeper
-         */
-        static MetaSweeper read(File file) {
-            Yaml yaml = threadLocal.get()
-            yaml.load(new FileReader(file))
-        }
-
-        /**
-         * Read a configuration from a string
-         * @param doc -- String to read
-         * @return MetaSweeper
-         */
-        static Map read(String doc) {
-            Yaml yaml = threadLocal.get()
-            yaml.load(doc)
-        }
-
-        /**
-         * Convert MetaSweeper object to a string in YAML syntax
-         * @param ms -- Object to convert
-         * @return String (YAML)
-         */
-        static String write(MetaSweeper ms) {
-            Yaml yaml = threadLocal.get()
-            yaml.dump(ms)
-        }
-
-        /**
-         * Write a YAML representation of a MetaSweeper object to a stream
-         * @param ms - Object to write
-         * @param writer - output writer
-         */
-        static void write(MetaSweeper ms, Writer writer) {
-            Yaml yaml = threadLocal.get()
-            yaml.dump(ms, writer)
-        }
-    }
-
     static class Sweep {
         @Delegate
         Map varRegistry = [:]
 
+        /**
+         * Introduce a new variable and its values to the sweep.
+         *
+         * @param name - the variable name
+         * @param values - the values associated with this variable
+         * @return this {@link Sweep}
+         */
         Sweep withVariable(String name, Object values) {
             put(name, values)
             return this
         }
 
+        /**
+         * Drop (or remove) a variable from this instance of {@link Sweep}.
+         * @param name - the variable name
+         * @return this {@link Sweep} without the variable
+         */
         Sweep dropVariable(String name) {
             varRegistry.remove(name)
             return this
         }
 
+        /**
+         * Append a value to a variable in sweep. If the variable doesn't exist,
+         * then a new entry is created.
+         * @param name - the variable name in the sweep
+         * @param value - the value to add to this variable
+         * @return this instance of {@link Sweep}
+         */
         Sweep appendValue(String name, Object value) {
             if (name in varRegistry) {
                 varRegistry[name].add(value)
@@ -543,6 +391,14 @@ class MetaSweeper {
             return this
         }
 
+        /**
+         * Add a new entry to the variable registry. If the supplied values are not
+         * a collection, then first wrap it with a list.
+         *
+         * @param key - the variable name for this entry
+         * @param value - the value(s) for this variable
+         * @return the added values
+         */
         Object put(Object key, Object value) {
             if (!(value instanceof Collection)) {
                 varRegistry[key] = [value]
@@ -585,6 +441,10 @@ class MetaSweeper {
             return this
         }
 
+        /**
+         * Generate a permutation of all variables in the sweep.
+         * @return the permutation as a collection
+         */
         Collection permuteAll() {
             permute(values())
         }
@@ -592,7 +452,7 @@ class MetaSweeper {
         /**
          * Return the permutation of the variables, as referenced by their names.
          * @param varNames the variables to permut
-         * @return all permutations as a list
+         * @return all permutations as a collection
          */
         Collection permuteNames(Object... varNames) {
             def ln = varNames.collect()
@@ -602,6 +462,12 @@ class MetaSweeper {
             permute(ln.collect{ k, v -> GroovyCollections.combinations([k], v) })
         }
 
+        /**
+         * Carry-out the permutation between a range of levels within the sweep.
+         * @param begin - the first level at which to begin
+         * @param end - the last level, at which to stop
+         * @return a permutation as a collection
+         */
         Collection permuteLevels(int begin = 0, int end = -1) {
             def names = keySet() as List
             permute(subMap(names[begin..end]).values())
@@ -725,6 +591,19 @@ class MetaSweeper {
             }
 
             return df
+        }
+
+        /**
+         * Assuming an ordered list of successive pairs, [A1,A2,B1,B2], combine each pair
+         * as a 2-element list.
+         *
+         * f([A1,A2,B1,B2]) -> [[A1,A2], [B1,B2]]
+         *
+         * @param list - flat interleaved list of pairs
+         * @return nested list of pairs.
+         */
+        static List pairListElements(List list) {
+            (0..<list.size()/2).collect{ list[it*2..<(it+1)*2] }
         }
 
         /**
@@ -858,6 +737,128 @@ class MetaSweeper {
     }
 
     /**
+     * Community represents a collection of clades/groups of related genomes.
+     * Together it can be regarded as a simulated community.
+     */
+    static class Community implements Iterable {
+        // just a human centric name for a community
+        public String name
+        // the list of clades/groups to generate
+        public List<Clade> clades
+        // parameters involved in generating the profile
+        public Map<String, Float> profile
+
+        Iterator iterator() {
+            clades.iterator()
+        }
+
+        /**
+         * Hash file content from file name
+         * @param hasher
+         * @param fileName
+         * @return
+         */
+        static private Hasher hashFileContent(Hasher hasher, String fileName) {
+            hashFileContent(hasher, new File(fileName))
+        }
+
+        /**
+         * Hash file content. Appropriated from nextflow.util.CacheHelper as it
+         * has been defined private. (removed further nextflow specific helper
+         * classes)
+         *
+         * @param hasher
+         * @param file
+         * @return
+         */
+        static private Hasher hashFileContent(Hasher hasher, File file) {
+            OutputStream output = Funnels.asOutputStream(hasher)
+            try {
+                Files.copy(file.toPath(), output)
+            }
+            catch( IOException e ) {
+                throw new IllegalStateException("Unable to hash content: ${file}", e)
+            }
+            finally {
+                if (output) {
+                    output.close()
+                }
+            }
+            return hasher
+        }
+
+        /**
+         * Create a hash for a given community definition. This is used
+         * as a shorthand identifier when naming files. Everything involved
+         * in the definition of a community is used except the name -- which would
+         * play no role in structure.
+         *
+         * Both ancestor and donor sequences are deeply hashed.
+         *
+         * Only mumur3_32 is used since we do not desire an enormously long
+         * string and we doubt that there would be clashes for any realistic
+         * range of communities in a given experiment.
+         *
+         * @return String representation of community hash
+         */
+        String hash() {
+
+            HashFunction hf = Hashing.murmur3_32()
+            Hasher hshr = hf.newHasher()
+
+            // include the definition of profile
+            profile.collect { e ->
+                hshr.putUnencodedChars(e.getKey())
+                        .putFloat(e.getValue())
+            }
+
+            // hash clades definitions
+            clades.each { cl ->
+                // deeply hash clade's ancestor and donor
+                hashFileContent(hshr, cl.ancestor)
+                hashFileContent(hshr, cl.donor)
+
+                hshr.putUnencodedChars(cl.prefix)
+                hshr.putInt(cl.ntaxa)
+
+                // include the definition of clade's tree
+                cl.tree.collect { e ->
+                    hshr.putUnencodedChars(e.getKey())
+                    if (e.value instanceof String)
+                        hshr.putUnencodedChars(e.getValue())
+                    else if (e.value instanceof Float)
+                        hshr.putFloat(e.getValue())
+                    else if (e.value instanceof Double)
+                        hshr.putDouble(e.getValue())
+                    else if (e.value instanceof Integer)
+                        hshr.putInt(e.getValue())
+                    else if (e.value instanceof Long)
+                        hshr.putLong(e.getValue())
+                    else
+                        throw new RuntimeException('Unsupported type')
+                }
+            }
+
+            hshr.hash().toString()
+        }
+
+        /**
+         * Represented by the name and hash
+         * @return String
+         */
+        @Override
+        String toString() {
+            "${name}_${hash()}".toString()
+        }
+
+        @Override
+        int hashCode() {
+            Objects.hash(hash())
+        }
+
+    }
+
+    /**
      * A Clade represents set of related genomes evolved from
      * a common ancestor. How these sequences are different
      * is dictated by a phylogenetic tree.
@@ -986,6 +987,75 @@ class MetaSweeper {
     }
 
     /**
+     * Read sweep configurations in YAML format
+     *
+     * Should be threadsafe.
+     */
+    static class ConfigLoader {
+
+        private static ThreadLocal<Yaml> threadLocal
+
+        static {
+            /**
+             * ThreadLocal instance of Yaml read/write object
+             */
+            threadLocal = new ThreadLocal<Yaml>() {
+                @Override
+                protected Yaml initialValue() {
+                    // constructor root is MetaSweeper
+                    Constructor cnstr = new Constructor(MetaSweeper.class)
+                    // two tags are used to instantiate custom classes from
+                    // within the map hierarchy
+                    cnstr.addTypeDescription(new TypeDescription(Community.class, '!com'))
+                    cnstr.addTypeDescription(new TypeDescription(Clade.class, '!clade'))
+                    cnstr.addTypeDescription(new TypeDescription(File.class))
+                    new Yaml(cnstr)
+                }
+            }
+        }
+
+        /**
+         * Read a configuration from a file.
+         * @param file -- YAML file to read
+         * @return MetaSweeper
+         */
+        static MetaSweeper read(File file) {
+            Yaml yaml = threadLocal.get()
+            yaml.load(new FileReader(file))
+        }
+
+        /**
+         * Read a configuration from a string
+         * @param doc -- String to read
+         * @return MetaSweeper
+         */
+        static Map read(String doc) {
+            Yaml yaml = threadLocal.get()
+            yaml.load(doc)
+        }
+
+        /**
+         * Convert MetaSweeper object to a string in YAML syntax
+         * @param ms -- Object to convert
+         * @return String (YAML)
+         */
+        static String write(MetaSweeper ms) {
+            Yaml yaml = threadLocal.get()
+            yaml.dump(ms)
+        }
+
+        /**
+         * Write a YAML representation of a MetaSweeper object to a stream
+         * @param ms - Object to write
+         * @param writer - output writer
+         */
+        static void write(MetaSweeper ms, Writer writer) {
+            Yaml yaml = threadLocal.get()
+            yaml.dump(ms, writer)
+        }
+    }
+
+    /**
      * Initialize a sweep.
      * @return This MetaSweeper instance
      */
@@ -1032,43 +1102,6 @@ class MetaSweeper {
             s = val.toString()
         }
         return s.replaceAll(charsToReplace, "_")
-    }
-
-    /**
-     * Append a suffix to a given key string. This will use
-     * the defined separator to join the key string and new suffix.
-     * @param keyString -- the key string to append to
-     * @param suffix -- the suffix to append to key
-     * @return joined keyString and suffix
-     */
-    static String appendKey(String keyString, String suffix) {
-        "${keyString}${PARAM_SEP}${suffix}"
-    }
-
-    static DataflowQueue appendKey(DataflowChannel channel, String suffix) {
-        channel.map{ f -> [appendKey(f[0], suffix), *f[1..-1]]}
-    }
-
-    /**
-     * Convert a whitespace or comma delimited String to a List.
-     * @param str - the string to split
-     * @return List
-     */
-    static String[] stringToList(String str) {
-        return str.split(delimiters) - ''
-    }
-
-    /**
-     * Create a channel with a leading key derived from the file name. This assumes
-     * the sweep variable delimited filename syntax is being used by the file.
-     * @param path sweep file or list of files
-     * @return Channel with a leading key for use in joins
-     */
-    static DataflowChannel simpleKeyedFrom(path, int numSuffix=1) {
-        assert path instanceof Path || path instanceof List<Path> : 'Error: supplied path must be an instance of ' +
-                'java.nio.Path or Collection<Path>'
-
-        Channel.from(path).map { f -> [new Key(f, numSuffix), f] }
     }
 
     /**
@@ -1191,10 +1224,6 @@ class MetaSweeper {
         DumperOptions options = new DumperOptions();
         options.setWidth(MAX_LINE_LENGTH)
         return new Yaml(options)
-    }
-
-    static List pairListElements(List list) {
-        (0..<list.size()/2).collect{ list[it*2..<(it+1)*2] }
     }
 
 }
