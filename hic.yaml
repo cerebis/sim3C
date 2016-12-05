@@ -1,24 +1,23 @@
 variables:
   #level 0
-  seed: [1, 2, 3]
+  seed: [1]
   # level 1
   community: !com
     name: trial
+    profile: {mu: 0.1, sigma: 1}
     clades:
       - !clade
-        prefix: clade1
+        prefix: cladeProc
         ancestor: test/ancestor.fa
         donor: test/donor.fa
         ntaxa: 5
-        tree: {birth: 0.9, death: 0.5}
-        profile: {mu: 0.1, sigma: 1}
+        tree: {algo: birth_death, birth_rate: 0.9, death_rate: 0.5}
       - !clade
-        prefix: clade2
+        prefix: cladeDefined
         ancestor: test/ancestor.fa
         donor: test/donor.fa
-        ntaxa: 3
-        tree: {birth: 0.7, death: 0.3}
-        profile: {mu: 0.2, sigma: 1.5}
+        ntaxa: 4
+        tree: {ref: 'file:test/trees/ladder.nwk'}
   # level 2
   alpha: [1, 0.5]
   # level 3

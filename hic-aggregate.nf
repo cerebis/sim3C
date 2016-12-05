@@ -30,20 +30,22 @@ import MetaSweeper
 
 MetaSweeper ms = MetaSweeper.fromFile(new File('hic.yaml'))
 
-a_stats = ms.keyedFrom(file("$ms.options.output/*asmstat"))
+sweep = MetaSweeper.createSweep()
+
+a_stats = ms.keyedFrom(sweep, file("$ms.options.output/*asmstat"))
 
 // collect grpahs and their statistics
-g_stats = ms.keyedFrom(file("$ms.options.output/*.graphml"))
-        .flatCross(ms.keyedFrom(file("$ms.options.output/*.gstat")))
-        .flatCross(ms.keyedFrom(file("$ms.options.output/*.geigh")))
+g_stats = ms.keyedFrom(sweep, file("$ms.options.output/*.graphml"))
+        .flatCross(ms.keyedFrom(sweep, file("$ms.options.output/*.gstat")))
+        .flatCross(ms.keyedFrom(sweep, file("$ms.options.output/*.geigh")))
 
 // collect clusterings and their statistics
-cl_stats = ms.keyedFrom(file("$ms.options.output/*.cl"))
-        .flatCross(ms.keyedFrom(file("$ms.options.output/*.bc")))
+cl_stats = ms.keyedFrom(sweep, file("$ms.options.output/*.cl"))
+        .flatCross(ms.keyedFrom(sweep, file("$ms.options.output/*.bc")))
 
 // join the three channels together at the appropriate sweep depths
-stat_sweep = ms.joinChannels(a_stats, g_stats, 3)
-stat_sweep = ms.joinChannels(stat_sweep, cl_stats, 4)
+stat_sweep = sweep.joinChannels(a_stats, g_stats, 3)
+stat_sweep = sweep.joinChannels(stat_sweep, cl_stats, 4)
 
 process Aggregate {
 

@@ -37,17 +37,17 @@ import MetaSweeper
 
 MetaSweeper ms = MetaSweeper.fromFile(new File('hic.yaml'))
 
-/**
- * Generate phylogenetic trees for each clade within each community
- */
+//
+// Generate phylogenetic trees for each clade within each community
+//
 
-// Initial sweep begins with seeds and community's clades
-gen_in = ms.createSweep()
-        .withVariable('seed')
-        .withVariable('community', true)
-        .permute()
+def sweep = MetaSweeper.createSweep()
+                .withVariable('seed', ms.variables.seed)
+                .withVariable('clade', ms.variables.community.clades)
+                .describe('Tree Generation')
 
-ms.describeSweep('Tree Generation')
+// channel composed of the permutation of variables
+gen_in = sweep.permutedChannel()
 
 process TreeGen {
     publishDir ms.options.output, mode: 'copy', overwrite: 'true'
@@ -61,29 +61,40 @@ process TreeGen {
     script:
     if (params.debug) {
         """
-        echo $key > "${key}.nwk"
+        echo "$key ${clade.tree}" > "${key}.nwk"
         """
     }
     else {
-        """
-        tree_generator.py --seed $seed --prefix ${clade.prefix} --suppress-rooting --mode random \
-            --max-height 0.1 --birth-rate ${clade.tree.birth} --death-rate ${clade.tree.death} \
-            --format newick --num-taxa ${clade.ntaxa} ${key}.nwk
-        """
+        if (clade.isDefined()) {
+            """
+            echo "${clade.getDefined()}" | tree_scaler.py --max-height 0.1 - ${key}.nwk
+            """
+        }
+        else {
+            // presently we always assume birth-death
+            assert clade.isSupportedAlgorithm() : 'Only birth_death is currently supported'
+            """
+            tree_generator.py --seed $seed --prefix ${clade.prefix} --suppress-rooting --mode random \
+                --max-height 0.1 --birth-rate ${clade.tree.birth_rate} --death-rate ${clade.tree.death_rate} \
+                --format newick --num-taxa ${clade.ntaxa} ${key}.nwk
+            """
+        }
     }
 }
 
 
-/**
- * Generate evolved sequences for each clade from each community
- */
+//
+// Generate evolved sequences for each clade from each community
+//
 
 (tree_out, evo_in) = tree_out.into(2)
 
-        // extend the sweep to include alpha
-evo_in = ms.withVariable('alpha').extend(evo_in, 'alpha')
+// add variation on alpha
+sweep.withVariable('alpha', ms.variables.alpha)
+        .describe('Evolve Clades')
 
-ms.describeSweep('Evolve Clades')
+// extend the channel to include new parameter
+evo_in = sweep.extendChannel(evo_in, 'alpha')
 
 process Evolve {
     publishDir ms.options.output, mode: 'copy', overwrite: 'true'
@@ -116,78 +127,13 @@ process Evolve {
 }
 
 
-/**
- * Generate abundance profiles for each clade within each community
- */
+//
+// Merge evolved sequences from the clades into whole communities
+//
 
-(evo_out, prof_in) = evo_out.into(2)
-
-    // just the clade sequences, which are used to obtain taxon ids.
-prof_in = prof_in.map { it.pick(1) }
-
-process ProfileGen {
-    publishDir ms.options.output, mode: 'copy', overwrite: 'true'
-
-    input:
-    set key, file('clade_seq') from prof_in
-
-    output:
-    set key, file("${key}.prf") into prof_out
-
-    script:
-    if (params.debug) {
-        """
-        echo $key > "${key}.prf"
-        """
-    }
-    else {
-        def mu = key['community'].profile.mu
-        def sigma = key['community'].profile.sigma
-        """
-        profile_generator.py --seed ${key['seed']} --dist lognormal --lognorm-mu $mu \
-            --lognorm-sigma $sigma clade_seq ${key}.prf
-        """
-    }
-}
-
-
-/**
- * Merge clade abundance profiles into whole community profiles
- */
-(prof_out, merge_prof_in) = prof_out.into(2)
-
-        // group by a reduced key that is only the random seed and alpha
-merge_prof_in = merge_prof_in.groupBy{ it[0].selectedKey('seed', 'alpha') }
-        // convert the resulting map of sweep point results into table format and sort by file name
-        .flatMap { it.collect { k, v -> [k, v.collect { vi -> vi[1] }.toSorted { a, b -> a.name <=> b.name }] } }
-
-process ProfileMerge {
-    publishDir ms.options.output, mode: 'copy', overwrite: 'true'
-
-    input:
-    set key, file('clade_profile') from merge_prof_in
-
-    output:
-    set key, file("${key}.mprf") into merge_prof_out
-
-    script:
-    if (params.debug) {
-        """
-        echo $key > "${key}.mprf"
-        """
-    } else {
-        """
-        profile_merge.py clade_profile* ${key}.mprf
-        """
-    }
-}
-
-/**
- * Merge evolved sequences from the clades into whole communities
- */
 (evo_out, merge_seq_in) = evo_out.into(2)
 
-        // group by a reduced key that is only the random seed and alpha
+// group by a reduced key that is only the random seed and alpha
 merge_seq_in = merge_seq_in.groupBy { it.getKey().selectedKey('seed', 'alpha') }
         // convert the resulting map of sweep point results into table format and sort by file name
         .flatMap { it.collect { k, v -> [k, v.collect { vi -> vi[1] }.toSorted { a, b -> a.name <=> b.name }] } }
@@ -214,30 +160,63 @@ process MergeClades {
     }
 }
 
-/**
- * Prepare a channel which is composed of paired community sequences and profiles
- */
+//
+// Generate abundance profiles for each clade within each community
+//
+(merge_seq_out, prof_in) = merge_seq_out.into(2)
+
+community = Channel.value(ms.variables['community'])
+
+process ProfileGen {
+    publishDir ms.options.output, mode: 'copy', overwrite: 'true'
+
+    input:
+    set key, file('community.fa') from prof_in
+    val community
+
+    output:
+    set key, file("${key}.prf") into prof_out
+
+    script:
+    def mu = community.profile.mu
+    def sigma = community.profile.sigma
+    if (params.debug) {
+        """
+        echo "$key $mu $sigma" > "${key}.prf"
+        """
+    }
+    else {
+        """
+        profile_generator.py --seed ${key['seed']} --dist lognormal --lognorm-mu $mu \
+            --lognorm-sigma $sigma community.fa ${key}.prf
+        """
+    }
+}
+
+
+//
+// Merge and pair community sequences and profiles
+//
 
 (merge_seq_out, seq_prof) = merge_seq_out.into(2)
-(merge_prof_out, tmp) = merge_prof_out.into(2)
+(merge_prof_out, tmp) = prof_out.into(2)
 
-        // select just the community sequences
+// select just the community sequences
 seq_prof = seq_prof.map { it.pick(1) }
         // combine with their respective profiles, then flatten and simplify the rows
         .phase(tmp).map { it = it.flatten(); it.pick(1, 3) }
 
-
-/**
- * Generate shotgun sequencing reads for for each whole community
- */
+//
+// Generate shotgun sequencing reads for for each whole community
+//
 (seq_prof, wgs_in) = seq_prof.into(2)
 
-        // Add WGS coverage to the sweep
-wgs_in = ms.withVariable('xfold')
-        // extend the channel
-        .extend(wgs_in, 'xfold')
+// Add wgs coverage to sweep
+sweep.withVariable('xfold', ms.variables.xfold)
+        .describe('WGS Read Generation')
 
-ms.describeSweep('WGS Read Generation')
+// extend the channel
+wgs_in = sweep.extendChannel(wgs_in, 'xfold')
 
 process WGS_Reads {
     publishDir ms.options.output, mode: 'copy', overwrite: 'true'
@@ -273,17 +252,18 @@ process WGS_Reads {
 }
 
 
-/**
- * Generate 3C reads for each whole community
- */
+//
+// Generate 3C reads for each whole community
+//
 (seq_prof, hic_in) = seq_prof.into(2)
 
-        // Add 3C coverage to the sweep
-hic_in = ms.withVariable('n3c')
-        // extend the channel
-        .extend(hic_in, 'n3c')
+// Add 3C coverage to sweep
+sweep.withVariable('n3c', ms.variables.n3c)
+        .describe('HiC Read Generation')
 
-ms.describeSweep('HiC Read Generation')
+// extend the channel
+hic_in = sweep.extendChannel(hic_in, 'n3c')
+
 
 process HIC_Reads {
     publishDir ms.options.output, mode: 'copy', overwrite: 'true'
@@ -312,13 +292,12 @@ process HIC_Reads {
     }
 }
 
-
-/**
- * Assemble WGS reads
- */
+//
+// Assemble WGS reads
+//
 (wgs_out, asm_in) = wgs_out.into(2)
 
-        // select just read-set files (R1, R2) and the community sequences
+// select just read-set files (R1, R2) and the community sequences
 asm_in = asm_in.map { it.pick(1, 2, 3) }
 
 process Assemble {
@@ -345,9 +324,9 @@ process Assemble {
     }
 }
 
-/**
- * Infer Truth Tables for each community by mapping contigs to community references
- */
+//
+// Infer Truth Tables for each community by mapping contigs to community references
+//
 (asm_out, truth_in) = asm_out.into(2)
 
         // select just contigs and community sequences
@@ -383,13 +362,13 @@ process Truth {
 
 }
 
-/**
- * Map HiC reads to assembled contigs
- */
+//
+// Map HiC reads to assembled contigs
+//
 (asm_out, hicmap_in) = asm_out.into(2)
 
-        // join 3C reads and the results of assembly
-hicmap_in = ms.joinChannels(hicmap_in, hic_out, 2)
+// join 3C reads and the results of assembly
+hicmap_in = sweep.joinChannels(hicmap_in, hic_out, 2)
         // select just contigs and 3C reads
         .map{ it.pick(1, -1) }
 
@@ -423,12 +402,12 @@ process HiCMap {
     }
 }
 
-/**
- * Generate contig graphs
- */
+//
+// Generate contig graphs
+//
 (hicmap_out, graph_in) = hicmap_out.into(2)
 
-        // select just hic bam, hic reads and contigs
+// select just hic bam, hic reads and contigs
 graph_in = graph_in.map{ it.pick(1,2,3) }
 
 process Graph {
@@ -459,12 +438,12 @@ process Graph {
 }
 
 
-/**
- * Map WGS reads to contigs
- */
+//
+// Map WGS reads to contigs
+//
 (asm_out, wgsmap_in) = asm_out.into(2)
 
-        // select just contigs, r1 and r2
+// select just contigs, r1 and r2
 wgsmap_in = wgsmap_in.map{ it.pick(1, 2, 3) }
 
 process WGSMap {
@@ -495,12 +474,12 @@ process WGSMap {
 }
 
 
-/**
- * Calculate assembly contig coverage
- */
+//
+// Calculate assembly contig coverage
+//
 (wgsmap_out, cov_in) = wgsmap_out.into(2)
 
-        // select wgs bam and contigs
+// select wgs bam and contigs
 cov_in = cov_in.map{ it.pick(1, 2) }
 
 process InferReadDepth {

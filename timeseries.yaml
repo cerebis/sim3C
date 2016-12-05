@@ -6,14 +6,14 @@ variables:
     name: trial
     # This workflow is complicated by the need to refer to the clade's ancestral sequence
     # for SNV detection. Only a single clade is supported for now.
+    profile: {mu: 0.1, sigma: 1}
     clades:
       - !clade
         prefix: clade1
         ancestor: test/ancestor.fa
         donor: test/donor.fa
         ntaxa: 5
-        tree: {birth: 0.9, death: 0.5}
-        profile: {mu: 0.1, sigma: 1}
+        tree: {algo: birth_death, birth_rate: 0.9, death_rate: 0.5}
   # level 2
   alpha: [0.001, 0.0005, 0.0001]
   # level 3
