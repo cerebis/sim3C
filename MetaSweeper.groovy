@@ -451,31 +451,6 @@ class MetaSweeper {
     }
 
     /**
-     * Extend an existing list key (index) by adding the supplied key/value pair.
-     *
-     * This also updates the sweep definition.
-     *
-     * @param key -- target key to extend
-     * @param name -- variable name to add
-     * @param value -- value corresponding to this variable
-     * @return a new instance of Key
-     */
-    Key extendKey(Key key, String name, Object value) {
-        Class clazz
-        if (variables[name]) {
-            clazz = variables[name][0].getClass()
-        }
-        else {
-            variables[name] = []
-        }
-        variables[name].add(clazz ? clazz.cast(value) : value)
-        withVariable(name)
-        Key newKey = key.clone()
-        newKey.put(name, value)
-        return newKey
-    }
-
-    /**
      * Read sweep configurations in YAML format
      *
      * Should be threadsafe.
@@ -555,6 +530,16 @@ class MetaSweeper {
 
         Sweep dropVariable(String name) {
             varRegistry.remove(name)
+            return this
+        }
+
+        Sweep appendValue(String name, Object value) {
+            if (name in varRegistry) {
+                varRegistry[name].add(value)
+            }
+            else {
+                put(name, value)
+            }
             return this
         }
 
@@ -842,6 +827,23 @@ class MetaSweeper {
             // put the split channels into map. Assumes order is preserved
             values.eachWithIndex { it, n -> chanMap[it] = forkedChans[n] }
             chanMap
+        }
+
+        /**
+         * Extend an existing list key (index) by adding the supplied key/value pair.
+         *
+         * This also updates the sweep definition.
+         *
+         * @param key -- target key to extend
+         * @param name -- variable name to add
+         * @param value -- value corresponding to this variable
+         * @return a new instance of Key
+         */
+        Key extendKey(Key key, String name, Object value) {
+            appendValue(name, value)
+            Key newKey = key.clone()
+            newKey.put(name, value)
+            return newKey
         }
 
     }

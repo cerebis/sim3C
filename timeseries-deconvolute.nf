@@ -25,7 +25,6 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 import MetaSweeper
-import groovy.util.GroovyCollections
 
 MetaSweeper ms = MetaSweeper.fromFile(new File('timeseries.yaml'))
 
@@ -33,16 +32,16 @@ MetaSweeper ms = MetaSweeper.fromFile(new File('timeseries.yaml'))
 // Generate phylogenetic trees for each clade within each community
 //
 
-// Initial sweep begins with seeds and community's clades
-gen_in = ms.createSweep()
-        .withVariable('seed')
-        .withVariable('community', true)
-        .permute()
+def sweep = MetaSweeper.createSweep()
+        .withVariable('seed', ms.variables.seed)
+        .withVariable('clade', ms.variables.community.clades)
+        .describe('Tree Generation')
 
-ms.describeSweep('Tree Generation')
+// channel composed of the permutation of variables
+gen_in = sweep.permutedChannel()
 
 process TreeGen {
-    publishDir ms.options.output, mode: 'copy', overwrite: false
+    publishDir ms.options.output, mode: 'copy', overwrite: 'true'
 
     input:
     set key, seed, clade from gen_in
@@ -53,17 +52,27 @@ process TreeGen {
     script:
     if (params.debug) {
         """
-        echo $key > "${key}.nwk"
+        echo "$key ${clade.tree}" > "${key}.nwk"
         """
     }
     else {
-        """
-        tree_generator.py --seed $seed --prefix ${clade.prefix} --suppress-rooting --mode random \
-            --max-height 0.1 --birth-rate ${clade.tree.birth} --death-rate ${clade.tree.death} \
-            --format newick --num-taxa ${clade.ntaxa} ${key}.nwk
-        """
+        if (clade.isDefined()) {
+            """
+            echo "${clade.getDefined()}" | tree_scaler.py --max-height 0.1 - ${key}.nwk
+            """
+        }
+        else {
+            // presently we always assume birth-death
+            assert clade.isSupportedAlgorithm() : 'Only birth_death is currently supported'
+            """
+            tree_generator.py --seed $seed --prefix ${clade.prefix} --suppress-rooting --mode random \
+                --max-height 0.1 --birth-rate ${clade.tree.birth_rate} --death-rate ${clade.tree.death_rate} \
+                --format newick --num-taxa ${clade.ntaxa} ${key}.nwk
+            """
+        }
     }
 }
+
 
 //
 // Generate evolved sequences for each clade from each community
@@ -71,13 +80,15 @@ process TreeGen {
 
 (tree_out, evo_in) = tree_out.into(2)
 
-// extend the sweep to include alpha
-evo_in = ms.withVariable('alpha').extend(evo_in, 'alpha')
+// add variation on alpha
+sweep.withVariable('alpha', ms.variables.alpha)
+        .describe('Evolve Clades')
 
-ms.describeSweep('Evolve Clades')
+// extend the channel to include new parameter
+evo_in = sweep.extendChannel(evo_in, 'alpha')
 
 process Evolve {
-    publishDir ms.options.output, mode: 'copy', overwrite: false
+    publishDir ms.options.output, mode: 'copy', overwrite: 'true'
 
     input:
     set key, tree_file, seed, clade, alpha from evo_in
@@ -106,83 +117,20 @@ process Evolve {
 
 }
 
-//
-// Generate abundance profiles for each clade within each community
-//
-(evo_out, prof_in) = evo_out.into(2)
-
-// just the clade sequences, which are used to obtain taxon ids.
-prof_in = prof_in.map { it.pick(1) }
-
-process ProfileGen {
-    publishDir ms.options.output, mode: 'copy', overwrite: false
-
-    input:
-    set key, file('clade_seq') from prof_in
-
-    output:
-    set key, file("${key}.prf") into prof_out
-
-    script:
-    if (params.debug) {
-        """
-        echo $key > "${key}.prf"
-        """
-    }
-    else {
-        def mu = key['community'].profile.mu
-        def sigma = key['community'].profile.sigma
-        """
-        profile_generator.py --seed ${key['seed']} --dist lognormal --lognorm-mu $mu \
-            --lognorm-sigma $sigma clade_seq ${key}.prf
-        """
-    }
-}
-
-
-//
-// Merge clade abundance profiles into whole community profiles
-//
-(prof_out, merge_prof_in) = prof_out.into(2)
-
-        // group by a reduced key that is only the random seed and alpha
-merge_prof_in = merge_prof_in.groupBy{ it[0].selectedKey('seed', 'alpha') }
-        // convert the resulting map of sweep point results into table format and sort by file name
-        .flatMap { it.collect { k, v -> [k, v.collect { vi -> vi[1] }.toSorted { a, b -> a.name <=> b.name }] } }
-
-process ProfileMerge {
-    publishDir ms.options.output, mode: 'copy', overwrite: false
-
-    input:
-    set key, file('clade_profile') from merge_prof_in
-
-    output:
-    set key, file("${key}.mprf") into merge_prof_out
-
-    script:
-    if (params.debug) {
-        """
-        echo $key > "${key}.mprf"
-        """
-    } else {
-        """
-        profile_merge.py clade_profile* ${key}.mprf
-        """
-    }
-}
 
 //
 // Merge evolved sequences from the clades into whole communities
 //
+
 (evo_out, merge_seq_in) = evo_out.into(2)
 
-        // group by a reduced key that is only the random seed and alpha
+// group by a reduced key that is only the random seed and alpha
 merge_seq_in = merge_seq_in.groupBy { it.getKey().selectedKey('seed', 'alpha') }
-        // convert the resulting map of sweep point results into table format and sort by file name
+// convert the resulting map of sweep point results into table format and sort by file name
         .flatMap { it.collect { k, v -> [k, v.collect { vi -> vi[1] }.toSorted { a, b -> a.name <=> b.name }] } }
 
 process MergeClades {
-    publishDir ms.options.output, mode: 'copy', overwrite: false
+    publishDir ms.options.output, mode: 'copy', overwrite: 'true'
 
     input:
     set key, file('clade_seq') from merge_seq_in
@@ -203,16 +151,50 @@ process MergeClades {
     }
 }
 
-/**
- * Prepare a channel which is composed of paired community sequences and profiles
- */
+//
+// Generate abundance profiles for each clade within each community
+//
+(merge_seq_out, prof_in) = merge_seq_out.into(2)
+
+community = Channel.value(ms.variables['community'])
+
+process ProfileGen {
+    publishDir ms.options.output, mode: 'copy', overwrite: 'true'
+
+    input:
+    set key, file('community.fa') from prof_in
+    val community
+
+    output:
+    set key, file("${key}.prf") into prof_out
+
+    script:
+    def mu = community.profile.mu
+    def sigma = community.profile.sigma
+    if (params.debug) {
+        """
+        echo "$key $mu $sigma" > "${key}.prf"
+        """
+    }
+    else {
+        """
+        profile_generator.py --seed ${key['seed']} --dist lognormal --lognorm-mu $mu \
+            --lognorm-sigma $sigma community.fa ${key}.prf
+        """
+    }
+}
+
+
+//
+// Merge and pair community sequences and profiles
+//
 
 (merge_seq_out, seq_prof) = merge_seq_out.into(2)
-(merge_prof_out, tmp) = merge_prof_out.into(2)
+(merge_prof_out, tmp) = prof_out.into(2)
 
-        // select just the community sequences
+// select just the community sequences
 seq_prof = seq_prof.map { it.pick(1) }
-        // combine with their respective profiles, then flatten and simplify the rows
+// combine with their respective profiles, then flatten and simplify the rows
         .phase(tmp).map { it = it.flatten(); it.pick(1, 3) }
 
 //
@@ -220,12 +202,12 @@ seq_prof = seq_prof.map { it.pick(1) }
 //
 (seq_prof, wgs_in) = seq_prof.into(2)
 
-// Add WGS coverage to the sweep
-wgs_in = ms.withVariable('xfold')
-// extend the channel
-        .extend(wgs_in, 'xfold')
+// Add wgs coverage to sweep
+sweep.withVariable('xfold', ms.variables.xfold)
+        .describe('WGS Read Generation')
 
-ms.describeSweep('WGS Read Generation')
+// extend the channel
+wgs_in = sweep.extendChannel(wgs_in, 'xfold')
 
 process WGS_Reads {
     publishDir ms.options.output, mode: 'copy', overwrite: false
@@ -283,7 +265,8 @@ map_in = map_in.map{ it.pick(1, 2) }
                     .collect{ pair ->
                         def nsamp = pair.collect { ri -> (ri =~ /wgs\.(\d+)\.r[12].fq.*$/)[0][1] }
                         assert nsamp.size() == 2 && nsamp[0] == nsamp[1] : 'Error: read-pairs do not share the same sample index'
-                        [ms.extendKey(it.getKey(), 'nsamp', nsamp[0]), *pair] } }
+                        [sweep.extendKey(it.getKey(), 'nsamp', nsamp[0]), *pair] }
+            }
 
 process WGSMap {
     publishDir ms.options.output, mode: 'copy', overwrite: false
@@ -401,7 +384,7 @@ process Truth {
 //
 
 // join truth and deconv outputs at sweep depth of 2.
-accuracy_in = ms.joinChannels(truth_out, deconv_out, 2)
+accuracy_in = sweep.joinChannels(truth_out, deconv_out, 2)
 
 process Accuracy {
     publishDir ms.options.output, mode: 'copy', overwrite: false
