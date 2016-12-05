@@ -19,6 +19,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 from collections import OrderedDict
 
 import numpy as np
+import re
 
 
 def generate_profile(random_state, taxa, mode, **kwargs):
@@ -185,7 +186,7 @@ class Profile(OrderedDict):
             ai.val /= val_sum
 
 
-def read_profile(hndl):
+def read_profile(hndl, normalise=False):
     """
     Read a profile from an input stream.
     :param hndl: the input file name or file object
@@ -207,11 +208,15 @@ def read_profile(hndl):
             if line.startswith('#'):
                 continue
             try:
-                chrom, cell, val = line.split('\t')
+                chrom, cell, val = re.split('[\s,]+', line)
                 profile.add(chrom, val, cell)
             except:
                 raise IOError('Error: invalid table at line {0} [{0}]'.format(n, line))
             n += 1
+
+        if normalise:
+            profile.normalize()
+
         return profile
     finally:
         if close_handle:
