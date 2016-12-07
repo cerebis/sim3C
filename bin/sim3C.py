@@ -719,9 +719,9 @@ if __name__ == '__main__':
                         help='Maximum fragment length [1000]')
 
     parser.add_argument('--anti-rate', metavar='FLOAT', type=float, default=0.2,
-                        help='Rate of anti-diagonal fragments')
+                        help='Rate of anti-diagonal fragments [0.2]')
     parser.add_argument('--backbone-prob', metavar='FLOAT', type=float, default=0.333,
-                        help='Probability of regular chromosomal interaction, rather than CID')
+                        help='Probability of regular chromosomal interaction, rather than CID [0.333]')
     parser.add_argument('--inter-prob', dest='inter_prob', metavar='FLOAT', type=float, default=0.9,
                         help='Probability that a fragment spans two replicons within a single genome [0.9]')
     parser.add_argument('--spurious-prob', dest='spur_prob', metavar='FLOAT', type=float, default=0.01,
@@ -742,8 +742,8 @@ if __name__ == '__main__':
     parser.add_argument('--no-read-errors', default=False, action='store_true', help='Simulate sequencing errors')
     parser.add_argument('--read-profile', help='The name of an ART sequencing machine profile [EmpMiSeq250]',
                         default='EmpMiSeq250', choices=Art.ILLUMINA_PROFILES.keys())
-    parser.add_argument('--ins-rate', type=float, default=0.00009, help='Insert rate')
-    parser.add_argument('--del-rate', type=float, default=0.00011, help='Deletion rate')
+    parser.add_argument('--ins-rate', type=float, default=9.e-5, help='Insert rate [9e-5]')
+    parser.add_argument('--del-rate', type=float, default=1.1e-4, help='Deletion rate [1.1e-4]')
 
     parser.add_argument(dest='genome_seq', metavar='FASTA',
                         help='Genome sequences for the community')
@@ -795,6 +795,7 @@ if __name__ == '__main__':
         # read pre-existing abundance profile from file
         with open(args.profile, 'r') as h_table:
             profile = abundance.read_profile(h_table)
+            profile.normalize()
 
     # Initialize community object
     print "Initializing community"
