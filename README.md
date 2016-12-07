@@ -539,10 +539,33 @@ Included Tools
 
 - __metaART –__ Simulation of whole-genome shotgun paired-end reads from communities. 
   
-  metaART simply wraps the art_illumina binary from ART ([Huang et al, 2012](https://doi.org/10.1093/bioinformatics/btr708)), which among many machine types and sequencing modes, simulates Illumina paired-end reads. Our extension allows users to associate relative abundances with the supplied reference sequences. Profiles can be either supplied in the form of a pre-cast table or determined at runtime from a chosen distribution. The association of abundance profiles with the reference sequences, permits the simulated sampling of metagenomic communities or multi-chromosomal clonal sequencing projects with variable copy-number.
+  MetaART simply wraps the art_illumina binary from ART ([Huang et al, 2012](https://doi.org/10.1093/bioinformatics/btr708)), which among many machine types and sequencing modes, simulates Illumina paired-end reads. The purpose of our extension is to associate a relative abundance with each supplied reference sequence. The relative abundances permit the simulated sampling of communities or clonal systems with varying chromosome copy-number.
+   
+  Profiles can be either supplied in the form of an explicit table or drawn at random from a chosen distribution (equal, uniform random, log-normal) at runtime. Each reference sequence is then treated as a conventional WGS sequencing simulation, with coverage in proportion to its abundance and the results combined together.
 
 - __sim3C –__ Simulation of HiC/3C read-pairs.
-Art module -- full read error model. noise. duplication of sites, etc.
+
+  Analogous to the well established process of simulating whole-genome shotgun reads, ```sim3C.py``` simulates read-pairs as if generated from a sequencing library prepared using a HiC/3C methodology. 
+  
+  Experimental noise is considered both in terms of Illumina-based sequencing error and that inherent in the production of HiC/3C library generation. Sequencing error is afforded by a reimplementation of ```art_illumina``` ([Huang et al, 2011](http://bioinformatics.oxfordjournals.org/cgi/doi/10.1093/bioinformatics/btr708)) in Python (```Art.py```). HiC/3C noise, in the form of spurious ligation products, is modeled as the uniformly random association of any two sites across the entire extent of the source genome(s), the rate of which is user controlled. 
+  
+  To support community sampling (metagenomes), an abundance profile is supplied along with the set of reference sequences at runtime. The profile can either take the form of an explicit table or be drawn at random from a user chosen probability distribution (equal, uniform random or log-normal).
+  
+  The tool conceptualises the process of HiC/3C read-pair generation, as a series of conditional probabilities. For intra-chromosomal read-pairs, genomic separation is constrained to follow an empirically determined long-tailed composition of the geometric and uniform distributions. For inter-chromosomal (but same cell) pairs, genomic position is constrained only by proximity to a restriction site. Lastly, inter-cellular read-pairs are not considered.
+
+   Fine scale structurally related features that have been observed via contact maps in real experiments ([Tung et al, 2013](http://science.sciencemag.org/content/342/6159/731)) are also reproduced in our simulation. Namely, contacts between the two arms of the chromosome and chromosomal interacting domains (CID). Within bacterial HiC contact maps, inter-arm contacts are responsible for the fainter anti-diagonal observed (y=-x rather than y=x), while the tightly folded CID domains act to modulate contact frequencies over their local extent, resulting in blocks of density. In our simulation, CIDs are randomly generated at runtime using the supplied seed, and the strength of their effect adjusted or disabled by the user.
+  
+  __Pseudocode__
+  ```
+  If a spurious event:
+    unconstrained pairing of any two sites across entire (meta)genome
+  Else if an inter-chromosomal event: 
+    unconstrained positions on Chr_A, Chr_B from Genome_N
+  Else is an intra-chromosomal event:
+    contrained positions x1, x2 ~ g(x) on Chr_A
+  ```
+  
+  Where _g(x)_ reflects both the empirical constraint on distance and fine-scale features mentioned above.
 
 ### Clustering Algorithms
 - __louvain_cluster –__ Louvain community detection based graph clustering. Both traditional hard-clustering solutions of the best partition and a naive soft-clustering option ([DeMaere and Darling, 2016](https://doi.org/10.7717/peerj.2676)).
