@@ -539,7 +539,7 @@ Included Tools
 
 - __metaART –__ Simulation of whole-genome shotgun paired-end reads from communities. 
   
-  MetaART simply wraps the art_illumina binary from ART ([Huang et al, 2012](https://doi.org/10.1093/bioinformatics/btr708)), which among many machine types and sequencing modes, simulates Illumina paired-end reads. The purpose of our extension is to associate a relative abundance with each supplied reference sequence. The relative abundances permit the simulated sampling of communities or clonal systems with varying chromosome copy-number.
+  MetaART simply wraps the art_illumina binary from ART ([Huang et al, 2011](https://doi.org/10.1093/bioinformatics/btr708)), which among many machine types and sequencing modes, simulates Illumina paired-end reads. The purpose of our extension is to associate a relative abundance with each supplied reference sequence. The relative abundances permit the simulated sampling of communities or clonal systems with varying chromosome copy-number.
    
   Profiles can be either supplied in the form of an explicit table or drawn at random from a chosen distribution (equal, uniform random, log-normal) at runtime. Each reference sequence is then treated as a conventional WGS sequencing simulation, with coverage in proportion to its abundance and the results combined together.
 
@@ -547,7 +547,7 @@ Included Tools
 
   Analogous to the well established process of simulating whole-genome shotgun reads, ```sim3C.py``` simulates read-pairs as if generated from a sequencing library prepared using a HiC/3C methodology. 
   
-  Experimental noise is considered both in terms of Illumina-based sequencing error and that inherent in the production of HiC/3C library generation. Sequencing error is afforded by a reimplementation of ```art_illumina``` ([Huang et al, 2011](http://bioinformatics.oxfordjournals.org/cgi/doi/10.1093/bioinformatics/btr708)) in Python (```Art.py```). HiC/3C noise, in the form of spurious ligation products, is modeled as the uniformly random association of any two sites across the entire extent of the source genome(s), the rate of which is user controlled. 
+  Experimental noise is considered both in terms of Illumina-based sequencing error and that inherent in the production of HiC/3C library generation. Sequencing error is afforded by a reimplementation of ```art_illumina``` ([Huang et al, 2011](https://doi.org/10.1093/bioinformatics/btr708)) in Python (```Art.py```). HiC/3C noise, in the form of spurious ligation products, is modeled as the uniformly random association of any two sites across the entire extent of the source genome(s), the rate of which is user controlled. 
   
   To support community sampling (metagenomes), an abundance profile is supplied along with the set of reference sequences at runtime. The profile can either take the form of an explicit table or be drawn at random from a user chosen probability distribution (equal, uniform random or log-normal).
   
