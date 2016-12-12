@@ -209,27 +209,29 @@ seq_prof = seq_prof.map { it.pick(1) }
 //
 // Generate shotgun sequencing reads for for each whole community
 //
-(seq_prof, wgs_in) = seq_prof.into(2)
+if (! params.skipWgs) {
 
-// Add wgs coverage to sweep
-sweep.withVariable('xfold', ms.variables.xfold)
-        .describe('WGS Read Generation')
+    (seq_prof, wgs_in) = seq_prof.into(2)
 
-// extend the channel
-wgs_in = sweep.extendChannel(wgs_in, 'xfold')
+    // Add wgs coverage to sweep
+    sweep.withVariable('xfold', ms.variables.xfold)
+            .describe('WGS Read Generation')
 
-process WGS_Reads {
-    publishDir ms.options.output, mode: 'copy', overwrite: 'true'
+    // extend the channel
+    wgs_in = sweep.extendChannel(wgs_in, 'xfold')
 
-    input:
-    set key, file(comm_seq), file(comm_prof), xfold from wgs_in
+    process WGS_Reads {
+        publishDir ms.options.output, mode: 'copy', overwrite: 'true'
 
-    output:
-    set key, file("${key}.wgs.r1.fq.gz"), file("${key}.wgs.r2.fq.gz"), file(comm_seq) into wgs_out
+        input:
+        set key, file(comm_seq), file(comm_prof), xfold from wgs_in
 
-    script:
-    if (params.debug) {
-        """
+        output:
+        set key, file("${key}.wgs.r1.fq.gz"), file("${key}.wgs.r2.fq.gz"), file(comm_seq) into wgs_out
+
+        script:
+        if (params.debug) {
+            """
         echo "metaART.py -C gzip --profile $comm_prof -z 1 -M $xfold -S ${key['seed']} \
                 -s ${ms.options['wgs']['ins_std']} -m ${ms.options['wgs']['ins_len']} \
                 -l ${ms.options['wgs']['read_len']} -n ${key}.wgs $comm_seq ." > ${key}.wgs.r1.fq.gz
@@ -238,9 +240,8 @@ process WGS_Reads {
                 -s ${ms.options['wgs']['ins_std']} -m ${ms.options['wgs']['ins_len']} \
                 -l ${ms.options['wgs']['read_len']} -n ${key}.wgs $comm_seq ." > ${key}.wgs.r2.fq.gz
         """
-    }
-    else {
-        """
+        } else {
+            """
         export PATH=\$EXT_BIN/art:\$PATH
         metaART.py -C gzip --profile $comm_prof -z 1 -M $xfold -S ${key['seed']} \
                 -s ${ms.options['wgs']['ins_std']} -m ${ms.options['wgs']['ins_len']} \
@@ -248,116 +249,122 @@ process WGS_Reads {
         wait_on_openfile.sh ${key}.wgs.r1.fq.gz
         wait_on_openfile.sh ${key}.wgs.r2.fq.gz
         """
+        }
     }
-}
 
+}
 
 //
 // Generate 3C reads for each whole community
 //
-(seq_prof, hic_in) = seq_prof.into(2)
+if (! params.skipHic) {
 
-// Add 3C coverage to sweep
-sweep.withVariable('n3c', ms.variables.n3c)
-        .describe('HiC Read Generation')
+    (seq_prof, hic_in) = seq_prof.into(2)
 
-// extend the channel
-hic_in = sweep.extendChannel(hic_in, 'n3c')
+    // Add 3C coverage to sweep
+    sweep.withVariable('n3c', ms.variables.n3c)
+            .describe('HiC Read Generation')
+
+    // extend the channel
+    hic_in = sweep.extendChannel(hic_in, 'n3c')
 
 
-process HIC_Reads {
-    publishDir ms.options.output, mode: 'copy', overwrite: 'true'
+    process HIC_Reads {
+        publishDir ms.options.output, mode: 'copy', overwrite: 'true'
 
-    input:
-    set key, file(comm_seq), file(comm_prof), n3c from hic_in
+        input:
+        set key, file(comm_seq), file(comm_prof), n3c from hic_in
 
-    output:
-    set key, file("${key}.hic.fa.gz") into hic_out
+        output:
+        set key, file("${key}.hic.fa.gz") into hic_out
 
-    script:
-    hic_sites = ms.options.n3c.hic_sites ? '--site-dup' : ''
-    if (params.debug) {
-        """
+        script:
+        hic_sites = ms.options.n3c.hic_sites ? '--site-dup' : ''
+        if (params.debug) {
+            """
         echo "sim3C.py $hic_sites -C gzip -r ${key['seed']} -n $n3c -l ${ms.options['n3c']['read_len']} \
             --inter-prob ${ms.options['n3c']['inter_prob']} --profile $comm_prof $comm_seq \
             ${key}.hic.fa.gz" > ${key}.hic.fa.gz
         """
-    }
-    else {
-        """
+        } else {
+            """
         sim3C.py $hic_sites -C gzip -r ${key['seed']} -n $n3c -l ${ms.options['n3c']['read_len']} \
             --inter-prob ${ms.options['n3c']['inter_prob']} --profile $comm_prof $comm_seq ${key}.hic.fa.gz
         wait_on_openfile.sh ${key}.hic.fa.gz
         """
+        }
     }
 }
 
 //
 // Assemble WGS reads
 //
-(wgs_out, asm_in) = wgs_out.into(2)
+if (!params.skipWgs && !params.skipAsm) {
 
-// select just read-set files (R1, R2) and the community sequences
-asm_in = asm_in.map { it.pick(1, 2, 3) }
+    (wgs_out, asm_in) = wgs_out.into(2)
 
-process Assemble {
-    publishDir ms.options.output, mode: 'copy', overwrite: 'true'
+    // select just read-set files (R1, R2) and the community sequences
+    asm_in = asm_in.map { it.pick(1, 2, 3) }
 
-    input:
-    set key, file(reads1), file(reads2), file(comm_seq) from asm_in
+    process Assemble {
+        publishDir ms.options.output, mode: 'copy', overwrite: 'true'
 
-    output:
-    set key, file("${key}.contigs.fasta"), file(reads1), file(reads2), file(comm_seq) into asm_out
+        input:
+        set key, file(reads1), file(reads2), file(comm_seq) from asm_in
 
-    script:
-    if (params.debug) {
-        """
+        output:
+        set key, file("${key}.contigs.fasta"), file(reads1), file(reads2), file(comm_seq) into asm_out
+
+        script:
+        if (params.debug) {
+            """
         echo "\$EXT_BIN/a5/bin/a5_pipeline.pl --threads=1 --metagenome $reads1 $reads2 $key" > ${key}.contigs.fasta
         """
-    }
-    else {
-        """
+        } else {
+            """
         export PATH=\$EXT_BIN/a5/bin:\$PATH
         a5_pipeline.pl --threads=1 --metagenome $reads1 $reads2 $key
         bwa index ${key}.contigs.fasta
         """
+        }
     }
-}
 
-//
-// Infer Truth Tables for each community by mapping contigs to community references
-//
-(asm_out, truth_in) = asm_out.into(2)
+    //
+    // Infer Truth Tables for each community by mapping contigs to community references
+    //
+    (asm_out, truth_in) = asm_out.into(2)
 
-        // select just contigs and community sequences
-truth_in = truth_in.map{ it.pick(1, 4) }
+    // select just contigs and community sequences
+    truth_in = truth_in.map{ it.pick(1, 4) }
 
-process Truth {
-    publishDir ms.options.output, mode: 'copy', overwrite: 'true'
+    process Truth {
+        publishDir ms.options.output, mode: 'copy', overwrite: 'true'
 
-    input:
-    set key, file(contigs), file(comm_seq) from truth_in
+        input:
+        set key, file(contigs), file(comm_seq) from truth_in
 
-    output:
-    set key, file("${key}.truth"), file(contigs), file(comm_seq) into truth_out
+        output:
+        set key, file("${key}.truth"), file(contigs), file(comm_seq) into truth_out
 
-    script:
-    if (params.debug) {
-        """
-        echo $key > ${key}.truth
-        """
-    }
-    else {
-        """
-        export PATH=\$EXT_BIN/last:\$PATH
-        if [ ! -e db.prj ]
-        then
-            lastdb db $comm_seq
-        fi
+        script:
+        if (params.debug) {
+            """
+            echo $key > ${key}.truth
+            """
+        }
+        else {
+            """
+            export PATH=\$EXT_BIN/last:\$PATH
+            if [ ! -e db.prj ]
+            then
+                lastdb db $comm_seq
+            fi
+    
+            lastal -P 1 db $contigs | maf-convert psl > ctg2ref.psl
+            alignmentToTruth.py --ofmt json ctg2ref.psl "${key}.truth"
+            """
+        }
 
-        lastal -P 1 db $contigs | maf-convert psl > ctg2ref.psl
-        alignmentToTruth.py --ofmt json ctg2ref.psl "${key}.truth"
-        """
     }
 
 }
@@ -365,30 +372,31 @@ process Truth {
 //
 // Map HiC reads to assembled contigs
 //
-(asm_out, hicmap_in) = asm_out.into(2)
+if (!params.skipHic && !params.skipWgs && !params.skipAsm) {
 
-// join 3C reads and the results of assembly
-hicmap_in = sweep.joinChannels(hicmap_in, hic_out, 2)
-        // select just contigs and 3C reads
-        .map{ it.pick(1, -1) }
+    (asm_out, hicmap_in) = asm_out.into(2)
 
-process HiCMap {
-    publishDir ms.options.output, mode: 'copy', overwrite: 'true'
+    // join 3C reads and the results of assembly
+    hicmap_in = sweep.joinChannels(hicmap_in, hic_out, 2)
+    // select just contigs and 3C reads
+            .map { it.pick(1, -1) }
 
-    input:
-    set key, file(contigs), file(hic_reads) from hicmap_in
+    process HiCMap {
+        publishDir ms.options.output, mode: 'copy', overwrite: 'true'
 
-    output:
-    set key, file("${key}.hic2ctg.bam"), file(hic_reads), file(contigs) into hicmap_out
+        input:
+        set key, file(contigs), file(hic_reads) from hicmap_in
 
-    script:
-    if (params.debug) {
-        """
+        output:
+        set key, file("${key}.hic2ctg.bam"), file(hic_reads), file(contigs) into hicmap_out
+
+        script:
+        if (params.debug) {
+            """
         echo $key > ${key}.hic2ctg.bam
         """
-    }
-    else {
-        """
+        } else {
+            """
         export PATH=\$EXT_BIN/a5/bin:\$PATH
         if [ ! -e "${contigs}.bwt" ]
         then
@@ -399,70 +407,67 @@ process HiCMap {
         samtools idxstats "${key}.hic2ctg.bam" > "${key}.hic2ctg.idxstats"
         samtools flagstat "${key}.hic2ctg.bam" > "${key}.hic2ctg.flagstat"
         """
+        }
     }
-}
 
-//
-// Generate contig graphs
-//
-(hicmap_out, graph_in) = hicmap_out.into(2)
+    //
+    // Generate contig graphs
+    //
+    (hicmap_out, graph_in) = hicmap_out.into(2)
 
-// select just hic bam, hic reads and contigs
-graph_in = graph_in.map{ it.pick(1,2,3) }
+    // select just hic bam, hic reads and contigs
+    graph_in = graph_in.map { it.pick(1, 2, 3) }
 
-process Graph {
+    process Graph {
 
-    publishDir ms.options.output, mode: 'copy', overwrite: 'true'
+        publishDir ms.options.output, mode: 'copy', overwrite: 'true'
 
-    input:
-    set key, file(hic2ctg), file(hic_reads), file(contigs) from graph_in
+        input:
+        set key, file(hic2ctg), file(hic_reads), file(contigs) from graph_in
 
-    output:
-    set key, file("${key}.graphml"), file(hic_reads), file(contigs) into graph_out
+        output:
+        set key, file("${key}.graphml"), file(hic_reads), file(contigs) into graph_out
 
-    script:
-    if (params.debug) {
-        """
+        script:
+        if (params.debug) {
+            """
         echo $key > ${key}.graphml
         """
-    }
-    else {
-        """
+        } else {
+            """
         if [ ! -e "${hic2ctg}.bai" ]
         then
             samtools index $hic2ctg
         fi
         bamToEdges.py --strong 150 --preserve-zerodeg --merged $hic2ctg -o ${key}
         """
+        }
     }
-}
 
+    //
+    // Map WGS reads to contigs
+    //
+    (asm_out, wgsmap_in) = asm_out.into(2)
 
-//
-// Map WGS reads to contigs
-//
-(asm_out, wgsmap_in) = asm_out.into(2)
+    // select just contigs, r1 and r2
+    wgsmap_in = wgsmap_in.map { it.pick(1, 2, 3) }
 
-// select just contigs, r1 and r2
-wgsmap_in = wgsmap_in.map{ it.pick(1, 2, 3) }
+    process WGSMap {
+        publishDir ms.options.output, mode: 'copy', overwrite: 'true'
 
-process WGSMap {
-    publishDir ms.options.output, mode: 'copy', overwrite: 'true'
+        input:
+        set key, file(contigs), file(reads1), file(reads2) from wgsmap_in
 
-    input:
-    set key, file(contigs), file(reads1), file(reads2) from wgsmap_in
+        output:
+        set key, file("${key}.wgs2ctg.bam"), file(contigs) into wgsmap_out
 
-    output:
-    set key, file("${key}.wgs2ctg.bam"), file(contigs) into wgsmap_out
-
-    script:
-    if (params.debug) {
-        """
+        script:
+        if (params.debug) {
+            """
         echo $key > ${key}.wgs2ctg.bam
         """
-    }
-    else {
-        """
+        } else {
+            """
         export PATH=\$EXT_BIN/a5/bin:\$PATH
         if [ ! -e "${contigs}.bwt" ]
         then
@@ -470,35 +475,33 @@ process WGSMap {
         fi
         bwa mem -t 1 $contigs $reads1 $reads2 | samtools view -bS - | samtools sort -l 9 - "${key}.wgs2ctg"
         """
+        }
     }
-}
 
+    //
+    // Calculate assembly contig coverage
+    //
+    (wgsmap_out, cov_in) = wgsmap_out.into(2)
 
-//
-// Calculate assembly contig coverage
-//
-(wgsmap_out, cov_in) = wgsmap_out.into(2)
+    // select wgs bam and contigs
+    cov_in = cov_in.map { it.pick(1, 2) }
 
-// select wgs bam and contigs
-cov_in = cov_in.map{ it.pick(1, 2) }
+    process InferReadDepth {
+        publishDir ms.options.output, mode: 'copy', overwrite: 'true'
 
-process InferReadDepth {
-    publishDir ms.options.output, mode: 'copy', overwrite: 'true'
+        input:
+        set key, file(wgs2ctg), file(contigs) from cov_in
 
-    input:
-    set key, file(wgs2ctg), file(contigs) from cov_in
+        output:
+        set key, file("${key}.wgs2ctg.cov"), file(wgs2ctg), file(contigs) into cov_out
 
-    output:
-    set key, file("${key}.wgs2ctg.cov"), file(wgs2ctg), file(contigs) into cov_out
-
-    script:
-    if (params.debug) {
-        """
+        script:
+        if (params.debug) {
+            """
         echo $key > ${key}.wgs2ctg.cov
         """
-    }
-    else {
-        """
+        } else {
+            """
         \$EXT_BIN/bedtools/bedtools genomecov -ibam $wgs2ctg | \
         awk '
         BEGIN{n=0}
@@ -520,5 +523,6 @@ process InferReadDepth {
             }
         }' > "${key}.wgs2ctg.cov"
         """
+        }
     }
 }
