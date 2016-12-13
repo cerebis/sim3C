@@ -49,6 +49,7 @@ GLOBALS
 # Mixed geom/unif model
 MIXED_GEOM_PROB = 6.0e-6
 CID_GEOM_PROB = 8.0e-6
+DELTA_PROB = 1.0e-4
 
 # set state for random number generation
 RANDOM_STATE = None
@@ -76,12 +77,21 @@ class NoCutSitesException(Sim3CException):
         self.message = 'sequence [{0}] had no cutsites for enzyme [{1}]'.format(seq_name, enz_name)
 
 
+class OutOfBoundsException(Sim3CException):
+    def __init__(self, pos, maxpos):
+        "exceeded maximum template length {0} > {1}".format(pos, maxpos)
+
+
 class EmptyRegistryException(Sim3CException):
     pass
 
 
 class MonochromosomalException(Sim3CException):
     pass
+
+
+def geom_q(p, x):
+    return 1 - (1 - (1 - p)**x)
 
 
 def get_enzyme_instance(enzyme_name):
@@ -96,35 +106,18 @@ def get_enzyme_instance(enzyme_name):
     return enz
 
 
-def find_restriction_sites(enzyme_name, seq):
+def find_restriction_sites(enzyme_name, seq, linear=False):
     """
     For supplied enzyme, find all restriction sites in a given sequence
     returns list of sites. Note, positions are converted from 1-based to 0-based.
 
     :param enzyme_name: name of enzyme to use in digestion
-    :param seq: sequence to digest
-    :return: list of genomic coordinates
+    :param seq: template sequence to digest
+    :param linear: treat template sequence as linear
+    :return: list of genomic coordinates (zero valued positions)
     """
     en = get_enzyme_instance(enzyme_name)
-    return np.array(en.search(seq, linear=False)) - 1
-
-
-def find_priming_sites(oligo, seq):
-    """
-    For supplied priming sequence, find positions of all matches in a given sequence
-    returns list of sites.
-    :param oligo: Bio.Seq primer sequence
-    :param seq: Bio.Seq template to search
-    :return: list of sites
-    """
-    array = []
-    for m in re.finditer(oligo, str(seq)):
-        array.append(m.end())
-    rc_oligo = Seq(oligo)
-    rc_oligo.reverse_complement()
-    for m in re.finditer(str(rc_oligo), str(seq)):
-        array.append(m.end())
-    return array
+    return np.array(en.search(seq, linear=linear)) - 1
 
 
 def make_read(seq, fwd_read, length):
@@ -168,70 +161,171 @@ class Part:
     """
     Represents one part of the two-piece 3C ligation fragment.
     """
-    def __init__(self, seq, pos1, pos2, fwd, replicon):
+    def __init__(self, replicon, site_info, length, fwd):
         """
-        :param seq: template sequence
-        :param pos1: beginning
-        :param pos2: end
+        :param replicon: parent replicon
+        :param site_info: site selection
+        :param length: length of part
         :param fwd: strand True = forward
-        :param replicon: from which this part derives
         """
-        self.seq = seq
-        self.pos1 = pos1
-        self.pos2 = pos2
+        self.site_info = site_info
+        self.length = length
         self.fwd = fwd
         self.replicon = replicon
+        self.seq = replicon.subseq(self.site_info['site'], self.length)
 
     def __repr__(self):
-        return repr((self.seq, self.pos1, self.pos2, self.fwd, self.replicon))
+        return repr((self.seq, self.site_info, self.length, self.fwd, self.replicon))
 
-    def length(self):
-        return self.pos2 - self.pos1 + 1
+    def begin(self):
+        return self.site_info['site']
+
+    def end(self):
+        return self.site_info['site'] + self.length
+
+    def site_within_range(self):
+        """
+        Test if the separation between the randomly chosen position and the nearest cutsite
+        are too far apart. That is, the cutsite is further away that the length of the fragment.
+        :return: true, too far apart
+        """
+        return RANDOM_STATE.uniform() < geom_q(DELTA_PROB, self.site_info['delta'])
+
+
+class CutSites:
+    """
+    The cut-sites for a given enzyme on a given template.
+    """
+
+    def __init__(self, enz_name, template_seq, linear=False):
+        """
+        Initialize the cut-sites of an enzyme on a template sequence.
+
+        Linearity affects both the initial search for recognition sites and
+        when requesting the nearest site to a given genomic location.
+
+        :param enz_name: the name of the enzyme (case sensitive)
+        :param template_seq: the template sequence to digest
+        :param linear: treat sequence as linear
+        """
+        self.enz_name = enz_name
+        self.max_length = len(template_seq) - 1
+
+        # find sites
+        self.sites = find_restriction_sites(enz_name, template_seq, linear)
+        self.num_sites = len(self.sites)
+        if self.num_sites == 0:
+            raise NoCutSitesException(template_seq.id, enz_name)
+
+        # method setup
+        if linear:
+            self.find_nn = self._find_nn_linear
+        else:
+            self.find_nn = self._find_nn_circular
+            self.add_shoulders()
+
+    def add_shoulders(self):
+        """
+        Add shoulders to the already determined list of circular chr sites. This allows
+        finding positions without logic for edge cases (ix=0 or -1)
+        """
+        before_first = self.sites[-1] - self.max_length
+        after_last = self.max_length + self.sites[0]
+        self.sites = np.hstack(([before_first], self.sites, [after_last]))
+
+    def random_site(self):
+        """
+        Select a uniformly random site
+        :return: a random site
+        """
+        return RANDOM_STATE.choice(self.sites)
+
+    def _find_nn_circular(self, pos):
+        """
+        Find the nearest cut-site relative to supplied position on a circular
+        chromosome.
+
+        :param cut_sites: the list of enzyme cut-sites
+        :param pos: the position on the chromosome
+        :param vargs: chromosome length must be supplied here
+        :return: nearest site
+        """
+        if pos <= self.max_length:
+            OutOfBoundsException(pos, self.max_length)
+
+        cs = self.sites
+        ix = np.searchsorted(cs, pos)
+        x1 = cs[ix - 1]
+        x2 = cs[ix]
+        # modulo so as we only return values within the range [0..maxlen]
+        # this handles the edge case of sites crossing beginning or end.
+        if pos - x1 <= x2 - pos:
+            return x1 % self.max_length
+        else:
+            return x2 % self.max_length
+
+    def _find_nn_linear(self, pos):
+        """
+        Find the nearest cut-site relative to the supplied position on a linear
+        chromosome or sequence fragment.
+        :param pos: the position on the chromosome
+        :return: nearest site
+        """
+        if pos <= self.max_length:
+            OutOfBoundsException(pos, self.max_length)
+
+        cs = self.sites
+        ix = np.searchsorted(cs, pos)
+        # first or last site was closest
+        if ix == 0:
+            return cs[0]
+        elif ix == self.num_sites:
+            return cs[1]
+        else:
+            # pick the closest of nearest neighbours
+            x1 = cs[ix - 1]
+            x2 = cs[ix]
+            if pos - x1 <= x2 - pos:
+                return x1
+            else:
+                return x2
 
 
 class Replicon:
     """Represents a replicon which holds a reference to its containing cell"""
-
     PART_DESC_FMT = '{0:d}:{1}:{2}'
 
-    def __init__(self, name, parent_cell, sequence, cutters):
+    def __init__(self, name, parent_cell, sequence, cutters, emp_params):
         """
         Instantiate a Replicon instance
         :param name: name of the replicon
         :param parent_cell: cell to which this replicon belongs
         :param sequence: DNA sequence of this replicon
         :param cutters: restriction enzymes used to digest this replicon
+        :param emp_params: dict of empirical model parameters
         """
         self.name = name
         self.parent_cell = parent_cell
         self.sequence = sequence
+        self.length = len(sequence)
 
         # for each enzyme, pre-digest the replicon sequence
         self.cut_sites = {}
         for cname in cutters:
-            self.cut_sites[cname] = np.array(find_restriction_sites(cname, sequence.seq))
-            if len(self.cut_sites[cname]) <= 0:
-                raise NoCutSitesException(name, cname)
+            self.cut_sites[cname] = CutSites(cname, sequence.seq)
 
         # initialise CID blocked empirical model
         self.cid_blocks = empirical_model.cids_to_blocks(
-            empirical_model.generate_random_cids(RANDOM_STATE, self.length(),
-                                                 chr_prob=BACKBONE_PROB,
-                                                 chr_shape=MIXED_GEOM_PROB,
-                                                 cid_shape=CID_GEOM_PROB))
+            empirical_model.generate_random_cids(RANDOM_STATE, self.length,
+                                                 chr_prob=emp_params['chr_prob'],
+                                                 chr_shape=emp_params['chr_shape'],
+                                                 cid_shape=emp_params['cid_shape']))
 
     def __repr__(self):
         return repr((self.name, self.parent_cell, self.sequence))
 
     def __str__(self):
         return str(self.parent_cell) + '.' + self.name
-
-    def length(self):
-        """
-        Length of the replicon's DNA sequence
-        :return:
-        """
-        return len(self.sequence)
 
     def is_alone(self):
         """
@@ -249,7 +343,7 @@ class Replicon:
         :return: subseq Seq object
         """
         end = start + length
-        diff = end - self.length()
+        diff = end - self.length
         if diff > 0:
             # sequence will wrap around
             ss = self.sequence[start:] + self.sequence[:diff]
@@ -268,39 +362,12 @@ class Replicon:
         Draw a cut-site at random, following a uniform distribution.
 
         :param cutter_name: enzyme name
-        :return: genomic coordinates of cut-site
+        :return: dictionary containing the random position, nearest site and their
+        separation. {pos:x , site:x, delta:x}
         """
-        cs = self.cut_sites[cutter_name]
-        return RANDOM_STATE.choice(cs)
-
-    def nearest_cut_site_above(self, cutter_name, pos):
-        """
-        Return nearest cut-site for enzyme 'cutter_name' right of the supplied genomic position.
-
-        :param cutter_name: enzyme name
-        :param pos: genomic position
-        :return:
-        """
-        cs = self.cut_sites[cutter_name]
-        idx = np.searchsorted(cs, pos)
-        if idx == len(cs):
-            return cs[0]
-        else:
-            return cs[idx]
-
-    def nearest_cut_site_below(self, cutter_name, pos):
-        """
-        Return nearest cut-site for enzyme 'cutter_name' left of the supplied genomic position.
-        :param cutter_name: enzyme
-        :param pos: genomic position
-        :return:
-        """
-        cs = self.cut_sites[cutter_name]
-        idx = np.searchsorted(cs, pos)
-        if idx == 0:
-            return cs[-1]
-        else:
-            return cs[idx - 1]
+        pos = RANDOM_STATE.randint(0, self.length)
+        site = self.cut_sites[cutter_name].find_nn(pos)
+        return {'pos': pos, 'site': site, 'delta': np.abs(pos-site)}
 
     def nearest_cut_site_by_distance(self, cutter_name, pos):
         """
@@ -311,21 +378,8 @@ class Replicon:
         :param pos: position from which to find the nearest site for enzyme "cutter_name"
         :return: position of cutsite
         """
-
-        cs = self.cut_sites[cutter_name]
-        above = np.searchsorted(cs, pos)
-
-        if above == len(cs):
-            # pos beyond the last site, so wrap around
-            prev = above - 1
-            return cs[prev if pos - cs[prev] <= self.length() - pos + cs[0] else 0]
-        elif above == 0:
-            # pos before the first site, so wrap around
-            return cs[above if cs[above] - pos <= self.length() - cs[-1] + pos else -1]
-        else:
-            prev = above - 1
-            return cs[prev if pos - cs[prev] <= cs[above] - pos else above]
-
+        site = self.cut_sites[cutter_name].find_nn(pos)
+        return {'pos': pos, 'site': site, 'delta': np.abs(pos-site)}
 
     @staticmethod
     def get_loc(emp_dist, origin):
@@ -411,7 +465,7 @@ class Cell:
         # Scale prob by replicon length and initialise index to name table.
         for n, repA in enumerate(self.replicon_registry.values()):
             self.index_to_name[n] = repA.name
-            prob[n] = prob[n] * repA.length()
+            prob[n] = prob[n] * repA.length
 
         # Normalised, this becomes the piece-wise PDF
         self.pdf = prob / prob.sum()
@@ -465,7 +519,7 @@ class Community:
 
     [replicon name] [cell name] [abundance]
     """
-    def __init__(self, inter_rep_prob, spurious_prob, profile, seq_filename, cutters):
+    def __init__(self, inter_rep_prob, spurious_prob, profile, seq_filename, cutters, emp_params):
         """
         Instantiate a Community.
         :param inter_rep_prob: probability of inter replicon ligation
@@ -473,6 +527,7 @@ class Community:
         :param profile: abundance profile of the community members
         :param seq_filename: multi-fasta containing the genomic sequences of all community members
         :param cutters: list of restriction enzymed used in digestion.
+        :param emp_params: dict of empirical model parameters
         """
         self.pdf = None
         self.cdf = None
@@ -491,7 +546,7 @@ class Community:
         for abn in profile.values():
             try:
                 parent_cell = self.register_cell(abn.cell, abn.val)
-                self.build_register_replicon(abn.name, parent_cell, sequences.get(abn.name))
+                self.build_register_replicon(abn.name, parent_cell, sequences.get(abn.name), emp_params)
             except NoCutSitesException as e:
                 print 'Warning: {0}'.format(e.message)
 
@@ -513,12 +568,12 @@ class Community:
         if len(self.cell_registry) <= 0:
             raise EmptyRegistryException('Community is empty. No genomes were registered')
 
-    def build_register_replicon(self, name, parent_cell, sequence):
+    def build_register_replicon(self, name, parent_cell, sequence, emp_params):
         """Add a new replicon to a cell type in community"""
         if name in self.replicon_registry:
             raise Sim3CException('Replicon name [{0}] is not unique within the community'.format(name))
 
-        replicon = Replicon(name, parent_cell, sequence, self.cutters)
+        replicon = Replicon(name, parent_cell, sequence, self.cutters, emp_params)
         self.replicon_registry[name] = replicon
         parent_cell.register_replicon(replicon)
         return replicon
@@ -550,7 +605,7 @@ class Community:
         i = 0
         for repA in self.replicon_registry.values():
             self.index_to_name[i] = repA.name
-            prob[i] = repA.parent_cell.abundance / self.totalRawAbundance * repA.length()
+            prob[i] = repA.parent_cell.abundance / self.totalRawAbundance * repA.length
             i += 1
 
         tot_prob = prob.sum()
@@ -613,7 +668,7 @@ class Community:
         Returns tuple (pos=int, strand=bool)
         """
         replicon = self.get_replicon_by_index(replicon_index)
-        return int(RANDOM_STATE.uniform() * replicon.length()), True
+        return int(RANDOM_STATE.uniform() * replicon.length), True
 
 
 """
@@ -621,6 +676,7 @@ class Community:
 Fragment creation methods
 
 """
+
 
 def get_partial_fragment_length():
     """
@@ -636,12 +692,10 @@ def make_unconstrained_part_a():
     model a normally distributed DNA fragment length.
     :return: Part
     """
-
     repl = comm.get_replicon_by_index(comm.pick_replicon())
-    pos = repl.random_cut_site(CUTTER_NAME)
+    site = repl.random_cut_site(CUTTER_NAME)
     frag_len = get_partial_fragment_length()
-    seq = repl.subseq(pos, frag_len)
-    return Part(seq, pos, pos + frag_len, True, repl)
+    return Part(repl, site, frag_len, True)
 
 
 def make_any_part_b():
@@ -661,10 +715,9 @@ def make_unconstrained_part_b(first_part):
     :return: another part B, which is not from the same replicon as part A.
     """
     diff_repl = first_part.replicon.parent_cell.pick_inter_rep(first_part.replicon)
-    pos = diff_repl.random_cut_site(CUTTER_NAME)
+    site = diff_repl.random_cut_site(CUTTER_NAME)
     frag_len = get_partial_fragment_length()
-    seq = diff_repl.subseq(pos, frag_len)
-    return Part(seq, pos, pos + frag_len, True, diff_repl)
+    return Part(diff_repl, site, frag_len, True)
 
 
 def make_constrained_part_b(first_part):
@@ -674,15 +727,14 @@ def make_constrained_part_b(first_part):
     :param first_part: part A, the already chosen piece of the ligation fragment from a particular replicon.
     :return: another part B, on the same replicon which follows the distribution of separation.
     """
-    loc = first_part.replicon.constrained_location_cids(first_part.pos1)
+    pos = first_part.replicon.constrained_location_cids(first_part.site_info['pos'])
     if RANDOM_STATE.uniform() < ANTIDIAG_RATE:
         # an anti-diagonal event
-        loc = first_part.replicon.length() - loc
+        pos = first_part.replicon.length - pos
 
-    pos = first_part.replicon.nearest_cut_site_by_distance(CUTTER_NAME, loc)
+    site_info = first_part.replicon.nearest_cut_site_by_distance(CUTTER_NAME, pos)
     frag_len = get_partial_fragment_length()
-    seq = first_part.replicon.subseq(pos, frag_len)
-    return Part(seq, pos, pos+frag_len, True, first_part.replicon)
+    return Part(first_part.replicon, site_info, frag_len, True)
 
 
 
@@ -762,7 +814,8 @@ if __name__ == '__main__':
     SHEARING_MEAN = args.frag_mean
     SHEARING_SD = args.frag_sd
     ANTIDIAG_RATE = args.anti_rate
-    BACKBONE_PROB = args.backbone_prob
+
+    emp_params = {'chr_prob': args.backbone_prob, 'chr_shape': MIXED_GEOM_PROB, 'cid_shape': CID_GEOM_PROB}
 
     SEQ_ID_FMT = args.sample_name + ':{seed}:{origin}:1:1:1:{idx}'
 
@@ -800,8 +853,10 @@ if __name__ == '__main__':
     # Initialize community object
     print "Initializing community"
 
+    too_far = 0
+
     try:
-        comm = Community(args.inter_prob, args.spur_prob, profile, args.genome_seq, [CUTTER_NAME])
+        comm = Community(args.inter_prob, args.spur_prob, profile, args.genome_seq, [CUTTER_NAME], emp_params)
 
         # Junction produced in Hi-C prep
         cut_site = get_enzyme_instance(CUTTER_NAME).site
@@ -834,6 +889,10 @@ if __name__ == '__main__':
                 # 2) pick a cut-site at random on replicon
                 # 3) flip a coin for strand
                 part_a = make_unconstrained_part_a()
+                if not part_a.site_within_range():
+                    too_far += 1
+                    # Make WGS read
+                    continue
 
                 # Create PartB
                 # Steps
@@ -848,13 +907,18 @@ if __name__ == '__main__':
                 elif part_a.replicon.is_alone() or comm.is_intra_rep_event():
                     # ligation is between two fragments on same replicon
                     part_b = make_constrained_part_b(part_a)
+                    if not part_b.site_within_range():
+                        too_far += 1
+                        # make WGS read
+
+                        continue
 
                 else:
                     # ligation crosses replicons
                     part_b = make_unconstrained_part_b(part_a)
 
-                frag_lengths['a'].append(part_a.length())
-                frag_lengths['b'].append(part_b.length())
+                frag_lengths['a'].append(part_a.length)
+                frag_lengths['b'].append(part_b.length)
 
                 # Join parts A and B
                 if args.site_dup:
@@ -868,11 +932,11 @@ if __name__ == '__main__':
                     skip_count += 1
                     continue
 
-                if part_b.pos1 < part_a.pos2 and part_a.pos2 < part_b.pos2:
+                if part_b.begin() < part_a.end() and part_a.end() < part_b.end():
                     overlap_count += 1
                     continue
 
-                if part_a.pos1 < part_b.pos2 and part_b.pos2 < part_a.pos2:
+                if part_a.begin() < part_b.end() and part_b.end() < part_a.end():
                     overlap_count += 1
                     continue
 
@@ -896,6 +960,8 @@ if __name__ == '__main__':
 
         print "Ignored " + str(skip_count) + " fragments due to length restrictions"
         print "Ignored " + str(overlap_count) + " fragments due to overlap"
+
+        print "Abandoned {0}".format(too_far)
 
         print 'Fragment stats:'
         d = np.array(frag_lengths.values())

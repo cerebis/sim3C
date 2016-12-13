@@ -20,6 +20,10 @@ import numpy as np
 from intervaltree import Interval, IntervalTree
 
 
+def cdf_geom(x, shape):
+    return 1. - (1. - shape) ** x
+
+
 def cdf_geom_unif(x, length, **kwargs):
     """
     CDF as a linear combination of the geometric and uniform CDFs, covering
@@ -31,6 +35,17 @@ def cdf_geom_unif(x, length, **kwargs):
     :return: float from 0..length
     """
     return 0.5 * (1.0 - (1.0 - kwargs['shape']) ** x + 1.0/length * x)
+
+
+def pmf_geom_unif(x, length, **kwargs):
+    """
+    PMF for the linear combination of the geometric and uniform PMFs.
+    :param x: the position at which to evaluate
+    :param length: maxium value
+    :param kwargs: 'shape' geometric distribution coeff
+    :return: pmf value at x
+    """
+    return 0.5 * (kwargs['shape'] * (1. - kwargs['shape'])**x + 1./length)
 
 
 class EmpiricalDistribution:
@@ -59,6 +74,15 @@ class EmpiricalDistribution:
         self.xsample = np.linspace(0, length, bins, endpoint=True, dtype=np.float64)
         self.ysample = self.cdf(self.xsample, length, **self.coeffs)
         self.ysample /= self.ysample.max()
+
+    def eval_cdf(self, x):
+        """
+        Evaluate the CDF at the given position.
+        :param x: position at which to evaulate
+        :return: CDF value at x
+        """
+        assert x <= self.length, 'out of bounds {0} > {1}'.format(x, self.length)
+        return self.cdf(x, self.length, **self.coeffs)
 
     def __add__(self, other):
         """
