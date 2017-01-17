@@ -250,7 +250,7 @@ class CutSites:
         :param vargs: chromosome length must be supplied here
         :return: nearest site
         """
-        if pos <= self.max_length:
+        if pos > self.max_length:
             OutOfBoundsException(pos, self.max_length)
 
         cs = self.sites
@@ -271,7 +271,7 @@ class CutSites:
         :param pos: the position on the chromosome
         :return: nearest site
         """
-        if pos <= self.max_length:
+        if pos > self.max_length:
             OutOfBoundsException(pos, self.max_length)
 
         cs = self.sites
@@ -460,7 +460,7 @@ class Cell:
             raise EmptyRegistryException('cell contained no useful replicons')
 
         # Uniform probability initially
-        prob = np.array([1.0 / n_rep] * n_rep)
+        prob = np.zeros(n_rep) + 1.0/n_rep
 
         # Scale prob by replicon length and initialise index to name table.
         for n, repA in enumerate(self.replicon_registry.values()):
@@ -831,7 +831,7 @@ if __name__ == '__main__':
         seq_index = None
         try:
             seq_index = SeqIO.index(args.genome_seq, 'fasta')
-            profile = abundance.generate_profile(RANDOM_STATE, list(seq_index), mode=args.dist,
+            profile = abundance.generate_profile(args.seed, list(seq_index), mode=args.dist,
                                                  lognorm_mu=args.lognorm_mu, lognorm_sigma=args.lognorm_sigma)
 
             # present result to console
