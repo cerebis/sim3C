@@ -74,6 +74,7 @@ class EmpiricalDistribution:
         self.xsample = np.linspace(0, length, bins, endpoint=True, dtype=np.float64)
         self.ysample = self.cdf(self.xsample, length, **self.coeffs)
         self.ysample /= self.ysample.max()
+        self.uniform = self.random_state.uniform
 
     def eval_cdf(self, x):
         """
@@ -106,7 +107,7 @@ class EmpiricalDistribution:
 
         :return: random value following distribution
         """
-        return np.interp(self.random_state.uniform(), self.ysample, self.xsample)
+        return np.interp(self.uniform(), self.ysample, self.xsample)
 
 
 def _reducer_cid_data(acc, x):
@@ -176,6 +177,95 @@ def generate_random_cids(random_state, chr_length, chr_prob=0.5, chr_bins=1000, 
     return cid_tree
 
 
+def _random_nested_intervals(random_state, result, inv, min_len, max_len, min_num, max_num, max_depth, depth=0):
+    """
+    Recursively divide an interval until we reach 'depth' levels of recursion. An interval is divided
+    into a set of smaller intervals, constrained by a proportional min/max length and min/max number.
+    :param random_state: a random state for drawing values
+    :param result: the final list of lists of intervals.
+    :param inv: the interval to divide
+    :param min_len: the smallest proportional size of an interval [0..1]
+    :param max_len: the largest proportional size of an interval [0..1]
+    :param min_num: the smallest number of sub-intervals to create for this interval
+    :param max_num: the largest number of sub-intervals to create for this interval
+    :param max_depth: the maximum recursive depth
+    :param depth: current depth (not intended for user)
+    """
+    if depth < max_depth:
+        # draw a set of random points
+        x = random_state.uniform(min_len * inv.length(), max_len * inv.length(),
+                                 size=random_state.randint(min_num, max_num + 1))
+        # from a sequence from these points and the begin/end of interval
+        subseq = np.hstack([[inv.begin],
+                            inv.begin + np.cumsum((x/x.sum()*inv.length()).astype(int))[:-1],
+                            [inv.end]])
+        # adjacent elements become the next level of intervals
+        subinvs = [Interval(pi[0], pi[1], data={'depth': depth+1}) for pi in zip(subseq[:-1:1], subseq[1::1])]
+        # keep this level
+        result.append(subinvs)
+        # continue to divide these new intervals
+        for ii in subinvs:
+            _random_nested_intervals(random_state, result, ii, min_len, max_len,
+                                    min_num, max_num, max_depth, depth + 1)
+
+
+def generate_nested_cids(random_state, chr_length, chr_prob, chr_bins, chr_shape, cid_bins, cid_shape,
+                         min_len=0.05, max_len=0.2, min_num=5, max_num=5, recur_depth=2):
+    """
+    Generate a set of nested CID intervals for the given genome size. This method better approximates the
+    appearance of a bacterial contact map, conceptually that folded regions themselves fold again and so
+    create intervals within themselves which interact. Default values to the method appear to produce
+    reasonable outcomes.
+
+    :param random_state:  a random state for drawing values
+    :param chr_length: the length of the chromsome
+    :param chr_prob: the probability of a regular backbone interaction vs CID interaction
+    :param chr_bins: the number of bins over which to sample the backbone CDF
+    :param chr_shape: the backbone shape parameter
+    :param cid_bins: the number of bins over which to sample the CID CDFs
+    :param cid_shape: the CID shape parameter
+    :param min_len: the smallest proportional size of an interval [0..1]
+    :param max_len: the largest proportional size of an interval [0..1]
+    :param min_num: the smallest number of sub-intervals to create for this interval
+    :param max_num: the largest number of sub-intervals to create for this interval
+    :param recur_depth: the maximum recursive depth
+    :return:
+    """
+
+    # recursively create a list of nested intervals
+    cid_list = []
+    top_inv = Interval(0, chr_length)
+    _random_nested_intervals(random_state, cid_list, top_inv, min_len, max_len, min_num, max_num, recur_depth)
+
+    # flatten returned list of intervals
+    cid_list = [inv for level in cid_list for inv in level]
+
+    # create random probs to assign to each interval, then normalise
+    # so that: sum{P_cids} + P_backbone = 1.
+    cid_probs = np.array(random_state.uniform(size=len(cid_list)))
+    cid_probs *= (1.0 - chr_prob) / cid_probs.sum()
+
+    # initialise the tree, where each interval now gets a
+    # probability and empirical distribution associated with it.
+    cid_probs_iter = np.nditer(cid_probs)
+    cid_tree = IntervalTree()
+    for inv in cid_list:
+        # explicitly cast, avoiding a 1-element np array
+        inv.data['prob'] = float(cid_probs_iter.next())
+        inv.data['empdist'] = EmpiricalDistribution(random_state, inv.length(), cid_bins,
+                                                    cdf_geom_unif, shape=cid_shape)
+        cid_tree.add(inv)
+
+    # Add the interval governing the whole genome
+    data = {'depth': 0,
+            'prob': chr_prob,
+            'empdist': EmpiricalDistribution(random_state, chr_length, chr_bins,
+                                             cdf_geom_unif, shape=chr_shape)}
+    cid_tree.addi(0, chr_length, data=data)
+
+    return cid_tree
+
+
 def cids_to_blocks(cid_tree):
     """
     Using an IntervalTree as returned by generate_random_cids(), create a new IntervalTree where now the
@@ -195,7 +285,7 @@ def cids_to_blocks(cid_tree):
     x = []
     for inv in cid_tree:
         x.append(inv.begin), x.append(inv.end)
-    x.sort()
+    x = np.unique(x)
 
     # interate over the CID coords, making all the block intervals.
     block_tree = IntervalTree()
@@ -207,6 +297,6 @@ def cids_to_blocks(cid_tree):
         p /= p.sum()
 
         # a block stores the normalized probabilities and originating CID intervals for quick lookup.
-        block_tree[x[i]:x[i+1]] = {'prob_list': p, 'inv_list': ovl_invs}
+        block_tree.addi(x[i], x[i+1], {'prob_list': p, 'inv_list': ovl_invs})
 
     return block_tree
