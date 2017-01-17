@@ -256,7 +256,7 @@ process WGS_Reads {
 //
 // Generate Conformation Capture (HiC/3C) reads for each whole community
 //
-(seq_prof, chrcc_in) = seq_prof.into(2)
+(seq_prof, ccc_in) = seq_prof.into(2)
 
 // Add 3C coverage to sweep
 sweep.withVariable('num_3c', ms.variables.num_3c)
