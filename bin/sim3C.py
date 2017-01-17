@@ -861,7 +861,7 @@ class ReadGenerator:
     Other sequencing read simulation parameters are supplied here initialise ART.
     """
     def __init__(self, method, enzyme, seed, random_state,
-                 prefix='SIM3C', simple=False, read_profile='EmpMiSeq250',
+                 prefix='SIM3C', simple=False, machine_profile='EmpMiSeq250',
                  read_length=250, ins_rate=9.e-5, del_rate=1.1e-4,
                  insert_mean=500, insert_sd=100, insert_min=100, insert_max=None):
         """
@@ -872,7 +872,7 @@ class ReadGenerator:
         :param random_state: additionally the random state object
         :param prefix: leading string for read names
         :param simple: True: do not simulate sequencing errors (faster), False: fully simulation sequencing
-        :param read_profile: ART Illumina error profile for a particular machine type. Default EmpMiSeq250
+        :param machine_profile: ART Illumina error profile for a particular machine type. Default EmpMiSeq250
         :param read_length: desired read-length
         :param ins_rate: insertion rate (Art default: 9e-5)
         :param del_rate: deletion rate (Art default: 1.1e-4)
@@ -912,7 +912,7 @@ class ReadGenerator:
         self.randint = random_state.randint
 
         # initialise ART read simulator
-        self.art = Art.Art(read_length, Art.EmpDist.create(read_profile), ins_rate, del_rate, seed=self.seed)
+        self.art = Art.Art(read_length, Art.EmpDist.create(machine_profile), ins_rate, del_rate, seed=self.seed)
 
         # set the method used to generate reads
         if simple:
@@ -1050,7 +1050,7 @@ class SequencingStrategy:
     Strategy = namedtuple('Strategy', 'method run')
 
     def __init__(self, seed, prof_filename, seq_filename, enz_name, number_pairs,
-                 method, read_length, prefix, read_profile,
+                 method, read_length, prefix, machine_profile,
                  insert_mean=400, insert_sd=50, insert_min=50, insert_max=None,
                  anti_rate=0.25, spurious_rate=0.02, trans_rate=0.1,
                  ligation_factor=0.333, digestion_factor=0.1,
@@ -1067,7 +1067,7 @@ class SequencingStrategy:
         :param method: the library preparation method (Either: 3c or hic)
         :param read_length: the length of reads
         :param prefix: read-names begin with this string
-        :param read_profile: ART Illumina sequencer profile
+        :param machine_profile: ART Illumina sequencing machine profile
         :param insert_mean: mean insert length
         :param insert_sd: stddev insert length
         :param insert_min: minimum allowable insert length (must be > 50)
@@ -1109,7 +1109,7 @@ class SequencingStrategy:
 
         # preparate the read simulator for output
         self.read_generator = ReadGenerator(method, self.enzyme, seed, self.random_state,
-                                            prefix=prefix, simple=simple_reads, read_profile=read_profile,
+                                            prefix=prefix, simple=simple_reads, machine_profile=machine_profile,
                                             read_length=read_length, insert_mean=insert_mean,
                                             insert_sd=insert_sd, insert_min=insert_min, insert_max=insert_max,
                                             del_rate=del_rate, ins_rate=ins_rate)
@@ -1257,19 +1257,19 @@ if __name__ == '__main__':
 
     parser.add_argument('-C', '--compress', choices=['gzip', 'bzip2'], default=None,
                         help='Compress output files')
-    parser.add_argument('--prefix', default='SIM3C', help='Prefix for read names [SIM3C]')
 
     parser.add_argument('-r', '--seed', metavar='INT', type=int, default=int(time.time()),
                         help="Random seed for initialising number generator")
-    parser.add_argument('--method', default='hic', choices=['hic', '3c'],
+    parser.add_argument('-m', '--method', default='hic', choices=['hic', '3c'],
                         help='Library preparation method [hic]')
-    parser.add_argument('--enzyme', dest='enzyme_name', default='NlaIII',
+    parser.add_argument('-e', '--enzyme', dest='enzyme_name', default='NlaIII',
                         help='Restriction enzyme [NlaIII]')
 
     parser.add_argument('-n', '--num-pairs', metavar='INT', type=int, required=True,
                         help='Number of read-pairs generate')
     parser.add_argument('-l', '--read-length', metavar='INT', type=int, required=True,
                         help='Length of reads from Hi-C fragments')
+    parser.add_argument('--prefix', default='SIM3C', help='Prefix for read names [SIM3C]')
     parser.add_argument('--insert-mean', metavar='INT', type=int, default=400,
                         help='Mean insert size [400]')
     parser.add_argument('--insert-sd', metavar='INT', type=int, default=50,
@@ -1305,7 +1305,7 @@ if __name__ == '__main__':
                         help='Log-normal relative abundance sigma parameter')
 
     parser.add_argument('--simple-reads', default=False, action='store_true', help='Do not simulate sequencing errors')
-    parser.add_argument('--read-profile', help='The name of an ART sequencing machine profile [EmpMiSeq250]',
+    parser.add_argument('--machine-profile', help='An ART sequencing machine profile [EmpMiSeq250]',
                         default='EmpMiSeq250', choices=Art.ILLUMINA_PROFILES.keys())
     parser.add_argument('--ins-rate', type=float, default=9.e-5, help='Insert rate [9e-5]')
     parser.add_argument('--del-rate', type=float, default=1.1e-4, help='Deletion rate [1.1e-4]')
@@ -1361,7 +1361,7 @@ if __name__ == '__main__':
         args.profile_in = profile_path
 
     # list of CLI arguments to pass as parameters to the simulation
-    kw_names = ['prefix', 'read_profile', 'insert_mean', 'insert_sd', 'insert_min', 'insert_max',
+    kw_names = ['prefix', 'machine_profile', 'insert_mean', 'insert_sd', 'insert_min', 'insert_max',
                 'anti_rate', 'spurious_rate', 'trans_rate',
                 'ligation_factor', 'digestion_factor',
                 'ins_rate', 'del_rate',
