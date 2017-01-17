@@ -19,6 +19,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """
 import string
 import os
+from itertools import imap
 
 import numpy as np
 import scipy.stats as st
@@ -36,7 +37,6 @@ License: GPL v3
 
 def _clear_list(l):
     del l[:]
-
 
 # path of this (Art.py) source file. It is expected that profiles are co-located with Art.
 MODULE_PATH = os.path.dirname(os.path.abspath(__file__))
@@ -92,6 +92,7 @@ def get_profile(name):
 
     return map(lambda pi: os.path.join(MODULE_PATH, pi), ILLUMINA_PROFILES[name])
 
+
 class EmpDist:
 
     FIRST = True
@@ -109,7 +110,13 @@ class EmpDist:
 
     # lookup table of probability indexed by quality score
     PROB_ERR = np.apply_along_axis(
-        lambda xi: 10.**(-xi/10.), 0, np.arange(HIGHEST_QUAL)).tolist()
+        lambda xi: 10.0**(-xi*0.1), 0, np.arange(HIGHEST_QUAL)).tolist()
+
+    # create a map of all combinations of single-symbol knockouts
+    # used in random not-symb-si substitutions
+    KO_SUBS_LOOKUP = dict([(si, list(PRIMARY_SYMB - set(si))) for si in PRIMARY_SYMB])
+    # alternatively, the list of all symbols for uniform random selection
+    ALL_SUBS = list(PRIMARY_SYMB)
 
     @staticmethod
     def create(name, sep_quals=False):
@@ -197,16 +204,24 @@ class EmpDist:
         :return: simulated quality scores
         """
 
-        sim_quals = []
-        for pos in xrange(read_len):
-            # draw a random integer
-            rnd_pick = Art.random_int(1, EmpDist.MAX_DIST_NUMBER + 1)
-            # for the quality score distribution at this position,
-            # find the lower bound for this random number
-            qd = qual_dist_for_symb[pos]
-            lb = np.argwhere(qd[:, 0] >= rnd_pick)
-            sim_quals.append(qd[lb[0], 1][0])
-        return sim_quals
+        # the most time consuming step when simulating quality scores.
+        # a list comprehension that uses a iterator over the 2 sequences
+        # (the positional Qcdfs and a set of randoms)
+        rv_list = Art.RANDINT(1, EmpDist.MAX_DIST_NUMBER+1, size=read_len)
+        quals = [qi for qi in imap(EmpDist._lookup_qcdf, qual_dist_for_symb, rv_list)]
+        assert len(quals) > 0
+        assert len(quals) == read_len
+        return quals
+
+    @staticmethod
+    def _lookup_qcdf(qcdf, rv):
+        """
+        Look-up the quality corresponding to a randomly drawn integer on a Empirical Q_CDF.
+        :param qcdf: the positional empirical CDF
+        :param rv: randomly drawn value
+        :return: quality score
+        """
+        return qcdf[np.searchsorted(qcdf[:, 0], rv), 1]
 
     def read_emp_dist(self, hndl, is_first):
         """
@@ -272,23 +287,33 @@ class EmpDist:
 
 class SeqRead:
 
-    def __init__(self, read_len, ins_prob, del_prob, max_num=2, plus_strand=None):
+    def __init__(self, read_len, ins_rate, del_rate, max_num=2, plus_strand=None):
         self.max_num = max_num
         self.read_len = read_len
-        self.del_prob = del_prob
-        self.ins_prob = ins_prob
         self.is_plus_strand = plus_strand
-        self.seq_ref = []
-        self.seq_read = []
+        self.seq_ref = np.zeros(read_len, dtype=np.str)
+        self.seq_read = np.zeros(read_len, dtype=np.str)
         self.quals = None
         self.bpos = None
         self.indel = {}
         self.substitution = {}
-        self.del_rate = self._set_rate(del_prob)
-        self.ins_rate = self._set_rate(ins_prob)
+        self.del_rate = del_rate
+        self.ins_rate = ins_rate
+
+    def _new_read(self, rlen=None, plus_strand=True):
+        """
+        Create a new read object ready for simulation.
+        :param rlen: a read length other than what was defined when instantiating Art.
+        :param plus_strand: True - forward strand, False - reverse strand
+        :return: a new read object
+        """
+        if not rlen:
+            return SeqRead(self.read_len, self.ins_rate, self.del_rate, self.max_num, plus_strand=plus_strand)
+        else:
+            return SeqRead(rlen, self.ins_rate, self.del_rate, self.max_num, plus_strand=plus_strand)
 
     def __str__(self):
-        return 'from {0}...{1}bp created {2}'.format(self.seq_ref[0:10], len(self.seq_ref), self.seq_read)
+        return 'from {0}...{1}bp created {2}'.format(self.seq_ref[0:10], self.seq_ref.shape[0], self.seq_read)
 
     def read_record(self, seq_id, desc=''):
         """
@@ -330,20 +355,7 @@ class SeqRead:
         the sequence is handled as a list -- since strings are immutable in Python.
         :return:
         """
-        return ''.join(self.seq_read)
-
-    def _set_rate(self, prob):
-        """
-        Set the rate of an error type, returning a list of SeqRead.max_num length
-        :param prob: probability of an error
-        :return: list
-        """
-        rates = []
-        if self.max_num > self.read_len:
-            self.max_num = self.read_len
-        for i in xrange(1, self.max_num+1):
-            rates.append(1 - st.binom.cdf(i, self.read_len, prob))
-        return rates
+        return self.seq_read.tostring()
 
     def parse_error(self):
         """
@@ -363,11 +375,10 @@ class SeqRead:
                 continue
 
             # if we draw a number less than prob_err for a base, a substitution occurs there.
-            if Art.random_unif() < EmpDist.PROB_ERR[self.quals[i]]:
-                ch = self.seq_read[i]
-                ch = Art.random_base(ch)
-                self.seq_read[i] = ch
-                self.substitution[i] = ch
+            if Art.UNIFORM() < EmpDist.PROB_ERR[self.quals[i]]:
+                sub_ch = Art.random_base(self.seq_read[i])
+                self.seq_read[i] = sub_ch
+                self.substitution[i] = sub_ch
                 num += 1
 
         return num
@@ -378,8 +389,8 @@ class SeqRead:
         """
         self.indel.clear()
         self.substitution.clear()
-        del self.seq_ref[:]
-        del self.seq_read[:]
+        self.seq_ref[:] = 0
+        self.seq_read[:] = 0
 
     def get_indel(self):
         """
@@ -392,12 +403,12 @@ class SeqRead:
 
         # deletion
         for i in xrange(len(self.del_rate)-1, -1, -1):
-            if self.del_rate[i] >= Art.random_unif():
+            if self.del_rate[i] >= Art.UNIFORM():
                 del_len = i+1
                 j = i
                 while j >= 0:
                     # invalid deletion positions: 0 or read_len-1
-                    pos = Art.random_int(0, self.read_len)
+                    pos = Art.RANDINT(0, self.read_len)
                     if pos == 0:
                         continue
                     if pos not in self.indel:
@@ -410,11 +421,11 @@ class SeqRead:
             # ensure that enough unchanged position for mutation
             if self.read_len - del_len - ins_len < i+1:
                 continue
-            if self.ins_rate[i] >= Art.random_unif():
+            if self.ins_rate[i] >= Art.UNIFORM():
                 ins_len = i+1
                 j = i
                 while j >= 0:
-                    pos = Art.random_int(0, self.read_len)
+                    pos = Art.RANDINT(0, self.read_len)
                     if pos not in self.indel:
                         self.indel[pos] = Art.random_base()
                         j -= 1
@@ -436,11 +447,11 @@ class SeqRead:
         del_len = 0
 
         for i in xrange(len(self.ins_rate)-1, -1, -1):
-            if self.ins_rate[i] >= Art.random_unif():
+            if self.ins_rate[i] >= Art.UNIFORM():
                 ins_len = i+1
                 j = i
                 while j >= 0:
-                    pos = Art.random_int(0, self.read_len)
+                    pos = Art.RANDINT(0, self.read_len)
                     if pos not in self.indel:
                         self.indel[pos] = Art.random_base()
                         j -= 1
@@ -455,11 +466,11 @@ class SeqRead:
             if self.read_len - del_len - ins_len < i+1:
                 continue
 
-            if self.del_rate[i] >= Art.random_unif():
+            if self.del_rate[i] >= Art.UNIFORM():
                 del_len = i+1
                 j = i
                 while j >= 0:
-                    pos = Art.random_int(0, self.read_len)
+                    pos = Art.RANDINT(0, self.read_len)
                     if pos == 0:
                         continue
                     if pos not in self.indel:
@@ -481,13 +492,15 @@ class SeqRead:
 
         else:
             # otherwise, we gotta a little more work to do.
-            del self.seq_read[:]
+            self.seq_read[:] = 0
 
+            n = 0
             k = 0
             i = 0
             while i < len(self.seq_ref):
                 if k not in self.indel:
-                    self.seq_read += self.seq_ref[i]
+                    self.seq_read[n] = self.seq_ref[i]
+                    n += 1
                     i += 1
                     k += 1
                 elif self.indel[k] == '-':
@@ -496,11 +509,13 @@ class SeqRead:
                     k += 1
                 else:
                     # insertion
-                    self.seq_read += self.indel[k]
+                    self.seq_read[n] = self.indel[k]
+                    n += 1
                     k += 1
 
             while k in self.indel:
-                self.seq_read += self.indel[k]
+                self.seq_read[n] = self.indel[k]
+                n += 1
                 k += 1
 
     def length(self):
@@ -509,12 +524,15 @@ class SeqRead:
         length "read_len" due to short templates.
         :return: length of actual simulated sequence
         """
-        return len(self.seq_read)
+        return self.seq_read.shape[0]
 
 
 class Art:
 
     RANDOM_STATE = np.random.RandomState()
+    RANDINT = RANDOM_STATE.randint
+    UNIFORM = RANDOM_STATE.uniform
+    CHOICE = RANDOM_STATE.choice
 
     # translation table, non-standard bases become N
     COMPLEMENT_TABLE = string.maketrans('acgtumrwsykvhdbnACGTUMRWSYKVHDBN',
@@ -525,10 +543,14 @@ class Art:
         # check immediately that read lengths are possible for profile
         emp_dist.verify_length(read_len, True)
         emp_dist.verify_length(read_len, False)
+        self.emp_dist = emp_dist
 
         # initialise random state
         if seed:
             Art.RANDOM_STATE = np.random.RandomState(seed)
+            Art.RANDINT = Art.RANDOM_STATE.randint
+            Art.UNIFORM = Art.RANDOM_STATE.uniform
+            Art.CHOICE = Art.RANDOM_STATE.choice
 
         # convert immutable string to list
         if ref_seq:
@@ -541,10 +563,22 @@ class Art:
             self.ref_seq_cmp = None
 
         self.read_len = read_len
-        self.emp_dist = emp_dist
-        self.ins_prob = ins_prob
-        self.del_prob = del_prob
         self.max_num = max_num
+        self.ins_rate = self._make_rate(ins_prob)
+        self.del_rate = self._make_rate(del_prob)
+
+    def _make_rate(self, prob):
+        """
+        Create the rates for an error type, returning a list of max_num length
+        :param prob: probability of an error
+        :return: list
+        """
+        rates = []
+        if self.max_num > self.read_len:
+            self.max_num = self.read_len
+        for i in xrange(1, self.max_num+1):
+            rates.append(1 - st.binom.cdf(i, self.read_len, prob))
+        return rates
 
     @staticmethod
     def make_mutable(input_seq):
@@ -573,9 +607,9 @@ class Art:
         :return: a new read object
         """
         if not rlen:
-            return SeqRead(self.read_len, self.ins_prob, self.del_prob, self.max_num, plus_strand=plus_strand)
+            return SeqRead(self.read_len, self.ins_rate, self.del_rate, self.max_num, plus_strand=plus_strand)
         else:
-            return SeqRead(rlen, self.ins_prob, self.del_prob, self.max_num, plus_strand=plus_strand)
+            return SeqRead(rlen, self.ins_rate, self.del_rate, self.max_num, plus_strand=plus_strand)
 
     def next_pair_simple_seq(self, template):
         """
@@ -600,11 +634,10 @@ class Art:
             read.read_len = len(template)
 
         if read.is_plus_strand:
-            read.seq_ref = template[0: self.read_len]
+            read.seq_ref = np.fromstring(template[:self.read_len], dtype='|S1')
         else:
             rc_temp = Art.revcomp(template)
-            read.seq_ref = rc_temp[0: self.read_len]
-
+            read.seq_ref = np.fromstring(rc_temp[:self.read_len], dtype='|S1')
         read.bpos = 0
         read.ref2read()
 
@@ -643,10 +676,10 @@ class Art:
             slen = read.get_indel_2()
 
         if read.is_plus_strand:
-            read.seq_ref = mut_temp[0: self.read_len - slen]
+            read.seq_ref = np.fromiter(mut_temp[:self.read_len - slen], dtype='|S1')
         else:
             rc_temp = Art.revcomp(template)
-            read.seq_ref = list(rc_temp[0: self.read_len - slen])
+            read.seq_ref = np.fromstring(rc_temp[:self.read_len - slen], dtype='|S1')
 
         read.bpos = 0
         read.ref2read()
@@ -676,9 +709,9 @@ class Art:
             slen = read.get_indel_2()
 
         if read.is_plus_strand:
-            read.seq_ref = self.ref_seq[pos: pos + self.read_len - slen]
+            read.seq_ref = np.fromstring(self.ref_seq[pos: pos + self.read_len - slen], dtype='|S1')
         else:
-            read.seq_ref = self.ref_seq_cmp[pos: pos + self.read_len - slen]
+            read.seq_ref = np.fromstring(self.ref_seq_cmp[pos: pos + self.read_len - slen], dtype='|S1')
 
         read.bpos = pos
         read.ref2read()
@@ -698,29 +731,12 @@ class Art:
         :return: SeqRead
         """
         # random position anywhere in valid range
-        pos = Art.random_int(0, self.valid_region)
+        pos = Art.RANDINT(0, self.valid_region)
 
         # is it the forward strand?
-        plus_strand = Art.random_coin_toss()
+        plus_strand = Art.UNIFORM() < 0.5
 
         return self.next_read_indel_at(pos, plus_strand)
-
-    @staticmethod
-    def random_int(low, high):
-        """
-        Random integer between low (incl) and high (excl)
-        :param low:
-        :param high:
-        :return:
-        """
-        return Art.RANDOM_STATE.randint(low, high)
-
-    @staticmethod
-    def random_coin_toss():
-        """
-        :return: True or False
-        """
-        return Art.RANDOM_STATE.choice([True, False])
 
     @staticmethod
     def random_base(excl=None):
@@ -730,16 +746,9 @@ class Art:
         :return: a random base.
         """
         if not excl:
-            return Art.RANDOM_STATE.choice(list(EmpDist.PRIMARY_SYMB))
+            return EmpDist.ALL_SUBS[Art.RANDINT(0, 4)]
         else:
-            return Art.RANDOM_STATE.choice(list(set(EmpDist.PRIMARY_SYMB) - set(excl)))
-
-    @staticmethod
-    def random_unif():
-        """
-        :return: Uniformly random value between 0 and 1.
-        """
-        return Art.RANDOM_STATE.uniform()
+            return EmpDist.KO_SUBS_LOOKUP[excl][Art.RANDINT(0, 3)]
 
 
 if __name__ == '__main__':
@@ -799,10 +808,10 @@ if __name__ == '__main__':
 
                 # pick a random position on the chromosome, but we're lazy and don't
                 # handle the edge case of crossing the origin
-                pos = Art.random_int(0, len(ref_seq)-ins_len)
+                pos = Art.RANDINT(0, len(ref_seq)-ins_len)
 
                 # get next read and quals
-                pair = art.next_pair_indel_seq(list(ref_seq[pos : pos + ins_len]))
+                pair = art.next_pair_indel_seq(list(ref_seq[pos: pos + ins_len]))
 
                 # create file records
                 SeqIO.write(pair['fwd'].read_record(SeqRead.read_id(input_record.id, n)), r1_h, 'fastq')
