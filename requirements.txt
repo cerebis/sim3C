@@ -18,3 +18,4 @@ python-louvain
 PyYaml
 scipy
 tqdm
+numexpr
