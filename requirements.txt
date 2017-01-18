@@ -18,4 +18,3 @@ python-louvain
 PyYaml
 scipy
 tqdm
-
