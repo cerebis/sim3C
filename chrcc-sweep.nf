@@ -273,7 +273,7 @@ process CCC_Reads {
     set key, file(comm_seq), file(comm_prof), num_3c from ccc_in
 
     output:
-    set key, file("${key}.ccc.fa.gz") into ccc_out
+    set key, file("${key}.ccc.fq.gz") into ccc_out
 
     script:
     opts = ms.options['ccc']
@@ -282,16 +282,16 @@ process CCC_Reads {
         echo "sim3C.py -C gzip -m ${opts['method']} -r ${key['seed']} -n $num_3c -l ${opts['read_len']} -e ${opts['enzyme']} \
             --insert-mean ${opts['insert_mean']} --insert-sd ${opts['insert_sd']} --insert-max ${opts['insert_max']} \
             --machine-profile ${opts['machine_profile']} --profile $comm_prof $comm_seq \
-            ${key}.ccc.fa.gz" > ${key}.ccc.fa.gz
+            ${key}.ccc.fq.gz" > ${key}.ccc.fq.gz
         """
     }
     else {
         """
         sim3C.py -C gzip -m ${opts['method']} -r ${key['seed']} -n $num_3c -l ${opts['read_len']} -e ${opts['enzyme']} \
             --insert-mean ${opts['insert_mean']} --insert-sd ${opts['insert_sd']} --insert-max ${opts['insert_max']} \
-            --machine-profile ${opts['machine_profile']} --profile $comm_prof $comm_seq ${key}.ccc.fa.gz
+            --machine-profile ${opts['machine_profile']} --profile $comm_prof $comm_seq ${key}.ccc.fq.gz
 
-        wait_on_openfile.sh ${key}.ccc.fa.gz
+        wait_on_openfile.sh ${key}.ccc.fq.gz
         """
     }
 }
