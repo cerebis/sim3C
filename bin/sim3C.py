@@ -1325,6 +1325,10 @@ if __name__ == '__main__':
     #   Note: currently, all sequences for a single taxon are
     #   treated equally.
     #
+    if not args.profile_in and not args.dist:
+        print 'An abundance profile must be supplied either as a file or procedurally'
+        sys.exit(1)
+
     profile = None
     if args.dist:
         # generate a procedural profile.
