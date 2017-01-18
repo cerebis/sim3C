@@ -105,6 +105,13 @@ class ChromAbundance:
         except ValueError:
             raise ValueError('copy_number expected be an integer')
 
+    def effective_abundance(self):
+        """
+        Product of cellular abundance and this chromosome's copy-number.
+        :return: abundance * copy_number
+        """
+        return self.abundance * self.copy_number
+
     @property
     def long_name(self):
         return '{0}-{1}'.format(self.cell, self.name)

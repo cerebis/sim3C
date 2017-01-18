@@ -102,7 +102,7 @@ if __name__ == '__main__':
         for i, chr_abn in enumerate(profile.values(), start=1):
             coverage_file.write('{0}\t{1}\t{2}\t{3}\t{4}\n'.format(
                 n + 1, i, chr_abn.name, chr_abn.cell,
-                chr_abn.abundance * chr_abn.copy_number * args.max_coverage))
+                chr_abn.effective_abundance() * args.max_coverage))
 
         print 'Sample {0} Relative Abundances:'.format(n)
         profile.write_table(sys.stdout)
@@ -125,7 +125,7 @@ if __name__ == '__main__':
             # iteratively call ART for each chromosome in profile, accumulate the results
             for chr_abn in profile:
 
-                coverage = chr_abn.val * args.max_coverage
+                coverage = chr_abn.effective_abundance() * args.max_coverage
                 print '\tRequesting {0:.4f} coverage for {1}'.format(coverage, chr_abn.name)
 
                 # iteration target for ART
