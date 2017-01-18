@@ -17,3 +17,4 @@ pandas
 python-louvain
 PyYaml
 scipy
+tqdm
