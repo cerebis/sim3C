@@ -93,6 +93,8 @@ The workflows depend on the following Python modules, which must be installed pr
 * pysam
 * PyYaml
 * scipy
+* tqdm
+* numexpr
 
 Some of these dependencies can be installed using distributional package manager, but not all will be found.
 
