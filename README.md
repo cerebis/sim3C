@@ -24,7 +24,7 @@ Meta-Sweeper
     - [Configuration file](#configuration-file-example)
     - [Output files](#output-file-naming)
 7. [__Implemented Workflows__](#implemented-workflows)
-    - [Metagenomic HiC](#1-metagenomic-hic)
+    - [Metagenomic Chromosome Conformation Capture](#1-metagenomic-chromosome-conformation-capture)
     - [Time-series deconvolution](#2-time-series-deconvolution)
 8. [__Included Tools__](#included-tools)
     - [Read simulation](#read-simulation)
@@ -164,15 +164,15 @@ nextflow run [options] <workflow>
 
 For instance, running Metagenomic-Hic stage 1 can be like so:
 ```bash
-nextflow run hic-sweep.nf
+nextflow run chrcc-sweep.nf
 ```
 
 or even more simply, by treating any workflows as an executable:
 ```bash
-./hic-sweep.nf
+./chrcc-sweep.nf
 ```
 
-It is worth mentioning here that not all of our workflow scripts below are completely independent. For instance, Metagenomic-HiC is broken into three stages, with the second and third stages depending on the results of the previous stage. Therefore users must begin with stage 1 in this case.  
+It is worth mentioning here that not all of our workflow scripts below are completely independent. For instance, Metagenomic Chromosome Conformation Capture is broken into three stages, with the second and third stages depending on the results of the previous stage. Therefore users must begin with stage 1 in this case.  
 
 **Note:** the nature of mixing concurrency and potentially resource hungry processes (such as genome assembly) can mean that a simple local execution strategy may result in resource starvation and subsequently premature program termination. It is recommended, in the long run, that users make use of a [Nextflow supported distributed resource manager (DRM)](https://www.nextflow.io/docs/latest/executor.html) such as SGE, SLURM, etc. 
 
@@ -253,12 +253,12 @@ profiles {
 
 __Submit to SGE queue manager__
 ```bash
-./hic-sweep.nf -profile sge
+./chrcc-sweep.nf -profile sge
 ```
 
 __Submit to a PBS queue manager__
 ```bash
-./hic-sweep.nf -profile pbs
+./chrcc-sweep.nf -profile pbs
 ```
 
 ### Trouble Shooting
@@ -334,7 +334,7 @@ How parameters vary in a sweep are defined in the [configuration file](#configur
 
 ### Configuration file example
 
-Taken from Metagenomic-HiC workflow, the following is an example of a sweep configuration file in YAML syntax.
+Taken from Metagenomic Chromosome Conformation Capture workflow, the following is an example of a sweep configuration file in YAML syntax.
 
 ```yaml
 variables:
@@ -373,7 +373,7 @@ variables:
   # WGS sequencing depth, measured in times coverage
   xfold: [1, 5, 10]
   # Level 4
-  # The number of HiC read-pairs to generate 
+  # The number of CCC read-pairs to generate 
   num_3c: [50000, 100000, 1000000]
 
 options:
