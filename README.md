@@ -50,7 +50,7 @@ Prerequisites
 
 - __Python 2.7__
 - __Java SE 8+__
-  - due to Groovy's use of java.util.function.BiFunction
+  - Method calls by Groovy and MetaSweeper.groovy
 - __Linux x86-64 runtime environment__ 
   - supplied external binary tools
 - __GCC__
@@ -374,7 +374,7 @@ variables:
   xfold: [1, 5, 10]
   # Level 4
   # The number of HiC read-pairs to generate 
-  n3c: [50000, 100000, 1000000]
+  num_3c: [50000, 100000, 1000000]
 
 options:
   # How many samples. For most workflows, this is set to 1.
@@ -388,12 +388,18 @@ options:
   # WGS sequencing.
   wgs:
     read_len: 150
-    ins_len: 450
-    ins_std: 100
+    insert_mean: 450
+    insert_sd: 100    
   # 3C/HiC sequencing 
-  n3c:
-    inter_prob: 0.9
+  ccc:
+    method: hic
+    enzyme: NlaIII
+    insert_mean: 500
+    insert_sd: 100
+    insert_max: 1000
     read_len: 150
+    machine_profile: EmpMiSeq250
+    create_cids: true
   # The output directory
   output: out
 ```
@@ -431,9 +437,11 @@ In an effort to highlight the utility of Meta-Sweeper, we have implemented three
 
 We encourage users to modify these examples for their own purposes.
 
-### 1. Metagenomic-HiC
+### 1. Metagenomic Chromosome Conformation Capture
 
 This topic was our original motivation for creating Meta-Sweeper. The work culminated in the publication [**Deconvoluting simulated metagenomes: the performance of hard- and soft- clustering algorithms applied to metagenomic chromosome conformation capture (3C)**](https://doi.org/10.7717/peerj.2676), where Meta-Sweeper represents a refinement of the methods employed in that work, allowing for its straightforward reproduction.
+
+An added flexibility within this workflow is the ability to choose between the simulation of HiC or meta3C library preparation protocols. The most significant difference between the methods is that HiC employs a biotin affinity pull-down to greatly enrich for ligation products, while meta3C makes no attempt to do so. The outcome is that reads sequenced from a meta3C library will contain many conventional whole-genome shotgun (WGS) reads (>95%). Therefore, when simulating a meta3C workflow, we recommend users increase the requested sequencing yield (Eg. 10 * num_3c). At present, when running a meta3C simulation, the conventional purely WGS read-set is still created. In many real experiments, users might elect to produce only a single "meta3C enchanced" read-set, passing it to assembly as a plain WGS read-set. 
 
 The sweep is varied over five levels:
 
@@ -441,15 +449,15 @@ The sweep is varied over five levels:
 2. Community structure
 3. Community divergence (*α<sub>BL</sub>*)
 4. WGS coverage (xfold)
-5. HiC depth (n3c)
+5. HiC ligation products (num_3c)
 
-__Sweep file:__ *hic.yaml*
+__Sweep file:__ *chrcc.yaml*
 
 The complete workflow has been broken into three stages, which we feel are often of separate interest. 
 
 #### Stage 1: Data Generation 
     
-+ __Script:__ *hic-sweep.nf*
++ __Script:__ *chrcc-sweep.nf*
 
     This first stage is responsible for the creation of communities, WGS and HiC read simulation, metagenome assembly and read mapping. The results from this stage are copied to the output folder [default: out]. How each each parameter should vary within the sweep can be adjusted in the configuration file. We would recommend users consider storage and CPU requirements prior to expanding the size of the sweep.
     
@@ -457,13 +465,13 @@ The complete workflow has been broken into three stages, which we feel are often
     
 #### Stage 2: Clustering
 
-+ __Script:__ *hic-cluster.nf*
++ __Script:__ *chrcc-cluster.nf*
 
    After stage 1 has completed, stage 2 out clustering of the 3C-contig graphs resulting from stage 1. At present, clustering is performed with the algorithms: Louvain-hard, Louvain-soft and OClustR. Afterwards, performance and quality metrics are applied. The BCubed external metric is used to assess the performance of each algorithm relative to the ground truth, while simple statistics for assembly (N50, L50) and graphs (size, order) are compiled alongside an entropic measure of graphical complexity (H<sub>L</sub>) 
 
 #### Stage 3: Aggregation
 
-+ __Script:__ *hic-aggregate.nf*
++ __Script:__ *chrcc-aggregate.nf*
 
    Acting effectively as a *reduce* function, this is the simplest stage. Here the results from potentially many permuted outcomes are collected and aggregated into a single results file *all_stats.yaml*.
    
