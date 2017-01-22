@@ -133,7 +133,7 @@ class CutSites:
             self.covers = self._covers_site_linear
         else:
             self.find_nn = self._find_nn_circular
-            self.covers = self._covers_site_cicular
+            self.covers = self._covers_site_circular
             self.shouldered = self._add_shoulders()
 
     def _add_shoulders(self):
@@ -162,7 +162,7 @@ class CutSites:
         """
         return ((self.sites > x1) & (self.sites <= x1+length)).any()
 
-    def _covers_site_cicular(self, x1, length):
+    def _covers_site_circular(self, x1, length):
         """
         Test whether a specified position and length contains any cut-sites, assuming
         a circular molecule.
@@ -224,6 +224,30 @@ class CutSites:
             else:
                 return x2
 
+    def find_first(self, pos, origin_site):
+        """
+        Beginning from pos and searching toward the origin, return the first encountered cut-site.
+        This may turn out to be the origin if there is no other intervening site.
+        :param pos: a position on the chromosome
+        :param origin_site: a valid cut-site used as the relative origin
+        :return: the first site encountered between pos and origin_site
+        """
+        if pos > self.max_length:
+            OutOfBoundsException(pos, self.max_length)
+
+        cs = self.sites
+        if pos > origin_site:
+            # the position begins after the origin
+            ix = np.searchsorted(cs, pos, side='right')
+            if ix == 0:
+                return cs[ix]
+            else:
+                return cs[ix-1]
+        else:
+            # position begins before the origin site
+            ix = np.searchsorted(cs, pos, side='left')
+            return cs[ix]
+
 
 class Replicon:
     """
@@ -234,8 +258,7 @@ class Replicon:
     # Used in insert/read creation.
     PART_DESC_FMT = '{0:d}:{1}:{2}'
 
-    def __init__(self, name, cell, cn, seq, enzyme, anti_rate, random_state,
-                 ligation_factor, digestion_factor, create_cids=True):
+    def __init__(self, name, cell, cn, seq, enzyme, anti_rate, random_state, create_cids=True):
         """
         The definition of a replicon (chromosome, plasmid, etc).
         :param name: a unique name for this replicon
@@ -245,8 +268,6 @@ class Replicon:
         :param enzyme: the enzyme used to digest this replicon as a Bio.Restriction RestrictionType
         :param anti_rate: the rate of anti-diagonal interactions
         :param random_state: a numpy RandomState object for random number generation
-        :param ligation_factor: proportion of potential pairs religated
-        :param digestion_factor: proportion of potential sites actually digested
         :param create_cids: when true, simulate chromosome-interacting-domains
         """
 
@@ -264,13 +285,9 @@ class Replicon:
         # cut-site related properties. These are pre-calculated as a simple
         # means of avoiding performance penalties with repeated calls.
         self.sites = CutSites(enzyme, seq.seq, self.random_state, linear=False)
-        self.ligation_factor = ligation_factor
-        self.digestion_factor = digestion_factor
-        self.efficiency = ligation_factor * digestion_factor
         self.length = len(self.seq)
         self.num_sites = self.sites.size
         self.site_density = self.num_sites * 1.0/self.length
-        self.effective_density = self.efficiency * self.site_density
 
         if create_cids:
             # setup for more complex simulated CID model
@@ -346,7 +363,7 @@ class Replicon:
         """
         x2 = Replicon.get_loc_3c(self.empdist, x1, self.length)
 
-        # antidiagonal
+        # anti-diagonal
         if self.uniform() < self.anti_rate:
             x2 = self.length - x2
 
@@ -377,7 +394,7 @@ class Replicon:
 
             x2 = Replicon.get_loc_3c(chosen_inv.data['empdist'], x1, chosen_inv.length())
 
-            # antidiagonal
+            # anti-diagonal
             if self.uniform() < self.anti_rate:
                 x2 = self.length - x2
 
@@ -616,8 +633,8 @@ class Community:
     of simulation parameters are exposed.
     """
 
-    def __init__(self, seq_file, profile, enzyme, random_state, anti_rate=0.2, spurious_rate=0.02, trans_rate=0.1,
-                 ligation_factor=0.1, digestion_factor=0.333, create_cids=True):
+    def __init__(self, seq_file, profile, enzyme, random_state, anti_rate=0.2, spurious_rate=0.02,
+                 trans_rate=0.1, create_cids=True):
         """
         Initialise a community.
 
@@ -628,8 +645,6 @@ class Community:
         :param random_state: a numpy random state used for random number generation
         :param spurious_rate: the rate of spurious ligation products
         :param trans_rate: the rate of inter-replicon (trans) ligation products within a cell
-        :param ligation_factor: proportion of potential pairs religated
-        :param digestion_factor: proportion of potential sites actually digested
         :param create_cids: when true, simulate chromosome-interacting-domains
         """
 
@@ -655,7 +670,7 @@ class Community:
                 raise Sim3CException('Error getting sequence {0} from fasta file'.format(ri.name))
             # community-wide replicon registry
             self._register_replicon(Replicon(ri.name, cell, ri.copy_number, rseq, enzyme, anti_rate,
-                                             random_state, ligation_factor, digestion_factor, create_cids))
+                                             random_state, create_cids))
 
         # now we're finished reading replicons, initialise the probs for each cell
         for cell in self.cell_registry.values():
@@ -813,42 +828,6 @@ class Community:
         """
         return self.uniform() < self.spurious_rate
 
-    def draw_ligation_coords(self):
-        """
-        A self contained method carrying out the steps to generate a random
-        HiC ligation product. This is composed of a 4-tuple containing
-        the replicon and genomic coordinate of each site involved in
-        the product. These may be on the same or different replicon.
-
-        :return: coords of the ligation product (r1, x1, r2, x2)
-        """
-
-        r1, x1 = self.draw_any_by_site()
-
-        # will it be spurious ligation
-        if self.is_spurious():
-
-            r2, x2 = self.draw_any_by_site()
-
-        # will it be inter-replicon (trans) ligation
-        elif r1.parent_cell.is_trans():
-
-            r2 = r1.parent_cell.draw_other_replicon_by_sites(r1.name)
-            x2 = r2.draw_any_site()
-
-        # otherwise, it will be intra-replicon (cis) ligation
-        else:
-
-            x2 = r1.draw_constrained_site(x1)
-            r2 = r1
-
-        # randomly permute source/destination
-        if self.uniform() < 0.5:
-            x1, x2 = x2, x1
-            r1, r2 = r2, r1
-
-        return r1, x1, r2, x2
-
 
 class ReadGenerator:
     """
@@ -866,7 +845,7 @@ class ReadGenerator:
                  insert_mean=500, insert_sd=100, insert_min=100, insert_max=None):
         """
         Initialise a read generator.
-        :param method: The two library preparation methods are: '3c' or 'hic'.
+        :param method: The two library preparation methods are: 'meta3c' or 'hic'.
         :param enzyme: The employed restriction enzyme
         :param seed: a random seed - required to initial Art.
         :param random_state: additionally the random state object
@@ -887,7 +866,7 @@ class ReadGenerator:
         self.prefix = prefix
         self.seq_id_fmt = prefix + ':{seed}:{mode}:1:1:1:{idx} {r1r2}:Y:18:1'
         self.wgs_desc_fmt = 'WGS {repl.name}:{x1}..{x2}:{dir}'
-        self._3c_desc_fmt = '3C {repl1.name}:{x1} {repl2.name}:{x2}'
+        self._3c_desc_fmt = method.upper() + ' {repl1.name}:{x1} {repl2.name}:{x2}'
 
         assert insert_min > 50, 'Minimum allowable insert size is 50bp'
         assert insert_min < insert_mean, 'Minimum insert size must be less than expected mean'
@@ -923,7 +902,7 @@ class ReadGenerator:
         try:
             method_switcher = {
                 'hic': self._part_joiner_hic,
-                '3c': self._part_joiner_3c
+                'meta3c': self._part_joiner_meta3c
             }
             self._part_joiner = method_switcher[self.method.lower()]
         except Exception:
@@ -942,7 +921,7 @@ class ReadGenerator:
             msg += ', [no max limit]'
         return msg
 
-    def _part_joiner_3c(self, a, b):
+    def _part_joiner_meta3c(self, a, b):
         """
         Join two fragments end to end without any site duplication. The new
         fragment will begin at a_0 and end at b_max. Used when no end fills are
@@ -968,12 +947,12 @@ class ReadGenerator:
 
     def draw_insert(self):
         """
-        Draw an insert length and direction. Since this is normally distributed
+        Draw an insert length, midpoint and direction. Since this is normally distributed
         even with reasonable mean and stddev, it is possible to return lengths
         less than zero. These cases are handled by redrawing until we get a length
         greater than the specified minimum.
         length.
-        :return: length and direction tuple. Eg. (100, True)
+        :return: length, midpoint and direction tuple. Eg. (100, 56, True)
         """
         length = int(self.normal(self.insert_mean, self.insert_sd))
         if length < self.insert_min:
@@ -982,24 +961,26 @@ class ReadGenerator:
         elif self.insert_max and length > self.insert_max:
             self.too_long += 1
             length = self.insert_max
-        is_fwd = self.uniform() >= 0.5
-        return length, is_fwd
+        midpoint = self.randint(0, length)
+        is_fwd = self.uniform() < 0.5
+        return length, midpoint, is_fwd
 
-    def make_wgs_readpair(self, repl, x1):
+    def make_wgs_readpair(self, repl, x1, ins_len, is_fwd):
         """
         Create a fwd/rev read-pair simulating WGS sequencing.
         :param repl: replicon from which to extract this read-pair
         :param x1: the initial coordinate along the replicon.
+        :param ins_len: the insert length
+        :param is_fwd: will the insert be off the fwd strand
         :return: a read-pair dict
         """
-        length, is_fwd = self.draw_insert()
-        frag = repl.subseq(x1, length, is_fwd)
+        frag = repl.subseq(x1, ins_len, is_fwd)
         pair = self.next_pair(str(frag.seq))
         pair['mode'] = 'WGS'
-        pair['desc'] = self.wgs_desc_fmt.format(repl=repl, x1=x1, x2=x1+length, dir='F' if is_fwd else 'R')
+        pair['desc'] = self.wgs_desc_fmt.format(repl=repl, x1=x1, x2=x1+ins_len, dir='F' if is_fwd else 'R')
         return pair
 
-    def make_ligation_readpair(self, repl1, x1, repl2, x2):
+    def make_ligation_readpair(self, repl1, x1, repl2, x2, ins_len, ins_junc):
         """
         Create a fwd/rev read-pair simulating a ligation product (Eg. the outcome of
         HiC or meta3C library prep). As repl1 and repl2 can be the same, these ligation
@@ -1008,13 +989,12 @@ class ReadGenerator:
         :param x1:  the location along repl1
         :param repl2: the second replicon
         :param x2: the location along repl2
+        :param ins_len: insert length
+        :param ins_junc: junction point on insert
         :return: a read-pair dict
         """
-        length, is_fwd = self.draw_insert()
-        midpoint = self.randint(0, length)
-
-        part_a = repl1.subseq(x1 - midpoint, midpoint)
-        part_b = repl2.subseq(x2, length - midpoint)
+        part_a = repl1.subseq(x1 - ins_junc, ins_junc)
+        part_b = repl2.subseq(x2, ins_len - ins_junc)
 
         pair = self.next_pair(str(self._part_joiner(part_a, part_b).seq))
         pair['mode'] = '3C'
@@ -1053,7 +1033,7 @@ class SequencingStrategy:
                  method, read_length, prefix, machine_profile,
                  insert_mean=400, insert_sd=50, insert_min=50, insert_max=None,
                  anti_rate=0.25, spurious_rate=0.02, trans_rate=0.1,
-                 ligation_factor=0.333, digestion_factor=0.1,
+                 ligation_factor=0.333, digestion_factor=0.25,
                  ins_rate=9.e-5, del_rate=1.1e-4,
                  create_cids=True, simple_reads=True):
         """
@@ -1094,6 +1074,7 @@ class SequencingStrategy:
         self.insert_max = insert_max
         self.ligation_factor = ligation_factor
         self.digestion_factor = digestion_factor
+        self.efficiency = ligation_factor * digestion_factor
 
         # initialise the random state for the simulation
         self.random_state = np.random.RandomState(seed)
@@ -1104,7 +1085,6 @@ class SequencingStrategy:
         # initialise the community for the reference data
         self.community = Community(seq_filename, self.profile, self.enzyme, self.random_state, anti_rate=anti_rate,
                                    spurious_rate=spurious_rate, trans_rate=trans_rate,
-                                   ligation_factor=ligation_factor, digestion_factor=digestion_factor,
                                    create_cids=create_cids)
 
         # preparate the read simulator for output
@@ -1119,7 +1099,7 @@ class SequencingStrategy:
         try:
             strategy_switcher = {
                 'hic': self._simulate_hic,
-                '3c': self._simulate_3c
+                'meta3c': self._simulate_meta3c
             }
             self._selected_strat = self.Strategy(method, strategy_switcher[method.lower()])
         except Exception:
@@ -1139,7 +1119,7 @@ class SequencingStrategy:
         print 'Read counts: WGS reads = {wgs_count}, Ligation products = {lig_count}'.format(**info)
         print '{0}'.format(self.read_generator.get_report())
 
-    def _simulate_3c(self, ostream):
+    def _simulate_meta3c(self, ostream):
         """
         A strategy to simulate the sequencing of a 3C (meta3C) library.
 
@@ -1152,6 +1132,7 @@ class SequencingStrategy:
         comm = self.community
         uniform = self.random_state.uniform
         read_gen = self.read_generator
+        efficiency = self.efficiency
 
         n_wgs = 0
         n_3c = 0
@@ -1160,32 +1141,32 @@ class SequencingStrategy:
 
             # pick an replicon, position and insert size
             r1, x1 = comm.draw_any_by_extent()
-            ins_len, ins_dir = read_gen.draw_insert()
+            ins_len, midpoint, is_fwd = read_gen.draw_insert()
 
-            # sufficiency test of insert length against the selected
-            # replicon's effective site density.
-            if uniform() < ins_len * r1.effective_density:
-                # this will now be a ligation product
+            if uniform() < efficiency and r1.covers_site(x1, midpoint):
+
                 n_3c += 1
 
-                # converting to nearest site
+                # move x1 to the nearest actual site
                 x1 = r1.sites.find_nn(x1)
 
-                # will it be spurious ligation
+                # is it spurious ligation
                 if comm.is_spurious():
 
                     r2, x2 = comm.draw_any_by_site()
 
-                # will it be inter-replicon (trans) ligation
+                # is it an inter-replicon (trans) ligation
                 elif r1.parent_cell.is_trans():
 
                     r2 = r1.parent_cell.draw_other_replicon_by_sites(r1.name)
                     x2 = r2.draw_any_site()
 
-                # otherwise, it will be intra-replicon (cis) ligation
+                # otherwise an intra-replicon (cis) ligation
                 else:
-
+                    # find the first intervening site between
+                    # random constrained position x2 and site x1.
                     x2 = r1.draw_constrained_site(x1)
+                    x2 = r1.sites.find_first(x2, x1)
                     r2 = r1
 
                 # randomly permute source/destination
@@ -1193,17 +1174,20 @@ class SequencingStrategy:
                     x1, x2 = x2, x1
                     r1, r2 = r2, r1
 
-                pair = read_gen.make_ligation_readpair(r1, x1, r2, x2)
+                pair = read_gen.make_ligation_readpair(r1, x1, r2, x2, ins_len, midpoint)
 
+            # otherwise WGS
             else:
                 n_wgs += 1
-                # conventional wgs read-pair on replicon r1 at loc x1
-                # with coordinates, make wgs read-pair
-                pair = read_gen.make_wgs_readpair(r1, x1)
+                # take the already drawn coordinates
+                pair = read_gen.make_wgs_readpair(r1, x1, ins_len, is_fwd)
 
             read_gen.write_readpair(ostream, pair, n)
 
-        return {'wgs_count': n_wgs, 'lig_count': n_3c}
+        assert self.number_pairs - n_wgs == n_3c, 'Error: WGS and meta3C pairs did not sum to ' \
+                                                  '{0} was did not add'.format(self.number_pairs)
+
+        return {'wgs_count': n_wgs, 'lig_count': self.number_pairs - n_wgs}
 
     def _simulate_hic(self, ostream):
         """
@@ -1216,30 +1200,57 @@ class SequencingStrategy:
         read_gen = self.read_generator
 
         n_wgs = 0
-        n_hic = 0
+        n_3c = 0
 
         for n in tqdm.tqdm(xrange(1, self.number_pairs+1)):
 
-            # is WGS pair?
-            if uniform() < 0.1:
-                n_wgs += 1
-                # conventional wgs read-pair on replicon r1 at loc x1
-                r1, x1 = comm.draw_any_by_extent()
-                # with coordinates, make wgs read-pair
-                pair = read_gen.make_wgs_readpair(r1, x1)
+            ins_len, midpoint, is_fwd = read_gen.draw_insert()
 
-            # otherwise ligation product
-            else:
-                n_hic += 1
-                # ligation coords
-                r1, x1, r2, x2 = comm.draw_ligation_coords()
+            # is HIC pair?
+            if uniform() >= 0.1:
+
+                n_3c += 1
+
+                # draw the first replicon and site
+                r1, x1 = comm.draw_any_by_site()
+
+                # is it spurious ligation
+                if comm.is_spurious():
+
+                    r2, x2 = comm.draw_any_by_site()
+
+                # is it an inter-replicon (trans) ligation
+                elif r1.parent_cell.is_trans():
+
+                    r2 = r1.parent_cell.draw_other_replicon_by_sites(r1.name)
+                    x2 = r2.draw_any_site()
+
+                # otherwise an intra-replicon (cis) ligation
+                else:
+
+                    x2 = r1.draw_constrained_site(x1)
+                    r2 = r1
+
+                # randomly permute source/destination
+                if uniform() < 0.5:
+                    x1, x2 = x2, x1
+                    r1, r2 = r2, r1
 
                 # with coordinates, make hic read-pair
-                pair = read_gen.make_ligation_readpair(r1, x1, r2, x2)
+                pair = read_gen.make_ligation_readpair(r1, x1, r2, x2, ins_len, midpoint)
+
+            # otherwise WGS
+            else:
+                n_wgs += 1
+                r1, x1 = comm.draw_any_by_extent()
+                pair = read_gen.make_wgs_readpair(r1, x1, ins_len, is_fwd)
 
             read_gen.write_readpair(ostream, pair, n)
 
-        return {'wgs_count': n_wgs, 'lig_count': n_hic}
+        assert self.number_pairs - n_wgs == n_3c, 'Error: WGS and HIC pairs did not sum to ' \
+                                                  '{0} was did not add'.format(self.number_pairs)
+
+        return {'wgs_count': n_wgs, 'lig_count': n_3c}
 
 if __name__ == '__main__':
     import abundance
@@ -1260,7 +1271,7 @@ if __name__ == '__main__':
 
     parser.add_argument('-r', '--seed', metavar='INT', type=int, default=int(time.time()),
                         help="Random seed for initialising number generator")
-    parser.add_argument('-m', '--method', default='hic', choices=['hic', '3c'],
+    parser.add_argument('-m', '--method', default='hic', choices=['hic', 'meta3c'],
                         help='Library preparation method [hic]')
     parser.add_argument('-e', '--enzyme', dest='enzyme_name', default='NlaIII',
                         help='Restriction enzyme [NlaIII]')
@@ -1283,8 +1294,8 @@ if __name__ == '__main__':
                         help='Simulate chromosome interacting domains')
     parser.add_argument('--ligation-factor', metavar='FLOAT', type=float, default=0.333,
                         help='Ligation efficiency factor [0.333]')
-    parser.add_argument('--digestion-factor', metavar='FLOAT', type=float, default=0.1,
-                        help='Digestion efficiency factor [0.1]')
+    parser.add_argument('--digestion-factor', metavar='FLOAT', type=float, default=0.25,
+                        help='Digestion efficiency factor [0.25]')
     parser.add_argument('--anti-rate', metavar='FLOAT', type=float, default=0.2,
                         help='Rate of anti-diagonal fragments [0.2]')
     parser.add_argument('--trans-rate', metavar='FLOAT', type=float, default=0.1,
