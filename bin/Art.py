@@ -93,6 +93,32 @@ def get_profile(name):
     return map(lambda pi: os.path.join(MODULE_PATH, pi), ILLUMINA_PROFILES[name])
 
 
+def parse_error(quals, seq_read):
+    """
+    When analyzed, sequences are potentially modified by the simulated quality scores.
+    :return: number of modified bases.
+    """
+
+    num_seq = len(quals)
+
+    random_base = Art.random_base
+    n_symb = EmpDist.N_SYMB
+    prob_err = EmpDist.PROB_ERR
+
+    # random values to test against, this is faster than invoking
+    # the method each iteration.
+    rvals = Art.UNIFORM(size=num_seq)
+
+    for i in xrange(num_seq):
+        # if we encounter an undefined base, its quality score goes to 1.
+        if seq_read[i] == n_symb:
+            quals[i] = 1
+            continue
+        # if we draw a number less than prob_err for a base, a substitution occurs there.
+        if rvals[i] < prob_err[quals[i]]:
+            seq_read[i] = random_base(seq_read[i])
+
+
 class EmpDist:
 
     FIRST = True
@@ -296,7 +322,6 @@ class SeqRead:
         self.quals = None
         self.bpos = None
         self.indel = {}
-        self.substitution = {}
         self.del_rate = del_rate
         self.ins_rate = ins_rate
 
@@ -357,38 +382,32 @@ class SeqRead:
         """
         return self.seq_read.tostring()
 
-    def parse_error(self):
-        """
-        When analyzed, sequences are potentially modified by the simulated quality scores.
-        :return: number of modified bases.
-        """
-        assert self.quals, 'Quality scores have not been initialized for the read'
-        assert len(self.quals) == self.length(), \
-            "The number of bases is not equal to the number of quality scores!\n" \
-            "qual size: {0},  read len: {1}".format(len(self.quals), self.length())
-
-        num = 0
-        for i in xrange(len(self.quals)):
-            # if we encounter an undefined base, its quality score goes to 1.
-            if self.seq_read[i] == EmpDist.N_SYMB:
-                self.quals[i] = 1
-                continue
-
-            # if we draw a number less than prob_err for a base, a substitution occurs there.
-            if Art.UNIFORM() < EmpDist.PROB_ERR[self.quals[i]]:
-                sub_ch = Art.random_base(self.seq_read[i])
-                self.seq_read[i] = sub_ch
-                self.substitution[i] = sub_ch
-                num += 1
-
-        return num
+    # def parse_error(self):
+    #     """
+    #     When analyzed, sequences are potentially modified by the simulated quality scores.
+    #     :return: number of modified bases.
+    #     """
+    #     assert self.quals, 'Quality scores have not been initialized for the read'
+    #     assert len(self.quals) == self.length(), \
+    #         "The number of bases is not equal to the number of quality scores!\n" \
+    #         "qual size: {0},  read len: {1}".format(len(self.quals), self.length())
+    #
+    #     for i in xrange(len(self.quals)):
+    #         # if we encounter an undefined base, its quality score goes to 1.
+    #         if self.seq_read[i] == EmpDist.N_SYMB:
+    #             self.quals[i] = 1
+    #             continue
+    #
+    #         # if we draw a number less than prob_err for a base, a substitution occurs there.
+    #         if Art.UNIFORM() < EmpDist.PROB_ERR[self.quals[i]]:
+    #             sub_ch = Art.random_base(self.seq_read[i])
+    #             self.seq_read[i] = sub_ch
 
     def clear(self):
         """
         Clear the working internal collections.
         """
         self.indel.clear()
-        self.substitution.clear()
         self.seq_ref[:] = 0
         self.seq_read[:] = 0
 
@@ -687,7 +706,8 @@ class Art:
         # simulated quality scores from profiles
         read.quals = self.emp_dist.get_read_qual(read.length(), read.is_plus_strand)
         # the returned quality scores can spawn sequencing errors
-        read.parse_error()
+        # read.parse_error()
+        parse_error(read.quals, read.seq_read)
 
         return read
 
@@ -719,7 +739,8 @@ class Art:
         # simulated quality scores from profiles
         read.quals = self.emp_dist.get_read_qual(read.length(), True)
         # the returned quality scores can spawn sequencing errors
-        read.parse_error()
+        # read.parse_error()
+        parse_error(read.quals, read.seq_read)
 
         return read
 
