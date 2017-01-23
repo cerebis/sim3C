@@ -398,7 +398,7 @@ process CCCMap {
         then
             bwa index $contigs
         fi
-        bwa mem -t 1 $contigs $ccc_reads | samtools view -bS - | samtools sort -l 9 - "${key}.ccc2ctg"
+        bwa mem -p -S -t 1 $contigs $ccc_reads | samtools view -bS - | samtools sort -l 9 - "${key}.ccc2ctg"
         samtools index "${key}.ccc2ctg.bam"
         samtools idxstats "${key}.ccc2ctg.bam" > "${key}.ccc2ctg.idxstats"
         samtools flagstat "${key}.ccc2ctg.bam" > "${key}.ccc2ctg.flagstat"
