@@ -1,3 +1,4 @@
+#!/usr/bin/env python
 """
 meta-sweeper - for performing parametric sweeps of simulated
 metagenomic sequencing experiments.
