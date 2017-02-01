@@ -172,7 +172,42 @@ def infer_inslen(r1, r2, ref_len):
     il = sc + r2.pos + r2.alen - r1.pos + 1
     if il < 0:
         il += ref_len
+    #if il > 1000:
+    #    print il, r1.pos, r1.alen, r2.pos, r2.alen
     return il
+
+
+def infer_from_alignments(r1_alns, r2_alns, ref_len):
+    """
+    Infer the length of an insert from all alignments of R1 and R2. This is done
+    in a brute force manner over all pairs.
+    :param r1_alns: R1 related alignments
+    :param r2_alns: R2 related alignments
+    :param ref_len: the length of the reference
+    :return: the longest possible insert length
+    """
+    midpoint = ref_len / 2
+    dist = []
+    for r1, r2 in product(r1_alns, r2_alns):
+        if r1['is_reverse']:
+            r2, r1 = r1, r2
+        sc = 0
+        if r1['pos'] == 0:
+            if r1['cigartuple'][0][0] == 4:
+                sc += r1['cigartuple'][0][1]
+        il = sc + r2['pos'] + r2['alen'] - r1['pos'] + 1
+        if il < 0:
+            il += ref_len
+
+        if il > midpoint:
+            il = ref_len - il
+
+        #if il > 1000:
+        #    print il, r1, r2
+
+        dist.append(il)
+
+    return max(dist)
 
 
 def append_xp_alignments(aln_list, xp_record):
@@ -305,6 +340,7 @@ def parse_bam(bam, ref_seq, enzyme):
         'proper': 0, }
 
     ins_len = []
+    ins_len_cs = []
 
     outh = open('tab.csv', 'w')
 
@@ -367,6 +403,8 @@ def parse_bam(bam, ref_seq, enzyme):
 
                         counts['3p_trunc'] += 1
 
+                    ins_len_cs.append(infer_from_alignments(r1_algns, r2_algns, bam.lengths[0]))
+
                 # was there both 5p and 3p termination, multiple and short alignments
                 if (r1_status['5p'] and r1_status['3p']) or (r2_status['5p'] and r2_status['3p']):
 
@@ -384,6 +422,8 @@ def parse_bam(bam, ref_seq, enzyme):
 
                             counts['readthru_conf'] += 1
 
+                    ins_len_cs.append(infer_from_alignments(r1_algns, r2_algns, bam.lengths[0]))
+
             else:
                 counts['nosite'] += 1
 
@@ -393,7 +433,7 @@ def parse_bam(bam, ref_seq, enzyme):
 
     print counts
 
-    return ins_len
+    return ins_len, ins_len_cs
 
 if __name__ == '__main__':
 
@@ -413,11 +453,18 @@ if __name__ == '__main__':
 
     with pysam.AlignmentFile(args.bam, 'rb') as bam:
         enzyme = get_enzyme_instance(args.enzyme)
-        lengths = parse_bam(bam, ref_seq, enzyme)
+        len_data = parse_bam(bam, ref_seq, enzyme)
 
     if args.plot:
         import matplotlib.pyplot as plt
         import numpy as np
-        plt.hist(lengths, bins=(np.arange(1, 41) * 25).tolist() + [np.inf])
+
+        print np.histogram(len_data[0])
+        plt.hist(len_data[0], bins=(np.arange(1, 41) * 25).tolist() + [np.inf])
+        plt.xlim(0, 1000)
+        plt.show()
+
+        print np.histogram(len_data[1])
+        plt.hist(len_data[1], bins=(np.arange(1, 41) * 25).tolist() + [np.inf])
         plt.xlim(0, 1000)
         plt.show()
