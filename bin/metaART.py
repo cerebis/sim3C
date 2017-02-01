@@ -96,12 +96,13 @@ if __name__ == '__main__':
         # generate abundance profile from global seeded random state -- if not using a static table
         if not args.profile:
             seq_names = [si for si in seq_index]
-            profile = abundance.generate_profile(RANDOM_STATE, seq_names, mode=args.dist,
+            profile = abundance.generate_profile(args.seed, seq_names, mode=args.dist,
                                                  lognorm_mu=args.lognorm_mu, lognorm_sigma=args.lognorm_sigma)
 
         for i, chr_abn in enumerate(profile.values(), start=1):
             coverage_file.write('{0}\t{1}\t{2}\t{3}\t{4}\n'.format(
-                n + 1, i, chr_abn.name, chr_abn.cell, chr_abn.val * args.max_coverage))
+                n + 1, i, chr_abn.name, chr_abn.cell,
+                chr_abn.effective_abundance() * args.max_coverage))
 
         print 'Sample {0} Relative Abundances:'.format(n)
         profile.write_table(sys.stdout)
@@ -112,7 +113,6 @@ if __name__ == '__main__':
         else:
             r1_final = '{0}.r1.fq'.format(base_name)
             r2_final = '{0}.r2.fq'.format(base_name)
-
 
         r1_tmp = os.path.join(args.output_dir, '{0}1.fq'.format(TMP_OUTPUT, n+1))
         r2_tmp = os.path.join(args.output_dir, '{0}2.fq'.format(TMP_OUTPUT, n+1))
@@ -125,7 +125,7 @@ if __name__ == '__main__':
             # iteratively call ART for each chromosome in profile, accumulate the results
             for chr_abn in profile:
 
-                coverage = chr_abn.val * args.max_coverage
+                coverage = chr_abn.effective_abundance() * args.max_coverage
                 print '\tRequesting {0:.4f} coverage for {1}'.format(coverage, chr_abn.name)
 
                 # iteration target for ART

@@ -370,7 +370,7 @@ class TruthTable(object):
             _s[k] = set(clz)
         return _s
 
-    def hard(self, universal=False):
+    def hard(self, universal=False, use_set=False):
         """
         Convert TT to a plain dictionary with the single most significant classification only.
         In the case of a tie, no effort is made to be uniformly random in the case of a tie and
@@ -384,7 +384,7 @@ class TruthTable(object):
             pc = self.asgn_dict[_k].get_primary_class()
             if universal:
                 pc = self.label_map[pc]
-            _s[_k] = pc
+            _s[_k] = pc if not use_set else set([pc])
         return _s
 
     def get(self, key):

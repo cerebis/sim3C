@@ -19,43 +19,34 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """
 import argparse
 
-import numpy as np
 from Bio import SeqIO
 
 import abundance
 
-if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='Generate random abundance profiles for a given multifasta file')
-    parser.add_argument('--seed', type=int, metavar='INT', help='Random seed')
-    parser.add_argument('--dist', metavar='DISTNAME', choices=['equal', 'uniform', 'lognormal'], required=True,
-                        help='Abundance profile distribution [equal, uniform, lognormal]')
-    parser.add_argument('--lognorm-mu', metavar='FLOAT', type=float, default='1', required=False,
-                        help='Log-normal relative abundance mu parameter')
-    parser.add_argument('--lognorm-sigma', metavar='FLOAT', type=float, default='1', required=False,
-                        help='Log-normal relative abundance sigma parameter')
-    parser.add_argument('input', metavar='FASTA', help='Input fasta sequence')
-    parser.add_argument('output', metavar='TABLE', help='Output file name')
-    args = parser.parse_args()
+parser = argparse.ArgumentParser(description='Generate random abundance profiles for a given multifasta file')
+parser.add_argument('--seed', type=int, metavar='INT', required=True, help='Random seed')
+parser.add_argument('--dist', metavar='DISTNAME', choices=['equal', 'uniform', 'lognormal'], required=True,
+                    help='Abundance profile distribution [equal, uniform, lognormal]')
+parser.add_argument('--lognorm-mu', metavar='FLOAT', type=float, default='1', required=False,
+                    help='Log-normal relative abundance mu parameter')
+parser.add_argument('--lognorm-sigma', metavar='FLOAT', type=float, default='1', required=False,
+                    help='Log-normal relative abundance sigma parameter')
+parser.add_argument('input', metavar='FASTA', help='Input fasta sequence')
+parser.add_argument('output', metavar='TABLE', help='Output file name')
+args = parser.parse_args()
 
-    RANDOM_STATE = None
-    if args.dist != 'equal' and not args.seed:
-        print 'Warning: not specifying a seed makes repeatability difficult!'
-        RANDOM_STATE = np.random.RandomState()
-    else:
-        RANDOM_STATE = np.random.RandomState(args.seed)
+seq_index = None
+try:
+    seq_index = SeqIO.index(args.input, 'fasta')
+    if len(seq_index) <= 0:
+        raise IOError('Input file contained no sequences')
 
-    seq_index = None
-    try:
-        seq_index = SeqIO.index(args.input, 'fasta')
-        if len(seq_index) <= 0:
-            raise IOError('Input file contained no sequences')
+    profile = abundance.generate_profile(args.seed, list(seq_index), mode=args.dist,
+                                         lognorm_mu=args.lognorm_mu, lognorm_sigma=args.lognorm_sigma)
 
-        profile = abundance.generate_profile(RANDOM_STATE, list(seq_index), mode=args.dist,
-                                             lognorm_mu=args.lognorm_mu, lognorm_sigma=args.lognorm_sigma)
+    with open(args.output, 'w') as out_h:
+        profile.write_table(out_h)
 
-        with open(args.output, 'w') as out_h:
-            profile.write_table(out_h)
-
-    finally:
-        if seq_index:
-            seq_index.close()
+finally:
+    if seq_index:
+        seq_index.close()

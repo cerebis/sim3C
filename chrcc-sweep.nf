@@ -1,18 +1,18 @@
 #!/usr/bin/env nextflow
 /**
- * HiC data generation workflow
+ * Chromosome conforation capture (HiC/3C) data generation workflow
  *
- * Using a parametric sweep defined in hic.yaml, generate a set of simulated sequencing data.
+ * Using a parametric sweep defined in chrcc.yaml, generate a set of simulated sequencing data.
  *
- * By defining the variable values in hic.yaml, a sweep will be performed as a permutation of
+ * By defining the variable values in chrcc.yaml, a sweep will be performed as a permutation of
  * all variables. The results will be copied to the defined output folder (default: out).
  *
- * This folder is then used as input for subsequent workflows: hic-cluster.nf and hic-aggregate.nf
+ * This folder is then used as input for subsequent workflows: chrcc-cluster.nf and chrcc-aggregate.nf
  *
  * Please note that the depth of the parametric sweep is such that choosing a wide range of values
  * at multiple levels can result in a very large final set and long computation time.
  *
- * Usage: hic-sweep.nf [--debug]
+ * Usage: chrcc-sweep.nf [--debug]
  */
 /*
  * meta-sweeper - for performing parametric sweeps of simulated
@@ -35,7 +35,7 @@
 
 import MetaSweeper
 
-MetaSweeper ms = MetaSweeper.fromFile(new File('hic.yaml'))
+MetaSweeper ms = MetaSweeper.fromFile(new File('chrcc.yaml'))
 
 //
 // Generate phylogenetic trees for each clade within each community
@@ -228,23 +228,24 @@ process WGS_Reads {
     set key, file("${key}.wgs.r1.fq.gz"), file("${key}.wgs.r2.fq.gz"), file(comm_seq) into wgs_out
 
     script:
+    opts = ms.options['wgs']
     if (params.debug) {
         """
         echo "metaART.py -C gzip --profile $comm_prof -z 1 -M $xfold -S ${key['seed']} \
-                -s ${ms.options['wgs']['ins_std']} -m ${ms.options['wgs']['ins_len']} \
-                -l ${ms.options['wgs']['read_len']} -n ${key}.wgs $comm_seq ." > ${key}.wgs.r1.fq.gz
+                -s ${opts['insert_sd']} -m ${opts['insert_mean']} \
+                -l ${opts['read_len']} -n ${key}.wgs $comm_seq ." > ${key}.wgs.r1.fq.gz
 
         echo "metaART.py -C gzip --profile $comm_prof -z 1 -M $xfold -S ${key['seed']} \
-                -s ${ms.options['wgs']['ins_std']} -m ${ms.options['wgs']['ins_len']} \
-                -l ${ms.options['wgs']['read_len']} -n ${key}.wgs $comm_seq ." > ${key}.wgs.r2.fq.gz
+                -s ${opts['insert_sd']} -m ${opts['insert_mean']} \
+                -l ${opts['read_len']} -n ${key}.wgs $comm_seq ." > ${key}.wgs.r2.fq.gz
         """
     }
     else {
         """
         export PATH=\$EXT_BIN/art:\$PATH
         metaART.py -C gzip --profile $comm_prof -z 1 -M $xfold -S ${key['seed']} \
-                -s ${ms.options['wgs']['ins_std']} -m ${ms.options['wgs']['ins_len']} \
-                -l ${ms.options['wgs']['read_len']} -n "${key}.wgs" $comm_seq .
+                -s ${opts['insert_sd']} -m ${opts['insert_mean']} \
+                -l ${opts['read_len']} -n "${key}.wgs" $comm_seq .
         wait_on_openfile.sh ${key}.wgs.r1.fq.gz
         wait_on_openfile.sh ${key}.wgs.r2.fq.gz
         """
@@ -253,41 +254,44 @@ process WGS_Reads {
 
 
 //
-// Generate 3C reads for each whole community
+// Generate Conformation Capture (HiC/3C) reads for each whole community
 //
-(seq_prof, hic_in) = seq_prof.into(2)
+(seq_prof, ccc_in) = seq_prof.into(2)
 
 // Add 3C coverage to sweep
-sweep.withVariable('n3c', ms.variables.n3c)
-        .describe('HiC Read Generation')
+sweep.withVariable('num_3c', ms.variables.num_3c)
+        .describe('Chromosome Conformation Capture (HiC/3C) Read Generation')
 
 // extend the channel
-hic_in = sweep.extendChannel(hic_in, 'n3c')
+ccc_in = sweep.extendChannel(ccc_in, 'num_3c')
 
 
-process HIC_Reads {
+process CCC_Reads {
     publishDir ms.options.output, mode: 'copy', overwrite: 'true'
 
     input:
-    set key, file(comm_seq), file(comm_prof), n3c from hic_in
+    set key, file(comm_seq), file(comm_prof), num_3c from ccc_in
 
     output:
-    set key, file("${key}.hic.fa.gz") into hic_out
+    set key, file("${key}.ccc.fq.gz") into ccc_out
 
     script:
-    hic_sites = ms.options.n3c.hic_sites ? '--site-dup' : ''
+    opts = ms.options['ccc']
     if (params.debug) {
         """
-        echo "sim3C.py $hic_sites -C gzip -r ${key['seed']} -n $n3c -l ${ms.options['n3c']['read_len']} \
-            --inter-prob ${ms.options['n3c']['inter_prob']} --profile $comm_prof $comm_seq \
-            ${key}.hic.fa.gz" > ${key}.hic.fa.gz
+        echo "sim3C.py -C gzip -m ${opts['method']} -r ${key['seed']} -n $num_3c -l ${opts['read_len']} -e ${opts['enzyme']} \
+            --insert-mean ${opts['insert_mean']} --insert-sd ${opts['insert_sd']} --insert-max ${opts['insert_max']} \
+            --machine-profile ${opts['machine_profile']} --profile $comm_prof $comm_seq \
+            ${key}.ccc.fq.gz" > ${key}.ccc.fq.gz
         """
     }
     else {
         """
-        sim3C.py $hic_sites -C gzip -r ${key['seed']} -n $n3c -l ${ms.options['n3c']['read_len']} \
-            --inter-prob ${ms.options['n3c']['inter_prob']} --profile $comm_prof $comm_seq ${key}.hic.fa.gz
-        wait_on_openfile.sh ${key}.hic.fa.gz
+        sim3C.py -C gzip -m ${opts['method']} -r ${key['seed']} -n $num_3c -l ${opts['read_len']} -e ${opts['enzyme']} \
+            --insert-mean ${opts['insert_mean']} --insert-sd ${opts['insert_sd']} --insert-max ${opts['insert_max']} \
+            --machine-profile ${opts['machine_profile']} --profile $comm_prof $comm_seq ${key}.ccc.fq.gz
+
+        wait_on_openfile.sh ${key}.ccc.fq.gz
         """
     }
 }
@@ -363,28 +367,28 @@ process Truth {
 }
 
 //
-// Map HiC reads to assembled contigs
+// Map CCC reads to assembled contigs
 //
-(asm_out, hicmap_in) = asm_out.into(2)
+(asm_out, cccmap_in) = asm_out.into(2)
 
 // join 3C reads and the results of assembly
-hicmap_in = sweep.joinChannels(hicmap_in, hic_out, 2)
+cccmap_in = sweep.joinChannels(cccmap_in, ccc_out, 2)
         // select just contigs and 3C reads
         .map{ it.pick(1, -1) }
 
-process HiCMap {
+process CCCMap {
     publishDir ms.options.output, mode: 'copy', overwrite: 'true'
 
     input:
-    set key, file(contigs), file(hic_reads) from hicmap_in
+    set key, file(contigs), file(ccc_reads) from cccmap_in
 
     output:
-    set key, file("${key}.hic2ctg.bam"), file(hic_reads), file(contigs) into hicmap_out
+    set key, file("${key}.ccc2ctg.bam"), file(ccc_reads), file(contigs) into cccmap_out
 
     script:
     if (params.debug) {
         """
-        echo $key > ${key}.hic2ctg.bam
+        echo $key > ${key}.ccc2ctg.bam
         """
     }
     else {
@@ -394,10 +398,10 @@ process HiCMap {
         then
             bwa index $contigs
         fi
-        bwa mem -t 1 $contigs $hic_reads | samtools view -bS - | samtools sort -l 9 - "${key}.hic2ctg"
-        samtools index "${key}.hic2ctg.bam"
-        samtools idxstats "${key}.hic2ctg.bam" > "${key}.hic2ctg.idxstats"
-        samtools flagstat "${key}.hic2ctg.bam" > "${key}.hic2ctg.flagstat"
+        bwa mem -p -S -t 1 $contigs $ccc_reads | samtools view -bS - | samtools sort -l 9 - "${key}.ccc2ctg"
+        samtools index "${key}.ccc2ctg.bam"
+        samtools idxstats "${key}.ccc2ctg.bam" > "${key}.ccc2ctg.idxstats"
+        samtools flagstat "${key}.ccc2ctg.bam" > "${key}.ccc2ctg.flagstat"
         """
     }
 }
@@ -405,9 +409,9 @@ process HiCMap {
 //
 // Generate contig graphs
 //
-(hicmap_out, graph_in) = hicmap_out.into(2)
+(cccmap_out, graph_in) = cccmap_out.into(2)
 
-// select just hic bam, hic reads and contigs
+// select just ChrCC bam, reads and contigs
 graph_in = graph_in.map{ it.pick(1,2,3) }
 
 process Graph {
@@ -415,10 +419,10 @@ process Graph {
     publishDir ms.options.output, mode: 'copy', overwrite: 'true'
 
     input:
-    set key, file(hic2ctg), file(hic_reads), file(contigs) from graph_in
+    set key, file(ccc2ctg), file(ccc_reads), file(contigs) from graph_in
 
     output:
-    set key, file("${key}.graphml"), file(hic_reads), file(contigs) into graph_out
+    set key, file("${key}.graphml"), file(ccc_reads), file(contigs) into graph_out
 
     script:
     if (params.debug) {
@@ -428,11 +432,11 @@ process Graph {
     }
     else {
         """
-        if [ ! -e "${hic2ctg}.bai" ]
+        if [ ! -e "${ccc2ctg}.bai" ]
         then
-            samtools index $hic2ctg
+            samtools index $ccc2ctg
         fi
-        bamToEdges.py --strong 150 --preserve-zerodeg --merged $hic2ctg -o ${key}
+        bamToEdges.py --strong ${ms.options['ccc']['read_len']} --preserve-zerodeg --merged $ccc2ctg -o ${key}
         """
     }
 }

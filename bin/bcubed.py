@@ -154,7 +154,7 @@ if __name__ == '__main__':
             truth.print_tally()
 
         # convert to a plain dict representation, either soft (1:*) or hard (1:1)
-        truth = truth.hard(True) if args.hard else truth.soft(True)
+        truth = truth.hard(True, use_set=True) if args.hard else truth.soft(True)
 
         # read clustering and convert to basic soft table
         clustering = tt.read_mcl(args.pred)

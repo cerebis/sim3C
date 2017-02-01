@@ -19,6 +19,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 import bz2
 import gzip
 import json
+import io
 
 import yaml
 
@@ -41,15 +42,15 @@ def open_output(fname, mode, compress=None, gzlevel=6):
     if compress == 'bzip2':
         if not fname.endswith('.bz2'):
             fname += '.bz2'
-        fh = bz2.BZ2File(fname, mode)
+        # bz2 missing method to be wrapped by BufferedWriter. Just directly
+        # supply a buffer size
+        return bz2.BZ2File(fname, mode, buffering=65536)
     elif compress == 'gzip':
         if not fname.endswith('.gz'):
             fname += '.gz'
-        fh = gzip.GzipFile(fname, mode, compresslevel=gzlevel)
+        return io.BufferedWriter(gzip.GzipFile(fname, mode, compresslevel=gzlevel))
     else:
-        fh = open(fname, mode)
-
-    return fh
+        return io.BufferedWriter(io.FileIO(fname, mode))
 
 
 def multicopy_tostream(fname, *ostreams, **kwargs):

@@ -1,9 +1,9 @@
 #!/usr/bin/env nextflow
 /**
- * Clustering of HiC derived contig graphs (3C-contig graph)
+ * Clustering of CCC (HiC/3C) derived contig graphs (3C-contig graph)
  *
  * Input to this workflow are sourced from the output directory of the data generation
- * workflow -- hic-sweep.nf.
+ * workflow -- chrcc-sweep.nf.
  *
  * As the workflow is much simpler than the primary workflow,
  * channels here are generated in a simpler fashion than with the sweep.
@@ -12,7 +12,7 @@
  * single channel. This simplifies downstream processes which depend on
  * both results; such as external scoring metrics./
  *
- * Usage: hic-cluster.nf [--debug]
+ * Usage: chrcc-cluster.nf [--debug]
  */
 /*
  * meta-sweeper - for performing parametric sweeps of simulated
@@ -34,7 +34,7 @@
  */
 import MetaSweeper
 
-MetaSweeper ms = MetaSweeper.fromFile(new File('hic.yaml'))
+MetaSweeper ms = MetaSweeper.fromFile(new File('chrcc.yaml'))
 
 sweep = MetaSweeper.createSweep()
 

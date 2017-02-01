@@ -22,18 +22,19 @@ import numpy as np
 import re
 
 
-def generate_profile(random_state, taxa, mode, **kwargs):
+def generate_profile(seed, taxa, mode, **kwargs):
     """
     Generate a relative abundance profile.
 
-    :param random_state: numpy.RandomState object from which to draw values
+    :param seed: random state initialisation seed
     :param taxa: the number of taxa in the profile or a list of names (chrom) or tuples (chrom, cell)
     :param mode: selected mode [equal, uniform or lognormal]
     :param kwargs: additional options for mode. Log-normal requires lognorm_mu, lognorm_sigma
     :return: array of abundance values
     """
 
-    ntax = None
+    random_state = np.random.RandomState(seed)
+
     is_named = False
     if isinstance(taxa, int):
         ntax = taxa
@@ -49,7 +50,8 @@ def generate_profile(random_state, taxa, mode, **kwargs):
             taxa = tx
         is_named = True
     else:
-        raise RuntimeError('taxa parameter must be a integer or a list/tuple of names. was [{0}]'.format(taxa.__class__))
+        raise RuntimeError('taxa parameter must be a integer or '
+                           'a list/tuple of names. was [{0}]'.format(taxa.__class__))
 
     # obtain the set of values from the chosen distribution
     if mode == 'equal':
@@ -68,7 +70,7 @@ def generate_profile(random_state, taxa, mode, **kwargs):
         ordered_names = sorted(taxa)
         profile = Profile()
         for n, (chr_name, cell) in enumerate(ordered_names):
-            profile.add(chr_name, abn_val[n], cell)
+            profile.add(chr_name, abn_val[n], 1, cell)
         return profile
     else:
         # otherwise just return a plain list of values
@@ -81,22 +83,34 @@ class ChromAbundance:
     and important for supporting multi-chromosomal genome definitions in simulations of 3C read-pairs, where inter
     and intra chromsomal sampling behaviour is drastically different. In situations where a community simulation is
     entirely monochromosomal.
-
-    The abundance 'value' is expected to be a number.
     """
-    def __init__(self, name, val, cell=None):
+    def __init__(self, name, abundance, copy_number, cell=None):
         """
 
         :param name: chromsome name
-        :param val: abundance value [0,1]
+        :param abundance: cellular abundance [0..1]
+        :param copy_number: chromsome/replicon copy number
         :param cell: cell/species name. If none, takes on the name of the chromosome
         """
         self.name = name
         self.cell = name if not cell else cell
+
         try:
-            self.val = float(val)
+            self.abundance = float(abundance)
         except ValueError:
-            ValueError('Error: abundance value was not a number [{0}]'.format(val))
+            raise ValueError('abundance expected to be number')
+
+        try:
+            self.copy_number = int(copy_number)
+        except ValueError:
+            raise ValueError('copy_number expected be an integer')
+
+    def effective_abundance(self):
+        """
+        Product of cellular abundance and this chromosome's copy-number.
+        :return: abundance * copy_number
+        """
+        return self.abundance * self.copy_number
 
     @property
     def long_name(self):
@@ -135,17 +149,18 @@ class Profile(OrderedDict):
     def __init__(self, *args, **kwargs):
         super(Profile, self).__init__(*args, **kwargs)
 
-    def add(self, chr_name, val, cell=None):
+    def add(self, chr_name, abundance, copy_number, cell=None):
         """
         Convenience method adding an entry to the profile. The Abundance object
         is created internally.
         :param chr_name: chromosome name
-        :param val: abundance value
+        :param abundance: cellular abundance float: [0..1]
+        :param copy_number: chromosome/replicon copy number int:[>0]
         :param cell: cell/species name, defaults to chrom if not specified
         """
-        self.addAbundance(ChromAbundance(chr_name, val, cell))
+        self.add_abundance(ChromAbundance(chr_name, abundance, copy_number, cell))
 
-    def addAbundance(self, abn):
+    def add_abundance(self, abn):
         """
         Add an abundance object to the Profile.
         :param abn: abundance object to add
@@ -156,14 +171,14 @@ class Profile(OrderedDict):
 
     def to_table(self, sort=True):
         """
-        Table form, were rows are in the order: [chrom, cell, value]
+        Table form, were rows are in the order: [chrom, cell, abundance, copy_number]
         :param sort: sort entries before creating table
         :return: table representation of profile
         """
         t = []
         keys = sorted(self.keys()) if sort else self.keys()
         for n, k in enumerate(keys):
-            t.append([self[k].name, self[k].cell, self[k].val])
+            t.append([self[k].name, self[k].cell, self[k].abundance, self[k].copy_number])
         return t
 
     def write_table(self, hndl, sort=True):
@@ -173,23 +188,24 @@ class Profile(OrderedDict):
         :param sort: Sort by names prior to writing
         """
         t = self.to_table(sort)
-        hndl.write('#chrom\tcell\tabundance\n')
+        hndl.write('#chrom\tcell\tabundance\tcopy_number\n')
         for row in t:
-            hndl.write('{0}\t{1}\t{2}\n'.format(row[0], row[1], row[2]))
+            hndl.write('{0}\t{1}\t{2:f}\t{3:d}\n'.format(row[0], row[1], row[2], row[3]))
 
     def normalize(self):
         """
         Normalize a profile so that all abundance entries sum to 1.
         """
-        val_sum = sum([ai.val for ai in self.values()])
+        val_sum = sum([ai.abundance for ai in self.values()])
         for ai in self.values():
-            ai.val /= val_sum
+            ai.abundance /= val_sum
 
 
 def read_profile(hndl, normalise=False):
     """
     Read a profile from an input stream.
     :param hndl: the input file name or file object
+    :param normalise: when true, normalise after reading
     :return: Profile object
     """
 
@@ -208,8 +224,8 @@ def read_profile(hndl, normalise=False):
             if line.startswith('#'):
                 continue
             try:
-                chrom, cell, val = re.split('[\s,]+', line)
-                profile.add(chrom, val, cell)
+                chrom, cell, abn, cn = re.split('[\s,]+', line)
+                profile.add(chrom, abn, cn, cell)
             except:
                 raise IOError('Error: invalid table at line {0} [{0}]'.format(n, line))
             n += 1
