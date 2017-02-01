@@ -1033,7 +1033,7 @@ class SequencingStrategy:
                  method, read_length, prefix, machine_profile,
                  insert_mean=400, insert_sd=50, insert_min=50, insert_max=None,
                  anti_rate=0.25, spurious_rate=0.02, trans_rate=0.1,
-                 ligation_factor=0.333, digestion_factor=0.25,
+                 efficiency=0.02,
                  ins_rate=9.e-5, del_rate=1.1e-4,
                  create_cids=True, simple_reads=True):
         """
@@ -1055,8 +1055,7 @@ class SequencingStrategy:
         :param anti_rate: rate of anti-diagonal interactions
         :param spurious_rate: rate of spurious ligation products
         :param trans_rate: rate of inter-replicon (trans) ligation product
-        :param ligation_factor: for 3c simulation, the efficiency of religation.
-        :param digestion_factor: for 3c simulation, the efficiency of digestion (consider physical hindrances).
+        :param efficiency: for meta3c simulation, the efficiency of ligation product generation.
         :param ins_rate: rate of sequencing insert errors
         :param del_rate: rate of sequencing deletion errors
         :param create_cids: simulate 3D structure, chromosomal interacting domains (CID)
@@ -1072,9 +1071,7 @@ class SequencingStrategy:
         self.read_length = read_length
         self.insert_min = insert_min
         self.insert_max = insert_max
-        self.ligation_factor = ligation_factor
-        self.digestion_factor = digestion_factor
-        self.efficiency = ligation_factor * digestion_factor
+        self.efficiency = efficiency
 
         # initialise the random state for the simulation
         self.random_state = np.random.RandomState(seed)
@@ -1292,10 +1289,8 @@ if __name__ == '__main__':
 
     parser.add_argument('--create-cids', default=False, action='store_true',
                         help='Simulate chromosome interacting domains')
-    parser.add_argument('--ligation-factor', metavar='FLOAT', type=float, default=0.333,
-                        help='Ligation efficiency factor [0.333]')
-    parser.add_argument('--digestion-factor', metavar='FLOAT', type=float, default=0.25,
-                        help='Digestion efficiency factor [0.25]')
+    parser.add_argument('--efficiency', metavar='FLOAT', type=float, default=0.02,
+                        help='Meta3C efficiency factor [0.02]')
     parser.add_argument('--anti-rate', metavar='FLOAT', type=float, default=0.2,
                         help='Rate of anti-diagonal fragments [0.2]')
     parser.add_argument('--trans-rate', metavar='FLOAT', type=float, default=0.1,
@@ -1378,7 +1373,7 @@ if __name__ == '__main__':
     # list of CLI arguments to pass as parameters to the simulation
     kw_names = ['prefix', 'machine_profile', 'insert_mean', 'insert_sd', 'insert_min', 'insert_max',
                 'anti_rate', 'spurious_rate', 'trans_rate',
-                'ligation_factor', 'digestion_factor',
+                'efficiency',
                 'ins_rate', 'del_rate',
                 'create_cids', 'simple_reads']
 
