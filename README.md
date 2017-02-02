@@ -549,9 +549,20 @@ Included Tools
 
 - __metaART –__ Simulation of whole-genome shotgun paired-end reads from communities. 
   
-  MetaART simply wraps the art_illumina binary from ART ([Huang et al, 2011](https://doi.org/10.1093/bioinformatics/btr708)), which among many machine types and sequencing modes, simulates Illumina paired-end reads. The purpose of our extension is to associate a relative abundance with each supplied reference sequence. The relative abundances permit the simulated sampling of communities or clonal systems with varying chromosome copy-number.
-   
-  Profiles can be either supplied in the form of an explicit table or drawn at random from a chosen distribution (equal, uniform random, log-normal) at runtime. Each reference sequence is then treated as a conventional WGS sequencing simulation, with coverage in proportion to its abundance and the results combined together.
+  In essence, MetaART is a simple wrapper of the art_illumina binary from the ART suite ([Huang et al, 2011](https://doi.org/10.1093/bioinformatics/btr708)). Art_illumina supports the simulation of Illumina-based paired-end WGS sequencing and supports many machine types and sequencing modes. Our extension allows the association of relative abundances with the set of supplied reference sequences as as to better model the outcome of metagenomic sequencing or multi-chromosomal genomes with varying copy-number. 
+  
+  Profiles can be supplied either in the form of an explicit table or drawn at random from one of three distribution at runtime (equal, uniform random, log-normal). Reads from each reference are then generated to the required depth (a product of the requested coverage and the genome's abundance). The combined result is returned as a single read-set. Simulations are initialised via a global random seed, which is also passed on to the art_illumina binary. Although not all of art_illumina's options have been passed on to the user: read length, insert length and standard deviation can be user set, as well as machine type.
+  
+  **_Example Uses_** 
+  
+  For a predefined abundance profile ```abdn.tsv```, 10x overall coverage of the reference multifasta ```refseq.fasta``` and with the result written to ```outdir```:  
+  ```bash
+  metaART.py -S 1234 --profile abdn.tsv --read-len 150 --insert-len 500 --insert-sd 100 --max-coverage 10 refseq.fasta outdir
+  ```
+  Or the same job but with runtime generated abundances using a log-normal distribution: 
+  ```bash
+  metaART.py -S 1234 --dist lognormal --lognorm-mu 0.1 --lognorm-sigma 1.0 --read-len 150 --insert-len 500 --insert-sd 100 --max-coverage 10 refseq.fasta outdir 
+  ```
 
 - __sim3C –__ Simulation of HiC/3C read-pairs.
 
