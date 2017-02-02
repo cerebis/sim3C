@@ -12,15 +12,12 @@ $DIR/bin/a5_pipeline.pl $DIR/example/phiX_p1.fastq $DIR/example/phiX_p2.fastq $b
 if [ ! -s $base.contigs.fasta ] ; then 
 	echo "Test run of A5 unsuccessful. No contigs produced."
 	exit
-elif [ ! -s $base.final.scaffolds.fasta ] ; then
-	echo "Test run of A5 unsuccessful. No scaffolds produced."
-	exit
 else 
-	echo "A5 successfully produced contigs and scaffolds."
+	echo "A5 successfully produced contigs."
 fi
 
 NCHAR_REF=`cat $DIR/example/phiX.a5.final.scaffolds.fasta | wc -c | sed -e 's/\ //g'`
-NCHAR_FINAL=`cat test.phiX.a5.final.scaffolds.fasta | wc -c | sed -e 's/\ //g'`
+NCHAR_FINAL=`cat $base.contigs.fasta | wc -c | sed -e 's/\ //g'`
 
 NCHAR_DIFF=`expr $NCHAR_REF - $NCHAR_FINAL`
 if [ $NCHAR_DIFF -lt 0 ]; then

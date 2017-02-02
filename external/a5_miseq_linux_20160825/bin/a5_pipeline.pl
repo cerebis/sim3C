@@ -13,7 +13,7 @@ use File::Basename;
 use Cwd 'abs_path';
 use Getopt::Long;
 
-my $VERSION="20150522";
+my $VERSION="20160825";
 
 =pod
 
@@ -164,7 +164,7 @@ if(@ARGV==3){
 } else { 
 	$OUTBASE = $ARGV[1];
 	my $file = $ARGV[0];
-	my $file_type = `file -L $file`;
+	my $file_type = `file $file`;
 	my $first_line = "";
 	if ($file_type =~ /gzip/){
 		$first_line = `gunzip -c $file | head -n 1`;
@@ -187,6 +187,7 @@ if(@ARGV==3){
 	}
 }
 
+die "\nERROR: use of an absolute path for the output base name is not supported.\n\"$OUTBASE\" is an absolute path.\nPlease specify a relative path instead.\n" if $OUTBASE =~ /^\//;
 die "ERROR: The output location provided \"$OUTBASE\" $message.\nPlease provide an alternate output location\n" unless validate_filename($OUTBASE);
 die "ERROR: The input file $libfile $message.\nPlease provide an alternate output location\n" unless validate_filename($libfile);
 
@@ -279,7 +280,7 @@ if ($start <= 2) {
 	#`mv $ctgs $OUTBASE.contigs.fasta`;
 	
 } 
-if ($end == 2){
+if ($end == 2 && !$metagenome){
 	my $stats = map_libs_and_polish($OUTBASE, \%RAW_LIBS, ".contigs");
 	finalize($stats, "$OUTBASE.contigs.fasta");
 	print STDERR "[a5] Done building assembly. Results at $OUTBASE.contigs.fasta\n";
@@ -727,7 +728,7 @@ Check if the given file is zipped up. If it is, unzip and return the file it was
 =cut
 sub check_and_unzip {
 	my $file = shift;
-	my $file_type = `file -L $file`;
+	my $file_type = `file $file`;
 	my $ret = $file;
 	validate_sequence_file($file, $message);
 	my $bname = basename($file);
@@ -1626,7 +1627,7 @@ Check for characters that are not shell-safe
 =cut
 sub validate_filename {
 	my $fname = shift;
-	return $fname !~ /[\ \"\'\&\:\?\*\$\<\>]/;
+	return $fname !~ /[\ \"\'\&\:\%\?\*\$\<\>]/;
 }
 
 sub validate_sequence_file{
