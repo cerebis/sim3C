@@ -1195,6 +1195,7 @@ class SequencingStrategy:
         comm = self.community
         uniform = self.random_state.uniform
         read_gen = self.read_generator
+        efficiency = self.efficiency
 
         n_wgs = 0
         n_3c = 0
@@ -1204,7 +1205,7 @@ class SequencingStrategy:
             ins_len, midpoint, is_fwd = read_gen.draw_insert()
 
             # is HIC pair?
-            if uniform() >= 0.1:
+            if uniform() >= efficiency:
 
                 n_3c += 1
 
@@ -1289,8 +1290,8 @@ if __name__ == '__main__':
 
     parser.add_argument('--create-cids', default=False, action='store_true',
                         help='Simulate chromosome interacting domains')
-    parser.add_argument('--efficiency', metavar='FLOAT', type=float, default=0.02,
-                        help='Meta3C efficiency factor [0.02]')
+    parser.add_argument('--efficiency', metavar='FLOAT', type=float,
+                        help='HiC/Meta3C efficiency factor [hic: 0.5 or meta3c: 0.02]')
     parser.add_argument('--anti-rate', metavar='FLOAT', type=float, default=0.2,
                         help='Rate of anti-diagonal fragments [0.2]')
     parser.add_argument('--trans-rate', metavar='FLOAT', type=float, default=0.1,
@@ -1369,6 +1370,12 @@ if __name__ == '__main__':
 
         # generated profile will be used downstream
         args.profile_in = profile_path
+
+    if not args.efficiency:
+        if args.method == 'hic':
+            args.efficiency = 0.5
+        elif args.method == 'meta3c':
+            args.efficiency = 0.02
 
     # list of CLI arguments to pass as parameters to the simulation
     kw_names = ['prefix', 'machine_profile', 'insert_mean', 'insert_sd', 'insert_min', 'insert_max',
