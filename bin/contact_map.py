@@ -3,11 +3,11 @@ import argparse
 from collections import OrderedDict
 
 import Bio.SeqIO as SeqIO
-import matplotlib as mpl
 import numpy as np
 import pysam
 from Bio.Restriction import Restriction
 
+import matplotlib as mpl
 mpl.use('Agg')
 import matplotlib.pyplot as plt
 
@@ -323,5 +323,5 @@ if __name__ == '__main__':
         contacts.build_sorted()
 
         print 'Writing raw output'
-        contacts.write_map('{0}.raw.cm'.format(args.output), normalised=False)
+        contacts.write_map('{0}.raw.cm'.format(args.output))
         contacts.plot_map('{0}.raw.png'.format(args.output), remove_diag=args.remove_diag)
