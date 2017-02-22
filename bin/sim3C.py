@@ -862,7 +862,7 @@ class ReadGenerator:
         """
 
         self.method = method
-        self.cut_site = enzyme.site
+        self.cut_site = enzyme.ovhgseq * 2
         self.prefix = prefix
         self.seq_id_fmt = prefix + ':{seed}:{mode}:1:1:1:{idx} {r1r2}:Y:18:1'
         self.wgs_desc_fmt = 'WGS {repl.name}:{x1}..{x2}:{dir}'
