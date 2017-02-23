@@ -189,6 +189,13 @@ def infer_from_alignments(r1_alns, r2_alns, ref_len):
     midpoint = ref_len / 2
     dist = []
     for r1, r2 in product(r1_alns, r2_alns):
+        if (r1['is_reverse'] and not r2['is_reverse']) or (not r1['is_reverse'] and r2['is_reverse']):
+            # opposite strands
+            if r1['pos'] > r1['pos']:
+                # insure r1 < r2
+                r2, r1 = r1, r2
+
+
         if r1['is_reverse']:
             r2, r1 = r1, r2
         sc = 0

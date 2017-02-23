@@ -95,7 +95,7 @@ def strong_match(mr, min_match=None, match_start=True, min_mapq=None):
 class ContactMap:
 
     def __init__(self, bam, enz_name, seq_file, bin_size, ins_mean, ins_std, min_mapq, ref_min_len,
-                 subsample=None, random_seed=None, strong=None):
+                 subsample=None, random_seed=None, strong=None, max_site_dist=None):
 
         self.bam = bam
         self.bin_size = bin_size
@@ -105,6 +105,7 @@ class ContactMap:
         self.subsample = subsample
         self.random_state = np.random.RandomState(random_seed)
         self.strong = strong
+        self.max_site_dist = max_site_dist
 
         print 'Counting reads in bam file...'
         self.total_reads = bam.count(until_eof=True)
@@ -172,11 +173,15 @@ class ContactMap:
 
             # maximum separation being 3 std from mean
             _wgs_max = self.ins_mean + 3*self.ins_std
-            _hic_max = 1 * _wgs_max
+            _hic_max = self.max_site_dist
+            if _hic_max < _wgs_max:
+                print 'Warning: Hi-C sites should realistically be expected to range at least as far as WGS inserts.'
+                print '         The constraint on insert length is (mean + 3sd)'
             _mapq = self.min_mapq
             _map = self.raw_map
             _sites = self.cut_sites
             wgs_count = 0
+            dropped_3c = 0
 
             sub_thres = self.subsample
             if self.subsample:
@@ -219,11 +224,13 @@ class ContactMap:
 
                 if not assume_wgs:
                     r1_dist = upstream_dist(r1, _sites[r1.reference_id]['locs'], r1.reference_length)
-                    if r1_dist > _hic_max:
+                    if _hic_max and r1_dist > _hic_max:
+                        dropped_3c += 1
                         continue
 
                     r2_dist = upstream_dist(r2, _sites[r2.reference_id]['locs'], r2.reference_length)
-                    if r2_dist > _hic_max:
+                    if _hic_max and r2_dist > _hic_max:
+                        dropped_3c += 1
                         continue
 
                 r1pos = r1.pos if not r1.is_reverse else r1.pos + r1.alen
@@ -238,6 +245,7 @@ class ContactMap:
                     _map[ix2][ix1] += 1
 
         print 'Assumed {0} wgs pairs'.format(wgs_count)
+        print 'Dropped {0} long-range (3C-ish) pairs'.format(dropped_3c)
         print 'Total raw map weight {0}'.format(np.sum(_map))
 
 
@@ -296,13 +304,16 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Create a HiC contact map from mapped reads')
     parser.add_argument('--strong', default=None, type=float, help='Require a strong alignment match [None]')
     parser.add_argument('--sub-sample', default=None, type=float, help='Threshold probability for sub-sampling BAM')
+    parser.add_argument('--max-dist', default=None, type=int,
+                        help='Maximum distance to nearest upstream restriction site')
     parser.add_argument('--ins-mean', default=500, type=int, help='Insert length mean [500]')
     parser.add_argument('--ins-std', default=50, type=int, help='Insert length stddev [50]')
     parser.add_argument('--mapq', default=0, type=int, help='Minimum mapping quality [0]')
     parser.add_argument('--min-len', default=None, type=int, help='Minimum subject sequence length [none]')
     parser.add_argument('--per-contig', default=False, action='store_true', help='Bins are per contig')
     parser.add_argument('--bin-size', type=int, default=25000, help='Bin size in bp (25000)')
-    parser.add_argument('--remove-diag', default=False, action='store_true', help='Remove the central diagonal from plot')
+    parser.add_argument('--remove-diag', default=False, action='store_true',
+                        help='Remove the central diagonal from plot')
     parser.add_argument('--enzyme', required=True, help='Restriction enzyme (case sensitive)')
     parser.add_argument('refseq', metavar='FASTA', help='Reference fasta sequence (in same order)')
     parser.add_argument('bamfile', metavar='BAMFILE', help='Name-sorted BAM file')
@@ -313,7 +324,7 @@ if __name__ == '__main__':
 
         contacts = ContactMap(bam, args.enzyme, args.refseq, bin_size=args.bin_size, ins_mean=args.ins_mean,
                               ins_std=args.ins_std, ref_min_len=args.min_len, min_mapq=args.mapq,
-                              subsample=args.sub_sample, strong=args.strong)
+                              subsample=args.sub_sample, strong=args.strong, max_site_dist=args.max_dist)
 
         contacts.build_sorted()
 
