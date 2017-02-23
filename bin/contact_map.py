@@ -24,22 +24,22 @@ def upstream_dist(read, cut_sites, ref_length):
     """
     if read.is_reverse:
         # reverse reads look left
-        pos = read.pos
-        xi = np.searchsorted(cut_sites, pos, side='left')
+        r_end = read.pos
+        xi = np.searchsorted(cut_sites, r_end, side='left')
         if xi > 0:
-            d = pos - cut_sites[xi - 1]
+            d = r_end - cut_sites[xi - 1]
         else:
             # crossing the origin
-            d = ref_length - cut_sites[-1] + pos
+            d = ref_length - cut_sites[-1] + r_end
     else:
         # forward reads look right
-        pos = read.pos + read.alen
-        xi = np.searchsorted(cut_sites, pos, side='right')
+        r_end = read.pos + read.alen
+        xi = np.searchsorted(cut_sites, r_end, side='right')
         if xi < len(cut_sites):
-            d = cut_sites[xi] - pos
+            d = cut_sites[xi] - r_end
         else:
             # crossing the origin
-            d = cut_sites[0] - (pos - ref_length)
+            d = cut_sites[0] - (r_end - ref_length)
     return d
 
 
@@ -205,12 +205,6 @@ class ContactMap:
                 if not _matcher(r1) or not _matcher(r2):
                     continue
 
-                # if r1.is_unmapped or r2.is_unmapped:
-                #     continue
-                #
-                # if r1.mapq < _mapq or r2.mapq < _mapq:
-                #     continue
-
                 if r1.is_read2:
                     r1, r2 = r2, r1
 
@@ -221,14 +215,15 @@ class ContactMap:
                     if a.pos <= b.pos and ins_len < _wgs_max:
                         assume_wgs = True
                         wgs_count += 1
+                        continue
 
                 if not assume_wgs:
                     r1_dist = upstream_dist(r1, _sites[r1.reference_id]['locs'], r1.reference_length)
-                    if r1_dist > _hic_max + _sites[r1.reference_id]['medspc']:
+                    if r1_dist > _hic_max:
                         continue
 
                     r2_dist = upstream_dist(r2, _sites[r2.reference_id]['locs'], r2.reference_length)
-                    if r2_dist > _hic_max + _sites[r2.reference_id]['medspc']:
+                    if r2_dist > _hic_max:
                         continue
 
                 r1pos = r1.pos if not r1.is_reverse else r1.pos + r1.alen
