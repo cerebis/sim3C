@@ -173,15 +173,18 @@ class ContactMap:
 
             # maximum separation being 3 std from mean
             _wgs_max = self.ins_mean + 3*self.ins_std
+
             _hic_max = self.max_site_dist
-            if _hic_max < _wgs_max:
+            if _hic_max and _hic_max < _wgs_max:
                 print 'Warning: Hi-C sites should realistically be expected to range at least as far as WGS inserts.'
-                print '         The constraint on insert length is (mean + 3sd)'
+                print '         The constraint on insert length is: ins_mean + 3*ins_sd'
+
             _mapq = self.min_mapq
             _map = self.raw_map
             _sites = self.cut_sites
             wgs_count = 0
             dropped_3c = 0
+            kept_3c = 0
 
             sub_thres = self.subsample
             if self.subsample:
@@ -232,6 +235,7 @@ class ContactMap:
                     if _hic_max and r2_dist > _hic_max:
                         dropped_3c += 1
                         continue
+                    kept_3c += 1
 
                 r1pos = r1.pos if not r1.is_reverse else r1.pos + r1.alen
                 r2pos = r2.pos if not r2.is_reverse else r2.pos + r2.alen
@@ -245,7 +249,7 @@ class ContactMap:
                     _map[ix2][ix1] += 1
 
         print 'Assumed {0} wgs pairs'.format(wgs_count)
-        print 'Dropped {0} long-range (3C-ish) pairs'.format(dropped_3c)
+        print 'Kept {0} and dropped {1} long-range (3C-ish) pairs'.format(kept_3c, dropped_3c)
         print 'Total raw map weight {0}'.format(np.sum(_map))
 
 
