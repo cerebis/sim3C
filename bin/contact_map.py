@@ -95,7 +95,7 @@ def strong_match(mr, min_match=None, match_start=True, min_mapq=None):
 class ContactMap:
 
     def __init__(self, bam, enz_name, seq_file, bin_size, ins_mean, ins_std, min_mapq, ref_min_len,
-                 subsample=None, random_seed=None, strong=None, max_site_dist=None):
+                 subsample=None, random_seed=None, strong=None, max_site_dist=None, spacing_factor=1.0):
 
         self.bam = bam
         self.bin_size = bin_size
@@ -106,6 +106,7 @@ class ContactMap:
         self.random_state = np.random.RandomState(random_seed)
         self.strong = strong
         self.max_site_dist = max_site_dist
+        self.spacing_factor = spacing_factor
 
         print 'Counting reads in bam file...'
         self.total_reads = bam.count(until_eof=True)
@@ -151,9 +152,10 @@ class ContactMap:
             locs = np.array(enzyme.search(rseq.seq, linear=False))
             locs.sort()  # pedantic check for order
             medspc = np.median(np.diff(locs))
-            self.cut_sites[xi] = {'locs': locs, 'medspc': medspc, 'offset': offset}
+            self.cut_sites[xi] = {'locs': locs, 'max_dist': self.spacing_factor * medspc, 'offset': offset}
             offset += len(rseq)
-            print '{0} cut-sites for \"{1}\" has median spacing: {2:.1f}'.format(args.enzyme, rseq.id, medspc)
+            print 'Found {0} cut-sites for \"{1}\" ' \
+                  'med_spc: {2:.1f} max_dist: {3:.1f}'.format(args.enzyme, rseq.id, medspc, self.spacing_factor*medspc)
 
     def build_sorted(self):
         import tqdm
@@ -167,6 +169,18 @@ class ContactMap:
         # set-up match call
         _matcher = _strong_match if self.strong else _simple_match
 
+        def _is_toofar_absolute(_x, _abs_max, _medspc):
+            return _abs_max and _x > _abs_max
+
+        def _is_toofar_medspc(_x, _abs_max, _medspc):
+            return _x > _medspc
+
+        # set-up the test for site proximity
+        if self.max_site_dist:
+            is_toofar = _is_toofar_absolute
+        else:
+            is_toofar = _is_toofar_medspc
+
         self.raw_map = self._init_map()
 
         with tqdm.tqdm(total=self.total_reads) as pbar:
@@ -175,9 +189,6 @@ class ContactMap:
             _wgs_max = self.ins_mean + 3*self.ins_std
 
             _hic_max = self.max_site_dist
-            if _hic_max and _hic_max < _wgs_max:
-                print 'Warning: Hi-C sites should realistically be expected to range at least as far as WGS inserts.'
-                print '         The constraint on insert length is: ins_mean + 3*ins_sd'
 
             _mapq = self.min_mapq
             _map = self.raw_map
@@ -226,15 +237,17 @@ class ContactMap:
                         continue
 
                 if not assume_wgs:
+
                     r1_dist = upstream_dist(r1, _sites[r1.reference_id]['locs'], r1.reference_length)
-                    if _hic_max and r1_dist > _hic_max:
+                    if is_toofar(r1_dist, _hic_max, _sites[r1.reference_id]['max_dist']):
                         dropped_3c += 1
                         continue
 
                     r2_dist = upstream_dist(r2, _sites[r2.reference_id]['locs'], r2.reference_length)
-                    if _hic_max and r2_dist > _hic_max:
+                    if is_toofar(r2_dist, _hic_max, _sites[r2.reference_id]['max_dist']):
                         dropped_3c += 1
                         continue
+
                     kept_3c += 1
 
                 r1pos = r1.pos if not r1.is_reverse else r1.pos + r1.alen
@@ -252,12 +265,10 @@ class ContactMap:
         print 'Kept {0} and dropped {1} long-range (3C-ish) pairs'.format(kept_3c, dropped_3c)
         print 'Total raw map weight {0}'.format(np.sum(_map))
 
-
     def _init_map(self, dt=np.int32):
         print 'Initialising contact map of {0}x{0} from total extent of {1}bp over {2} sequences'.format(
             self.bin_count, self.total_len, self.total_seq)
         return np.zeros((self.bin_count, self.bin_count), dtype=dt)
-
 
     def plot_map(self, pname, remove_diag=False, interp='none'):
         """
@@ -308,8 +319,11 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Create a HiC contact map from mapped reads')
     parser.add_argument('--strong', default=None, type=float, help='Require a strong alignment match [None]')
     parser.add_argument('--sub-sample', default=None, type=float, help='Threshold probability for sub-sampling BAM')
+    parser.add_argument('--spc-factor', default=None, type=float,
+                        help='Maximum distance to nearest upstream site, as a factor '
+                             'of each chromosome\'s median spacing')
     parser.add_argument('--max-dist', default=None, type=int,
-                        help='Maximum distance to nearest upstream restriction site')
+                        help='Maximum distance to nearest upstream site in absolute terms')
     parser.add_argument('--ins-mean', default=500, type=int, help='Insert length mean [500]')
     parser.add_argument('--ins-std', default=50, type=int, help='Insert length stddev [50]')
     parser.add_argument('--mapq', default=0, type=int, help='Minimum mapping quality [0]')
@@ -324,11 +338,17 @@ if __name__ == '__main__':
     parser.add_argument('output', metavar='OUTPUT_BASE', help='Output base name')
     args = parser.parse_args()
 
+    if args.spc_factor and args.max_dist:
+        import sys
+        print 'contactmap.py: error: spc-factor and max-dist are mutually exclusive options'
+        sys.exit(1)
+
     with pysam.AlignmentFile(args.bamfile, 'rb') as bam:
 
         contacts = ContactMap(bam, args.enzyme, args.refseq, bin_size=args.bin_size, ins_mean=args.ins_mean,
                               ins_std=args.ins_std, ref_min_len=args.min_len, min_mapq=args.mapq,
-                              subsample=args.sub_sample, strong=args.strong, max_site_dist=args.max_dist)
+                              subsample=args.sub_sample, strong=args.strong, max_site_dist=args.max_dist,
+                              spacing_factor=1.0 if not args.spc_factor else args.spc_factor)
 
         contacts.build_sorted()
 
