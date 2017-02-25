@@ -112,6 +112,7 @@ class CutSites:
 
         :param enzyme: the restriction enzyme (Bio.Restriction RestrictionType object)
         :param template_seq: the template sequence to digest (Bio.Seq object)
+        :param random_state: the random state used for draws
         :param linear: treat sequence as linear
         """
         self.random_state = random_state
@@ -249,6 +250,45 @@ class CutSites:
             return cs[ix]
 
 
+class AllSites:
+
+    def __init__(self, size, random_state):
+        """
+        Initialise an instance of AllSites. This represents a completely unconstrained
+        model, where any base-position is equally accessible.
+
+        :param size: the maximum length of a sequence
+        :param random_state: random state used for draws
+        """
+        self.random_state = random_state
+        self.randint = random_state.randint
+        self.size = size
+
+    @staticmethod
+    def covers():
+        """
+        Always true, every position is covered.
+        :return: True
+        """
+        return True
+
+    def random_site(self):
+        """
+        Draw a random base-position uniformly over the entire extent (0..size-1).
+        :return: random base position (0-based)
+        """
+        return self.randint(self.size)
+
+    @staticmethod
+    def find_nn(pos):
+        """
+        As every site is accessible this is effectively a dummy function returning the input.
+        :param pos: the position to find a NN for
+        :return: pos, unchanged.
+        """
+        return pos
+
+
 class Replicon:
     """
     A DNA molecule which will be digested. This may be a chromosome, plasmid, etc.
@@ -284,10 +324,14 @@ class Replicon:
 
         # cut-site related properties. These are pre-calculated as a simple
         # means of avoiding performance penalties with repeated calls.
-        self.sites = CutSites(enzyme, seq.seq, self.random_state, linear=False)
+        if not enzyme:
+            self.sites = AllSites(len(seq.seq), self.random_state)
+        else:
+            self.sites = CutSites(enzyme, seq.seq, self.random_state, linear=False)
+
         self.length = len(self.seq)
         self.num_sites = self.sites.size
-        self.site_density = self.num_sites * 1.0/self.length
+        self.site_density = self.num_sites / float(self.length)
 
         if create_cids:
             # setup for more complex simulated CID model
@@ -481,6 +525,7 @@ class Cell:
         self.cdf_sites = None
         self.replicon_names = None
         self.cdf_sites_inter = None
+        self.cdf_extents_inter = None
 
     def __repr__(self):
         return repr((self.name, self.abundance, self.num_replicons()))
@@ -526,12 +571,23 @@ class Cell:
         # One last set of CDFs for "select other" which exclude
         # each replicon in turn.
         if self.num_replicons() > 1:
+
             self.cdf_sites_inter = {}
+            self.cdf_extents_inter = {}
+
             for ci in self.replicon_names:
-                ix = np.where(self.replicon_names != ci)
-                pi = self.pdf_sites[ix]
+                # indices without ci
+                xi = np.where(self.replicon_names != ci)
+
+                # site probs without ci
+                pi = self.pdf_sites[xi]
                 pi /= pi.sum()
-                self.cdf_sites_inter[ci] = {'names': self.replicon_names[ix], 'prob': np.cumsum(pi)}
+                self.cdf_sites_inter[ci] = {'names': self.replicon_names[xi], 'prob': np.cumsum(pi)}
+
+                # extent probs without ci
+                pi = self.pdf_extent[xi]
+                pi /= pi.sum()
+                self.cdf_extents_inter[ci] = {'names': self.replicon_names[xi], 'prob': np.cumsum(pi)}
 
         # inter-repl rate is scaled by the product of this cell's site probs
         self.trans_rate *= self.pdf_sites.prod()
@@ -593,6 +649,21 @@ class Cell:
         return self.get_replicon(choice(self.random_state,
                                         self.cdf_sites_inter[skip_repl]['names'],
                                         self.cdf_sites_inter[skip_repl]['prob']))
+
+    def draw_other_replicon_by_extents(self, skip_repl):
+        """
+        Draw a different replicon from this cell. The probability is biased by per-replicon
+        extent and copy number. Note: single replicon cell definitions will
+        raise an exception.
+        :param skip_repl: the replicon to exclude
+        :return: another replicon from this cell
+        """
+        if self.num_replicons() <= 1:
+            raise MonochromosomalException('inter-replicon events are not possible for monochromosomal cells')
+
+        return self.get_replicon(choice(self.random_state,
+                                        self.cdf_extents_inter[skip_repl]['names'],
+                                        self.cdf_extents_inter[skip_repl]['prob']))
 
     def draw_any_site(self):
         """
@@ -901,8 +972,9 @@ class ReadGenerator:
 
         try:
             method_switcher = {
-                'hic': self._part_joiner_hic,
-                'meta3c': self._part_joiner_meta3c
+                'hic': self._part_joiner_sitedup,
+                'meta3c': self._part_joiner_simple,
+                'dnase': self._part_joiner_simple
             }
             self._part_joiner = method_switcher[self.method.lower()]
         except Exception:
@@ -921,7 +993,7 @@ class ReadGenerator:
             msg += ', [no max limit]'
         return msg
 
-    def _part_joiner_meta3c(self, a, b):
+    def _part_joiner_simple(self, a, b):
         """
         Join two fragments end to end without any site duplication. The new
         fragment will begin at a_0 and end at b_max. Used when no end fills are
@@ -933,7 +1005,7 @@ class ReadGenerator:
         """
         return a + b
 
-    def _part_joiner_hic(self, a, b):
+    def _part_joiner_sitedup(self, a, b):
         """
         Join two fragments end to end where the cut-site is duplicated. The new
         fragment will begin at a_0 end at b_max. Used when end-fill is applied
@@ -1096,7 +1168,8 @@ class SequencingStrategy:
         try:
             strategy_switcher = {
                 'hic': self._simulate_hic,
-                'meta3c': self._simulate_meta3c
+                'meta3c': self._simulate_meta3c,
+                'dnase': self._simulate_dnase
             }
             self._selected_strat = self.Strategy(method, strategy_switcher[method.lower()])
         except Exception:
@@ -1181,7 +1254,7 @@ class SequencingStrategy:
 
             read_gen.write_readpair(ostream, pair, n)
 
-        assert self.number_pairs - n_wgs == n_3c, 'Error: WGS and meta3C pairs did not sum to ' \
+        assert self.number_pairs - n_wgs == n_3c, 'Error: WGS and 3C pairs did not sum to ' \
                                                   '{0} was did not add'.format(self.number_pairs)
 
         return {'wgs_count': n_wgs, 'lig_count': self.number_pairs - n_wgs}
@@ -1245,10 +1318,74 @@ class SequencingStrategy:
 
             read_gen.write_readpair(ostream, pair, n)
 
-        assert self.number_pairs - n_wgs == n_3c, 'Error: WGS and HIC pairs did not sum to ' \
+        assert self.number_pairs - n_wgs == n_3c, 'Error: WGS and 3C pairs did not sum to ' \
                                                   '{0} was did not add'.format(self.number_pairs)
 
         return {'wgs_count': n_wgs, 'lig_count': n_3c}
+
+    def _simulate_dnase(self, ostream):
+        """
+        A strategy to simulate the sequencing of a HiC library without a restriction enzyme.
+        :param ostream: the output stream for reads
+        """
+        comm = self.community
+        uniform = self.random_state.uniform
+        read_gen = self.read_generator
+        efficiency = self.efficiency
+
+        n_wgs = 0
+        n_3c = 0
+
+        for n in tqdm.tqdm(xrange(1, self.number_pairs+1)):
+
+            ins_len, midpoint, is_fwd = read_gen.draw_insert()
+
+            # is PLP?
+            if uniform() >= efficiency:
+
+                n_3c += 1
+
+                # draw the first replicon and site
+                r1, x1 = comm.draw_any_by_extent()
+
+                # is it spurious ligation
+                if comm.is_spurious():
+
+                    r2, x2 = comm.draw_any_by_extent()
+
+                # is it an inter-replicon (trans) ligation
+                elif r1.parent_cell.is_trans():
+
+                    r2 = r1.parent_cell.draw_other_replicon_by_extents(r1.name)
+                    x2 = r2.draw_any_site()
+
+                # otherwise an intra-replicon (cis) ligation
+                else:
+
+                    x2 = r1.draw_constrained_site(x1)
+                    r2 = r1
+
+                # randomly permute source/destination
+                if uniform() < 0.5:
+                    x1, x2 = x2, x1
+                    r1, r2 = r2, r1
+
+                # with coordinates, make hic read-pair
+                pair = read_gen.make_ligation_readpair(r1, x1, r2, x2, ins_len, midpoint)
+
+            # otherwise WGS
+            else:
+                n_wgs += 1
+                r1, x1 = comm.draw_any_by_extent()
+                pair = read_gen.make_wgs_readpair(r1, x1, ins_len, is_fwd)
+
+            read_gen.write_readpair(ostream, pair, n)
+
+        assert self.number_pairs - n_wgs == n_3c, 'Error: WGS and 3C pairs did not sum to ' \
+                                                  '{0} was did not add'.format(self.number_pairs)
+
+        return {'wgs_count': n_wgs, 'lig_count': n_3c}
+
 
 if __name__ == '__main__':
     import abundance
@@ -1269,7 +1406,7 @@ if __name__ == '__main__':
 
     parser.add_argument('-r', '--seed', metavar='INT', type=int, default=int(time.time()),
                         help="Random seed for initialising number generator")
-    parser.add_argument('-m', '--method', default='hic', choices=['hic', 'meta3c'],
+    parser.add_argument('-m', '--method', default='hic', choices=['hic', 'meta3c', 'dnase'],
                         help='Library preparation method [hic]')
     parser.add_argument('-e', '--enzyme', dest='enzyme_name', default='NlaIII',
                         help='Restriction enzyme [NlaIII]')

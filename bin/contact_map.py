@@ -94,13 +94,13 @@ def strong_match(mr, min_match=None, match_start=True, min_mapq=None):
 
 class ContactMap:
 
-    def __init__(self, bam, enz_name, seq_file, bin_size, ins_mean, ins_std, min_mapq, ref_min_len,
+    def __init__(self, bam, enz_name, seq_file, bin_size, ins_mean, ins_sd, min_mapq, ref_min_len,
                  subsample=None, random_seed=None, strong=None, max_site_dist=None, spacing_factor=1.0):
 
         self.bam = bam
         self.bin_size = bin_size
         self.ins_mean = ins_mean
-        self.ins_std = ins_std
+        self.ins_sd = ins_sd
         self.min_mapq = min_mapq
         self.subsample = subsample
         self.random_state = np.random.RandomState(random_seed)
@@ -124,7 +124,8 @@ class ContactMap:
             self.total_len = sum(bam.lengths)
             self.total_seq = len(self.active_seq)
 
-        self._init_sites(enz_name, seq_file)
+        self.unconstrained = False if enz_name else True
+        self._init_seq_info(enz_name, seq_file)
 
         print 'Map based upon mapping containing:\n' \
               '\t{0} sequences\n' \
@@ -138,24 +139,42 @@ class ContactMap:
 
         self.raw_map = None
 
-    def _init_sites(self, enz_name, seq_file):
+    def _init_seq_info(self, enz_name, seq_file):
+        """
+        Initialise information to do with the sites of the given template sequences.
+        Each sequence is digested, the sites recorded and statistics collected.
+        :param enz_name: the name of the enzyme (case sensitive)
+        :param seq_file: the multi-fasta to digest
+        """
+        self.seq_info = OrderedDict()
 
-        self.cut_sites = OrderedDict()
-        enzyme = get_enzyme_instance(enz_name)
+        if enz_name:
+            self.enzyme = get_enzyme_instance(enz_name)
+            print 'Cut-site spacing naive expectation: {0}'.format(4**self.enzyme.size)
+        else:
+            # non-RE based ligation-pairs
+            self.enzyme = None
+            print 'Warning: no enzyme was specified, therefore ligation pairs ' \
+                  'are considered unconstrained in position.'
 
-        print 'Cut-site spacing naive expectation: {0}'.format(4**enzyme.size)
         offset = 0
         for rseq in SeqIO.parse(seq_file, 'fasta'):
             if rseq.id not in self.active_seq:
                 continue
             xi = self.bam.references.index(rseq.id)
-            locs = np.array(enzyme.search(rseq.seq, linear=False))
-            locs.sort()  # pedantic check for order
-            medspc = np.median(np.diff(locs))
-            self.cut_sites[xi] = {'locs': locs, 'max_dist': self.spacing_factor * medspc, 'offset': offset}
+
+            if self.enzyme:
+                sites = np.array(self.enzyme.search(rseq.seq, linear=False))
+                sites.sort()  # pedantic check for order
+                medspc = np.median(np.diff(sites))
+                self.seq_info[xi] = {'sites': sites, 'max_dist': self.spacing_factor * medspc, 'offset': offset}
+                print 'Found {0} cut-sites for \"{1}\" ' \
+                      'med_spc: {2:.1f} max_dist: {3:.1f}'.format(args.enzyme, rseq.id, medspc,
+                                                                  self.spacing_factor*medspc)
+            else:
+                self.seq_info[xi] = {'offset': offset}
+
             offset += len(rseq)
-            print 'Found {0} cut-sites for \"{1}\" ' \
-                  'med_spc: {2:.1f} max_dist: {3:.1f}'.format(args.enzyme, rseq.id, medspc, self.spacing_factor*medspc)
 
     def build_sorted(self):
         import tqdm
@@ -175,24 +194,30 @@ class ContactMap:
         def _is_toofar_medspc(_x, _abs_max, _medspc):
             return _x > _medspc
 
+        def _is_toofar_dummy(_x, _abs_max, _medspc):
+            return False
+
         # set-up the test for site proximity
-        if self.max_site_dist:
-            is_toofar = _is_toofar_absolute
+        if not self.unconstrained:
+            is_toofar = _is_toofar_dummy
         else:
-            is_toofar = _is_toofar_medspc
+            if self.max_site_dist:
+                is_toofar = _is_toofar_absolute
+            else:
+                is_toofar = _is_toofar_medspc
 
         self.raw_map = self._init_map()
 
         with tqdm.tqdm(total=self.total_reads) as pbar:
 
             # maximum separation being 3 std from mean
-            _wgs_max = self.ins_mean + 3*self.ins_std
+            _wgs_max = self.ins_mean + 3*self.ins_sd
 
             _hic_max = self.max_site_dist
 
             _mapq = self.min_mapq
             _map = self.raw_map
-            _sites = self.cut_sites
+            _seq_info = self.seq_info
             wgs_count = 0
             dropped_3c = 0
             kept_3c = 0
@@ -238,23 +263,25 @@ class ContactMap:
 
                 if not assume_wgs:
 
-                    r1_dist = upstream_dist(r1, _sites[r1.reference_id]['locs'], r1.reference_length)
-                    if is_toofar(r1_dist, _hic_max, _sites[r1.reference_id]['max_dist']):
-                        dropped_3c += 1
-                        continue
+                    if not self.unconstrained:
 
-                    r2_dist = upstream_dist(r2, _sites[r2.reference_id]['locs'], r2.reference_length)
-                    if is_toofar(r2_dist, _hic_max, _sites[r2.reference_id]['max_dist']):
-                        dropped_3c += 1
-                        continue
+                        r1_dist = upstream_dist(r1, _seq_info[r1.reference_id]['sites'], r1.reference_length)
+                        if is_toofar(r1_dist, _hic_max, _seq_info[r1.reference_id]['max_dist']):
+                            dropped_3c += 1
+                            continue
+
+                        r2_dist = upstream_dist(r2, _seq_info[r2.reference_id]['sites'], r2.reference_length)
+                        if is_toofar(r2_dist, _hic_max, _seq_info[r2.reference_id]['max_dist']):
+                            dropped_3c += 1
+                            continue
 
                     kept_3c += 1
 
                 r1pos = r1.pos if not r1.is_reverse else r1.pos + r1.alen
                 r2pos = r2.pos if not r2.is_reverse else r2.pos + r2.alen
 
-                ix1 = int((_sites[r1.reference_id]['offset'] + r1pos) / self.bin_size)
-                ix2 = int((_sites[r2.reference_id]['offset'] + r2pos) / self.bin_size)
+                ix1 = int((_seq_info[r1.reference_id]['offset'] + r1pos) / self.bin_size)
+                ix2 = int((_seq_info[r2.reference_id]['offset'] + r2pos) / self.bin_size)
 
                 if ix1 < ix2:
                     _map[ix1][ix2] += 1
@@ -325,14 +352,14 @@ if __name__ == '__main__':
     parser.add_argument('--max-dist', default=None, type=int,
                         help='Maximum distance to nearest upstream site in absolute terms')
     parser.add_argument('--ins-mean', default=500, type=int, help='Insert length mean [500]')
-    parser.add_argument('--ins-std', default=50, type=int, help='Insert length stddev [50]')
+    parser.add_argument('--ins-sd', default=50, type=int, help='Insert length stddev [50]')
     parser.add_argument('--mapq', default=0, type=int, help='Minimum mapping quality [0]')
     parser.add_argument('--min-len', default=None, type=int, help='Minimum subject sequence length [none]')
     parser.add_argument('--per-contig', default=False, action='store_true', help='Bins are per contig')
     parser.add_argument('--bin-size', type=int, default=25000, help='Bin size in bp (25000)')
     parser.add_argument('--remove-diag', default=False, action='store_true',
                         help='Remove the central diagonal from plot')
-    parser.add_argument('--enzyme', required=True, help='Restriction enzyme (case sensitive)')
+    parser.add_argument('--enzyme', default=None, help='Restriction enzyme (case sensitive)')
     parser.add_argument('refseq', metavar='FASTA', help='Reference fasta sequence (in same order)')
     parser.add_argument('bamfile', metavar='BAMFILE', help='Name-sorted BAM file')
     parser.add_argument('output', metavar='OUTPUT_BASE', help='Output base name')
@@ -346,7 +373,7 @@ if __name__ == '__main__':
     with pysam.AlignmentFile(args.bamfile, 'rb') as bam:
 
         contacts = ContactMap(bam, args.enzyme, args.refseq, bin_size=args.bin_size, ins_mean=args.ins_mean,
-                              ins_std=args.ins_std, ref_min_len=args.min_len, min_mapq=args.mapq,
+                              ins_sd=args.ins_sd, ref_min_len=args.min_len, min_mapq=args.mapq,
                               subsample=args.sub_sample, strong=args.strong, max_site_dist=args.max_dist,
                               spacing_factor=1.0 if not args.spc_factor else args.spc_factor)
 
