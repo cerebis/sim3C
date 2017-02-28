@@ -24,6 +24,21 @@ def cdf_geom(x, shape):
     return 1. - (1. - shape) ** x
 
 
+def cdf_geom_unif_ratio(x, length, **kwargs):
+    """
+    CDF as an adjustable linear combination of the geometric and uniform CDFs, covering
+    values over the range 0..length. Must supply a geometric shape coeff as
+    a keyword arg.
+    :param x: 0..1
+    :param length: maximum value
+    :param kwargs: 'shape' geometric distribution coeff, 'alpha' proportional contribution of
+     uniform distribution to CDF.
+    :return: float from 0..length
+    """
+    a = kwargs['alpha']
+    return (1.0 - a) * (1.0 - (1.0 - kwargs['shape']) ** x) + a/length * x
+
+
 def cdf_geom_unif(x, length, **kwargs):
     """
     CDF as a linear combination of the geometric and uniform CDFs, covering
@@ -59,6 +74,8 @@ class EmpiricalDistribution:
 
     def __init__(self, random_state, length, bins, cdf, **coeffs):
         """
+        Initialise an empirical distribution using the supplied CDF and for the range [0..length]. The CDF is normalized
+        by 1 / max[CDF(x)].
         :param random_state: random state from which to draw numbers. If None, then this will be initialized at
         :param shape: distribution shape parameter
         :param length: distribution will be defined over 0..length
@@ -171,7 +188,7 @@ def generate_random_cids(random_state, chr_length, chr_prob=0.5, chr_bins=1000, 
 
     # Add the interval governing the whole genome -- call it the genome-wide CID. mother of all CID? heh
     cid_tree[0:chr_length] = {'prob': chr_prob,
-                                 'empdist': EmpiricalDistribution(random_state, chr_length, chr_bins,
+                              'empdist': EmpiricalDistribution(random_state, chr_length, chr_bins,
                                                                   cdf_geom_unif, shape=chr_shape)}
 
     return cid_tree
@@ -206,7 +223,7 @@ def _random_nested_intervals(random_state, result, inv, min_len, max_len, min_nu
         # continue to divide these new intervals
         for ii in subinvs:
             _random_nested_intervals(random_state, result, ii, min_len, max_len,
-                                    min_num, max_num, max_depth, depth + 1)
+                                     min_num, max_num, max_depth, depth + 1)
 
 
 def generate_nested_cids(random_state, chr_length, chr_prob, chr_bins, chr_shape, cid_bins, cid_shape,
@@ -260,7 +277,7 @@ def generate_nested_cids(random_state, chr_length, chr_prob, chr_bins, chr_shape
     data = {'depth': 0,
             'prob': chr_prob,
             'empdist': EmpiricalDistribution(random_state, chr_length, chr_bins,
-                                             cdf_geom_unif, shape=chr_shape)}
+                                             cdf_geom_unif_ratio, shape=chr_shape, alpha=0.333)}
     cid_tree.addi(0, chr_length, data=data)
 
     return cid_tree
