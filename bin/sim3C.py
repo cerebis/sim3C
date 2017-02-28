@@ -298,6 +298,16 @@ class Replicon:
     # Used in insert/read creation.
     PART_DESC_FMT = '{0:d}:{1}:{2}'
 
+    # Empirical distribution parameters. These might eventually be exposed to users.
+    BACKBONE_PROB = 0.2
+    GLOBAL_EMPDIST_BINS = 1000
+    GLOBAL_SHAPE_FACTOR = 6.0e-6
+    CID_EMPDIST_BINS = 100
+    CID_SHAPE_FACTOR = 8.0e-6
+    CID_MIN = 3
+    CID_MAX = 6
+    CID_DEPTH = 2
+
     def __init__(self, name, cell, cn, seq, enzyme, anti_rate, random_state, create_cids=True):
         """
         The definition of a replicon (chromosome, plasmid, etc).
@@ -337,14 +347,18 @@ class Replicon:
             # setup for more complex simulated CID model
             self.draw_constrained_site = self._draw_cid_constrained_site
             self.cid_blocks = em.cids_to_blocks(
-                em.generate_nested_cids(self.random_state, self.length, 0.2, 1000, 6.0e-6, 100, 8.0e-6,
-                                        min_num=3, max_num=6, recur_depth=2))
+                em.generate_nested_cids(self.random_state, self.length, Replicon.BACKBONE_PROB,
+                                        Replicon.GLOBAL_EMPDIST_BINS, Replicon.GLOBAL_SHAPE_FACTOR,
+                                        Replicon.CID_EMPDIST_BINS, Replicon.CID_SHAPE_FACTOR,
+                                        min_num=Replicon.CID_MIN, max_num=Replicon.CID_MAX,
+                                        recur_depth=Replicon.CID_DEPTH))
 
         else:
             # setup for simple model
             self.draw_constrained_site = self._draw_simple_constrained_site
             self.empdist = em.EmpiricalDistribution(self.random_state, self.length,
-                                                    1000, em.cdf_geom_unif, shape=6.0e-6)
+                                                    Replicon.GLOBAL_EMPDIST_BINS, em.cdf_geom_unif,
+                                                    shape=Replicon.GLOBAL_SHAPE_FACTOR)
 
         # set bidirection association with containing cell
         self.parent_cell = cell
