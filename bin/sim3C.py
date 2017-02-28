@@ -337,7 +337,7 @@ class Replicon:
             # setup for more complex simulated CID model
             self.draw_constrained_site = self._draw_cid_constrained_site
             self.cid_blocks = em.cids_to_blocks(
-                em.generate_nested_cids(self.random_state, self.length, 0.2, 1000, 6.0e-6, 100, 8.0e-6,
+                em.generate_nested_cids(self.random_state, self.length, 0.25, 1000, 3.0e-6, 100, 8.0e-6,
                                         min_num=3, max_num=6, recur_depth=2))
 
         else:
