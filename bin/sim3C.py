@@ -1409,7 +1409,7 @@ if __name__ == '__main__':
     parser.add_argument('-m', '--method', default='hic', choices=['hic', 'meta3c', 'dnase'],
                         help='Library preparation method [hic]')
     parser.add_argument('-e', '--enzyme', dest='enzyme_name', default='NlaIII',
-                        help='Restriction enzyme [NlaIII]')
+                        help='Restriction enzyme (case-sensitive) [NlaIII]')
 
     parser.add_argument('-n', '--num-pairs', metavar='INT', type=int, required=True,
                         help='Number of read-pairs generate')
@@ -1460,75 +1460,83 @@ if __name__ == '__main__':
                         help='Output Hi-C reads file')
     args = parser.parse_args()
 
-    if 'community_table' in args and args.dist:
-        raise RuntimeError('Cannot define abundance both explicitly as a table (-t) and a distribution (--dist).')
+    try:
 
-    #
-    # Prepare community abundance profile, either procedurally or from a file
-    #
-    #   Note: currently, all sequences for a single taxon are
-    #   treated equally.
-    #
-    if not args.profile_in and not args.dist:
-        print 'An abundance profile must be supplied either as a file or procedurally'
-        sys.exit(1)
+        if 'community_table' in args and args.dist:
+            raise RuntimeError('Cannot define abundance both explicitly as a table (-t) and a distribution (--dist).')
 
-    profile = None
-    if args.dist:
-        # generate a procedural profile.
-        # the number of taxa is defined by number of sequences. i.e. monochromosomal organisms
+        if args.method == 'dnase' and args.enzyme_name:
+            raise RuntimeError('The dnase method does not accept an enyzme specification.')
 
-        if os.path.basename(args.profile_name) != args.profile_name:
-            print 'Arguments to profile-name should not contain path information'
+        #
+        # Prepare community abundance profile, either procedurally or from a file
+        #
+        #   Note: currently, all sequences for a single taxon are
+        #   treated equally.
+        #
+        if not args.profile_in and not args.dist:
+            print 'An abundance profile must be supplied either as a file or procedurally'
             sys.exit(1)
 
-        profile_path = os.path.join(os.path.dirname(args.output_file), args.profile_name)
-        if os.path.exists(profile_path):
-            print 'A previous procedural abundance profile already exists'
-            print 'Please delete or move away: {0}'.format(profile_path)
-            sys.exit(1)
+        profile = None
+        if args.dist:
+            # generate a procedural profile.
+            # the number of taxa is defined by number of sequences. i.e. monochromosomal organisms
 
-        seq_names = None
-        seq_index = SeqIO.index(args.genome_seq, 'fasta')
-        try:
-            seq_names = list(seq_index)
-        finally:
-            seq_index.close()
+            if os.path.basename(args.profile_name) != args.profile_name:
+                print 'Arguments to profile-name should not contain path information'
+                sys.exit(1)
 
-        profile = abundance.generate_profile(args.seed, seq_names, mode=args.dist,
-                                             lognorm_mu=args.lognorm_mu, lognorm_sigma=args.lognorm_sigma)
+            profile_path = os.path.join(os.path.dirname(args.output_file), args.profile_name)
+            if os.path.exists(profile_path):
+                print 'A previous procedural abundance profile already exists'
+                print 'Please delete or move away: {0}'.format(profile_path)
+                sys.exit(1)
 
-        # present result to console
-        profile.write_table(sys.stdout)
+            seq_names = None
+            seq_index = SeqIO.index(args.genome_seq, 'fasta')
+            try:
+                seq_names = list(seq_index)
+            finally:
+                seq_index.close()
 
-        # save result to file
-        with open(profile_path, 'w') as h_out:
-            profile.write_table(h_out)
+            profile = abundance.generate_profile(args.seed, seq_names, mode=args.dist,
+                                                 lognorm_mu=args.lognorm_mu, lognorm_sigma=args.lognorm_sigma)
 
-        # generated profile will be used downstream
-        args.profile_in = profile_path
+            # present result to console
+            profile.write_table(sys.stdout)
 
-    if not args.efficiency:
-        if args.method == 'hic':
-            args.efficiency = 0.5
-        elif args.method == 'meta3c':
-            args.efficiency = 0.02
+            # save result to file
+            with open(profile_path, 'w') as h_out:
+                profile.write_table(h_out)
 
-    # list of CLI arguments to pass as parameters to the simulation
-    kw_names = ['prefix', 'machine_profile', 'insert_mean', 'insert_sd', 'insert_min', 'insert_max',
-                'anti_rate', 'spurious_rate', 'trans_rate',
-                'efficiency',
-                'ins_rate', 'del_rate',
-                'create_cids', 'simple_reads']
+            # generated profile will be used downstream
+            args.profile_in = profile_path
 
-    # extract these parameters from the parsed arguments
-    kw_args = {k: v for k, v in vars(args).items() if k in kw_names}
+        if not args.efficiency:
+            if args.method == 'hic':
+                args.efficiency = 0.5
+            elif args.method == 'meta3c':
+                args.efficiency = 0.02
 
-    # initialise a sequencing strategy for this community
-    # and the given experimental parameters
-    strategy = SequencingStrategy(args.seed, args.profile_in, args.genome_seq, args.enzyme_name,
-                                  args.num_pairs, args.method, args.read_length, **kw_args)
+        # list of CLI arguments to pass as parameters to the simulation
+        kw_names = ['prefix', 'machine_profile', 'insert_mean', 'insert_sd', 'insert_min', 'insert_max',
+                    'anti_rate', 'spurious_rate', 'trans_rate',
+                    'efficiency',
+                    'ins_rate', 'del_rate',
+                    'create_cids', 'simple_reads']
 
-    # Run the simulation
-    with io_utils.open_output(args.output_file, mode='w', compress=args.compress) as out_stream:
-        strategy.run(out_stream)
+        # extract these parameters from the parsed arguments
+        kw_args = {k: v for k, v in vars(args).items() if k in kw_names}
+
+        # initialise a sequencing strategy for this community
+        # and the given experimental parameters
+        strategy = SequencingStrategy(args.seed, args.profile_in, args.genome_seq, args.enzyme_name,
+                                      args.num_pairs, args.method, args.read_length, **kw_args)
+
+        # Run the simulation
+        with io_utils.open_output(args.output_file, mode='w', compress=args.compress) as out_stream:
+            strategy.run(out_stream)
+
+    except Exception as ex:
+        print 'Error: {0}'.format(ex)
