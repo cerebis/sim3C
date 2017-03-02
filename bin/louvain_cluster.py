@@ -175,10 +175,16 @@ if __name__ == '__main__':
     import argparse
 
     parser = argparse.ArgumentParser(description='Decompose a graph into its communities')
-    parser.add_argument('-v', '--verbose', action='store_true', default=False, help='Verbose output')
-    parser.add_argument('--no-isolates', action='store_true', default=False, help='Remove isolated nodes')
-    parser.add_argument('--otype', choices=['hard', 'soft', 'maxaff'], default='soft', help='Output type')
-    parser.add_argument('--ofmt', choices=['mcl', 'graphml'], default='mcl', help='Specify output format [mcl]')
+    parser.add_argument('-v', '--verbose', action='store_true', default=False,
+                        help='Verbose output')
+    parser.add_argument('--no-isolates', action='store_true', default=False,
+                        help='Remove isolated nodes')
+    parser.add_argument('--otype', choices=['hard', 'soft', 'maxaff'], default='hard',
+                        help='Output type')
+    parser.add_argument('--ifmt', choices=['edgelist', 'graphml'], default='graphml',
+                        help='Specify input format [graphml]')
+    parser.add_argument('--ofmt', choices=['mcl', 'graphml'], default='mcl',
+                        help='Specify output format [mcl]')
     parser.add_argument('--ragbag', action='store_true', default=False,
                         help='Place isolates in a single ragbag cluster')
     parser.add_argument('input', help='Input graph (graphml format)')
@@ -188,9 +194,12 @@ if __name__ == '__main__':
     if args.otype == 'induced':
         raise RuntimeError('induced option no longer supported')
 
-    g = nx.read_graphml(args.input)
-    print 'Initial statistics'
+    if args.ifmt == 'graphml':
+        g = nx.read_graphml(args.input)
+    else:
+        g = nx.read_edgelist(args.input, data=(('weight', float), ))
 
+    print 'Initial statistics'
     print_info(g)
 
     if args.otype == 'soft':
