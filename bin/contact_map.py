@@ -94,7 +94,7 @@ def strong_match(mr, min_match=None, match_start=True, min_mapq=None):
 
 class ContactMap:
 
-    def __init__(self, bam, enz_name, seq_file, bin_size, ins_mean, ins_sd, min_mapq, ref_min_len,
+    def __init__(self, bam, enz_name, seq_file, bin_size, ins_mean, ins_sd, min_mapq, ref_min_len=0,
                  subsample=None, random_seed=None, strong=None, max_site_dist=None, spacing_factor=1.0):
 
         self.bam = bam
@@ -111,18 +111,13 @@ class ContactMap:
         print 'Counting reads in bam file...'
         self.total_reads = bam.count(until_eof=True)
 
-        if ref_min_len:
-            self.active_seq = []
-            self.total_len = 0
-            for n, li in enumerate(bam.lengths):
-                if li > ref_min_len:
-                    self.active_seq.append(bam.references[n])
-                    self.total_len += li
-            self.total_seq = len(self.active_seq)
-        else:
-            self.active_seq = bam.references
-            self.total_len = sum(bam.lengths)
-            self.total_seq = len(self.active_seq)
+        self.active_seq = OrderedDict()
+        self.total_len = 0
+        for n, li in enumerate(bam.lengths):
+            if li > ref_min_len:
+                self.active_seq[bam.references[n]] = n
+                self.total_len += li
+        self.total_seq = len(self.active_seq)
 
         self.unconstrained = False if enz_name else True
         self._init_seq_info(enz_name, seq_file)
@@ -137,7 +132,13 @@ class ContactMap:
               '\t{0}bp width\n' \
               '\t{1}x{1} dimension'.format(self.bin_size, self.bin_count)
 
+        # a simple associative map for binning on whole sequences
+        id_set = set(self.active_seq.values())
+        self.seq_map = OrderedDict((n, OrderedDict(zip(id_set, [0]*len(id_set)))) for n in id_set)
+
+        # initialized later
         self.raw_map = None
+
 
     def _init_seq_info(self, enz_name, seq_file):
         """
@@ -176,6 +177,11 @@ class ContactMap:
 
             offset += len(rseq)
 
+    def _init_map(self, dt=np.int32):
+        print 'Initialising contact map of {0}x{0} from total extent of {1}bp over {2} sequences'.format(
+            self.bin_count, self.total_len, self.total_seq)
+        return np.zeros((self.bin_count, self.bin_count), dtype=dt)
+
     def build_sorted(self):
         import tqdm
 
@@ -206,6 +212,7 @@ class ContactMap:
             else:
                 is_toofar = _is_toofar_medspc
 
+        # initialise a map matrix for fine-binning and seq-binning
         self.raw_map = self._init_map()
 
         with tqdm.tqdm(total=self.total_reads) as pbar:
@@ -218,6 +225,7 @@ class ContactMap:
             _mapq = self.min_mapq
             _map = self.raw_map
             _seq_info = self.seq_info
+            _active_ids = set(self.active_seq.values())
             wgs_count = 0
             dropped_3c = 0
             kept_3c = 0
@@ -225,6 +233,7 @@ class ContactMap:
             sub_thres = self.subsample
             if self.subsample:
                 uniform = self.random_state.uniform
+
 
             bam.reset()
             bam_iter = bam.fetch(until_eof=True)
@@ -242,6 +251,9 @@ class ContactMap:
                         r1 = r2
                 except StopIteration:
                     break
+
+                if r1.reference_id not in _active_ids or r2.reference_id not in _active_ids:
+                    continue
 
                 if sub_thres and sub_thres < uniform():
                     continue
@@ -276,6 +288,7 @@ class ContactMap:
                             continue
 
                     kept_3c += 1
+                    self.seq_map[r1.reference_id][r2.reference_id] += 1
 
                 r1pos = r1.pos if not r1.is_reverse else r1.pos + r1.alen
                 r2pos = r2.pos if not r2.is_reverse else r2.pos + r2.alen
@@ -288,14 +301,9 @@ class ContactMap:
                 else:
                     _map[ix2][ix1] += 1
 
-        print 'Assumed {0} wgs pairs'.format(wgs_count)
+        print 'Assumed {0} were WGS pairs'.format(wgs_count)
         print 'Kept {0} and dropped {1} long-range (3C-ish) pairs'.format(kept_3c, dropped_3c)
         print 'Total raw map weight {0}'.format(np.sum(_map))
-
-    def _init_map(self, dt=np.int32):
-        print 'Initialising contact map of {0}x{0} from total extent of {1}bp over {2} sequences'.format(
-            self.bin_count, self.total_len, self.total_seq)
-        return np.zeros((self.bin_count, self.bin_count), dtype=dt)
 
     def plot_map(self, pname, remove_diag=False, interp='none'):
         """
@@ -332,6 +340,14 @@ class ContactMap:
         """
         np.savetxt(oname, self.raw_map)
 
+    def print_seqmap(self):
+        print
+        print "Sequence count map:"
+        rev_dict = dict(zip(self.active_seq.values(), self.active_seq.keys()))
+        print ',{0}'.format(','.join(self.active_seq.keys()))
+        for i in self.seq_map:
+            print '{0},{1}'.format(rev_dict[i], ','.join([str(j) for j in self.seq_map[i].values()]))
+
 
 def get_enzyme_instance(enz_name):
     """
@@ -354,7 +370,7 @@ if __name__ == '__main__':
     parser.add_argument('--ins-mean', default=500, type=int, help='Insert length mean [500]')
     parser.add_argument('--ins-sd', default=50, type=int, help='Insert length stddev [50]')
     parser.add_argument('--mapq', default=0, type=int, help='Minimum mapping quality [0]')
-    parser.add_argument('--min-len', default=None, type=int, help='Minimum subject sequence length [none]')
+    parser.add_argument('--min-len', default=0, type=int, help='Minimum subject sequence length [none]')
     parser.add_argument('--per-contig', default=False, action='store_true', help='Bins are per contig')
     parser.add_argument('--bin-size', type=int, default=25000, help='Bin size in bp (25000)')
     parser.add_argument('--remove-diag', default=False, action='store_true',
@@ -382,3 +398,4 @@ if __name__ == '__main__':
         print 'Writing raw output'
         contacts.write_map('{0}.raw.cm'.format(args.output))
         contacts.plot_map('{0}.raw.png'.format(args.output), remove_diag=args.remove_diag)
+        contacts.print_seqmap()
