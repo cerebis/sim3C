@@ -6,6 +6,7 @@ import Bio.SeqIO as SeqIO
 import numpy as np
 import pysam
 from Bio.Restriction import Restriction
+from intervaltree import IntervalTree, Interval
 
 import matplotlib as mpl
 mpl.use('Agg')
@@ -168,7 +169,9 @@ class ContactMap:
                 sites = np.array(self.enzyme.search(rseq.seq, linear=False))
                 sites.sort()  # pedantic check for order
                 medspc = np.median(np.diff(sites))
-                self.seq_info[xi] = {'sites': sites, 'max_dist': self.spacing_factor * medspc, 'offset': offset}
+                self.seq_info[xi] = {'sites': sites,
+                                     'invtree': IntervalTree(Interval(si,si+1) for si in sites),
+                                     'max_dist': self.spacing_factor * medspc, 'offset': offset}
                 print 'Found {0} cut-sites for \"{1}\" ' \
                       'med_spc: {2:.1f} max_dist: {3:.1f}'.format(args.enzyme, rseq.id, medspc,
                                                                   self.spacing_factor*medspc)
@@ -218,7 +221,7 @@ class ContactMap:
         with tqdm.tqdm(total=self.total_reads) as pbar:
 
             # maximum separation being 3 std from mean
-            _wgs_max = self.ins_mean + 3*self.ins_sd
+            _wgs_max = self.ins_mean + 2.0*self.ins_sd
 
             _hic_max = self.max_site_dist
 
@@ -233,7 +236,6 @@ class ContactMap:
             sub_thres = self.subsample
             if self.subsample:
                 uniform = self.random_state.uniform
-
 
             bam.reset()
             bam_iter = bam.fetch(until_eof=True)
@@ -266,9 +268,19 @@ class ContactMap:
 
                 assume_wgs = False
                 if r1.is_proper_pair:
-                    a, b = (r2, r1) if r1.is_reverse else (r1, r2)
-                    ins_len = b.pos + b.alen - a.pos
-                    if a.pos <= b.pos and ins_len < _wgs_max:
+                    # x1 = r1.pos + r1.alen if r1.is_reverse else r1.pos
+                    # x2 = r2.pos + r2.alen if r2.is_reverse else r2.pos
+                    # if x2 < x1:
+                    #     x1, x2 = x2, x1
+                    #
+                    # if not _seq_info[r1.reference_id]['invtree'].overlaps(x1, x2+1):
+                    #     wgs_count += 1
+                    #     continue
+
+                    fwd, rev = (r2, r1) if r1.is_reverse else (r1, r2)
+                    ins_len = rev.pos + rev.alen - fwd.pos
+
+                    if fwd.pos <= rev.pos and ins_len < _wgs_max:
                         assume_wgs = True
                         wgs_count += 1
                         continue
