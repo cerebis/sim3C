@@ -1,3 +1,4 @@
+package mzd
 /*
  * meta-sweeper - for performing parametric sweeps of simulated
  * metagenomic sequencing experiments.
@@ -17,8 +18,8 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-@Grab('org.yaml:snakeyaml:1.17')
 @Grab('com.google.guava:guava:19.0')
+@Grab('org.yaml:snakeyaml:1.17')
 import groovy.transform.AutoClone
 import groovy.transform.Synchronized
 import groovyx.gpars.dataflow.DataflowChannel

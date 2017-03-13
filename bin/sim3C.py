@@ -1292,7 +1292,7 @@ class SequencingStrategy:
             ins_len, midpoint, is_fwd = read_gen.draw_insert()
 
             # is HIC pair?
-            if uniform() >= efficiency:
+            if uniform() <= efficiency:
 
                 n_3c += 1
 
