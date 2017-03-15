@@ -603,9 +603,6 @@ class Cell:
                 pi /= pi.sum()
                 self.cdf_extents_inter[ci] = {'names': self.replicon_names[xi], 'prob': np.cumsum(pi)}
 
-        # inter-repl rate is scaled by the product of this cell's site probs
-        self.trans_rate *= self.pdf_sites.prod()
-
     def register_replicon(self, repl):
         """
         Insert a replicon into this cells registry
