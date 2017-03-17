@@ -1419,7 +1419,7 @@ if __name__ == '__main__':
                         help="Random seed for initialising number generator")
     parser.add_argument('-m', '--method', default='hic', choices=['hic', 'meta3c', 'dnase'],
                         help='Library preparation method [hic]')
-    parser.add_argument('-e', '--enzyme', dest='enzyme_name', default='NlaIII',
+    parser.add_argument('-e', '--enzyme', dest='enzyme_name',
                         help='Restriction enzyme (case-sensitive) [NlaIII]')
 
     parser.add_argument('-n', '--num-pairs', metavar='INT', type=int, required=True,
@@ -1478,6 +1478,8 @@ if __name__ == '__main__':
 
         if args.method == 'dnase' and args.enzyme_name:
             raise RuntimeError('The dnase method does not accept an enyzme specification.')
+        elif not args.enzyme_name:
+            raise RuntimeError('No enzyme was specified')
 
         #
         # Prepare community abundance profile, either procedurally or from a file
