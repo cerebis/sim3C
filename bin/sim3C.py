@@ -735,7 +735,7 @@ class Community:
         self.random_state = random_state
         self.uniform = random_state.uniform
 
-        # global replicon and cell registeries
+        # global replicon and cell registries
         self.repl_registry = OrderedDict()
         self.cell_registry = OrderedDict()
 
@@ -944,7 +944,6 @@ class ReadGenerator:
         """
 
         self.method = method
-        self.cut_site = enzyme.ovhgseq * 2
         self.prefix = prefix
         self.seq_id_fmt = prefix + ':{seed}:{mode}:1:1:1:{idx} {r1r2}:Y:18:1'
         self.wgs_desc_fmt = 'WGS {repl.name}:{x1}..{x2}:{dir}'
@@ -958,6 +957,9 @@ class ReadGenerator:
         if insert_mean - insert_sd < insert_min:
             print 'Warning: specified insert mean ({0}) and stddev ({1}) will produce many inserts below ' \
                   'the minimum allowable insert length ({2})'.format(insert_mean, insert_sd, insert_min)
+
+        if enzyme:
+            self.cut_site = enzyme.ovhgseq * 2
 
         self.insert_mean = insert_mean
         self.insert_sd = insert_sd
@@ -1159,7 +1161,7 @@ class SequencingStrategy:
         # initialise the random state for the simulation
         self.random_state = np.random.RandomState(seed)
 
-        self.enzyme = get_enzyme_instance(enz_name)
+        self.enzyme = None if not enz_name else get_enzyme_instance(enz_name)
         self.profile = abn.read_profile(prof_filename, True)
 
         # initialise the community for the reference data
@@ -1419,7 +1421,7 @@ if __name__ == '__main__':
                         help="Random seed for initialising number generator")
     parser.add_argument('-m', '--method', default='hic', choices=['hic', 'meta3c', 'dnase'],
                         help='Library preparation method [hic]')
-    parser.add_argument('-e', '--enzyme', dest='enzyme_name',
+    parser.add_argument('-e', '--enzyme', dest='enzyme_name', default=None,
                         help='Restriction enzyme (case-sensitive) [NlaIII]')
 
     parser.add_argument('-n', '--num-pairs', metavar='INT', type=int, required=True,
@@ -1494,7 +1496,7 @@ if __name__ == '__main__':
 
         profile = None
         if args.dist:
-            # generate a procedural profile.
+            # generate a procedural profile.ebug
             # the number of taxa is defined by number of sequences. i.e. monochromosomal organisms
 
             if os.path.basename(args.profile_name) != args.profile_name:
@@ -1503,7 +1505,7 @@ if __name__ == '__main__':
 
             profile_path = os.path.join(os.path.dirname(args.output_file), args.profile_name)
             if os.path.exists(profile_path):
-                print 'A previous procedural abundance profile already exists'
+                print 'A previous procedural abundance proebugfile already exists'
                 print 'Please delete or move away: {0}'.format(profile_path)
                 sys.exit(1)
 
