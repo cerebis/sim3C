@@ -1476,8 +1476,9 @@ if __name__ == '__main__':
         if 'community_table' in args and args.dist:
             raise RuntimeError('Cannot define abundance both explicitly as a table (-t) and a distribution (--dist).')
 
-        if args.method == 'dnase' and args.enzyme_name:
-            raise RuntimeError('The dnase method does not accept an enyzme specification.')
+        if args.method == 'dnase':
+            if args.enzyme_name:
+                raise RuntimeError('The dnase method does not accept an enyzme specification.')
         elif not args.enzyme_name:
             raise RuntimeError('No enzyme was specified')
 
