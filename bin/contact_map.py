@@ -90,7 +90,10 @@ def strong_match(mr, min_match=None, match_start=True, min_mapq=None):
     elif mr.is_secondary or mr.is_supplementary:
         return False
 
-    return good_match(mr.cigartuples, min_match, match_start)
+    # reverse the tuple if this read is reversed, as we're testing from 0-base on read.
+    cigtup = mr.cigartuples[::-1] if mr.is_reverse else mr.cigartuples
+
+    return good_match(cigtup, min_match, match_start)
 
 
 class ContactMap:
@@ -120,13 +123,13 @@ class ContactMap:
                 self.total_len += li
         self.total_seq = len(self.active_seq)
 
-        self.unconstrained = False if enz_name else True
+        self.unrestricted = False if enz_name else True
         self._init_seq_info(enz_name, seq_file)
 
         print 'Map based upon mapping containing:\n' \
               '\t{0} sequences\n' \
               '\t{1}bp total length\n' \
-              '\t{2} mapped reads'.format(self.total_seq, self.total_len, self.total_reads)
+              '\t{2} alignments'.format(self.total_seq, self.total_len, self.total_reads)
 
         self.bin_count = int(self.total_len / self.bin_size) + 1
         print 'Map details:\n' \
@@ -139,7 +142,6 @@ class ContactMap:
 
         # initialized later
         self.raw_map = None
-
 
     def _init_seq_info(self, enz_name, seq_file):
         """
@@ -170,8 +172,9 @@ class ContactMap:
                 sites.sort()  # pedantic check for order
                 medspc = np.median(np.diff(sites))
                 self.seq_info[xi] = {'sites': sites,
-                                     'invtree': IntervalTree(Interval(si,si+1) for si in sites),
-                                     'max_dist': self.spacing_factor * medspc, 'offset': offset}
+                                     'invtree': IntervalTree(Interval(si, si+1) for si in sites),
+                                     'max_dist': self.spacing_factor * medspc,
+                                     'offset': offset}
                 print 'Found {0} cut-sites for \"{1}\" ' \
                       'med_spc: {2:.1f} max_dist: {3:.1f}'.format(args.enzyme, rseq.id, medspc,
                                                                   self.spacing_factor*medspc)
@@ -207,12 +210,16 @@ class ContactMap:
             return False
 
         # set-up the test for site proximity
-        if not self.unconstrained:
+        if self.unrestricted:
+            # all positions can participate, therefore restrictions are ignored.
+            # TODO this would make more sense to be handled at arg parsing, since user should
+            # be informed, rather tha silently ignoring.
             is_toofar = _is_toofar_dummy
         else:
             if self.max_site_dist:
                 is_toofar = _is_toofar_absolute
             else:
+                # default to spacing factor
                 is_toofar = _is_toofar_medspc
 
         # initialise a map matrix for fine-binning and seq-binning
@@ -287,7 +294,7 @@ class ContactMap:
 
                 if not assume_wgs:
 
-                    if not self.unconstrained:
+                    if not self.unrestricted:
 
                         r1_dist = upstream_dist(r1, _seq_info[r1.reference_id]['sites'], r1.reference_length)
                         if is_toofar(r1_dist, _hic_max, _seq_info[r1.reference_id]['max_dist']):
@@ -387,7 +394,7 @@ if __name__ == '__main__':
     parser.add_argument('--bin-size', type=int, default=25000, help='Bin size in bp (25000)')
     parser.add_argument('--remove-diag', default=False, action='store_true',
                         help='Remove the central diagonal from plot')
-    parser.add_argument('--enzyme', default=None, help='Restriction enzyme (case sensitive)')
+    parser.add_argument('-e', '--enzyme', default=None, help='Restriction enzyme (case sensitive)')
     parser.add_argument('refseq', metavar='FASTA', help='Reference fasta sequence (in same order)')
     parser.add_argument('bamfile', metavar='BAMFILE', help='Name-sorted BAM file')
     parser.add_argument('output', metavar='OUTPUT_BASE', help='Output base name')
