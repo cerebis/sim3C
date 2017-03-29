@@ -301,7 +301,8 @@ class Replicon:
     # Empirical distribution parameters. These might eventually be exposed to users.
     BACKBONE_PROB = 0.25
     GLOBAL_EMPDIST_BINS = 1000
-    GLOBAL_SHAPE_FACTOR = 4.0e-6
+    GLOBAL_SHAPE_FACTOR = 3.0e-6
+    CDF_ALPHA = 0.1
     CID_EMPDIST_BINS = 100
     CID_SHAPE_FACTOR = 8.0e-6
     CID_MIN = 3
@@ -350,6 +351,7 @@ class Replicon:
                 em.generate_nested_cids(self.random_state, self.length, Replicon.BACKBONE_PROB,
                                         Replicon.GLOBAL_EMPDIST_BINS, Replicon.GLOBAL_SHAPE_FACTOR,
                                         Replicon.CID_EMPDIST_BINS, Replicon.CID_SHAPE_FACTOR,
+                                        cdf_alpha=Replicon.CDF_ALPHA,
                                         min_num=Replicon.CID_MIN, max_num=Replicon.CID_MAX,
                                         recur_depth=Replicon.CID_DEPTH))
 
@@ -357,7 +359,8 @@ class Replicon:
             # setup for simple model
             self.draw_constrained_site = self._draw_simple_constrained_site
             self.empdist = em.EmpiricalDistribution(self.random_state, self.length,
-                                                    Replicon.GLOBAL_EMPDIST_BINS, em.cdf_geom_unif,
+                                                    Replicon.GLOBAL_EMPDIST_BINS, em.cdf_geom_unif_ratio,
+                                                    cdf_alpha=Replicon.CDF_ALPHA,
                                                     shape=Replicon.GLOBAL_SHAPE_FACTOR)
 
         # set bidirection association with containing cell

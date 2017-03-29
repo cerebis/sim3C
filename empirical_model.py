@@ -24,19 +24,18 @@ def cdf_geom(x, shape):
     return 1. - (1. - shape) ** x
 
 
-def cdf_geom_unif_ratio(x, length, **kwargs):
+def cdf_geom_unif_ratio(x, length, alpha=0.333, **kwargs):
     """
     CDF as an adjustable linear combination of the geometric and uniform CDFs, covering
     values over the range 0..length. Must supply a geometric shape coeff as
     a keyword arg.
     :param x: 0..1
     :param length: maximum value
-    :param kwargs: 'shape' geometric distribution coeff, 'alpha' proportional contribution of
-     uniform distribution to CDF.
+    :param alpha: proportional contribution to CDF from uniform distribution term. [0..1]
+    :param kwargs: 'shape' geometric distribution coeff
     :return: float from 0..length
     """
-    a = kwargs['alpha']
-    return (1.0 - a) * (1.0 - (1.0 - kwargs['shape']) ** x) + a/length * x
+    return (1.0 - alpha) * (1.0 - (1.0 - kwargs['shape']) ** x) + alpha/length * x
 
 
 def cdf_geom_unif(x, length, **kwargs):
@@ -74,7 +73,7 @@ class EmpiricalDistribution:
 
     def __init__(self, random_state, length, bins, cdf, **coeffs):
         """
-        Initialise an empirical distribution using the supplied CDF and for the range [0..length]. The CDF is normalized
+        Initialise an empirical distribution using the supplied CDF and for() the range [0..length]. The CDF is normalized
         by 1 / max[CDF(x)].
         :param random_state: random state from which to draw numbers. If None, then this will be initialized at
         :param shape: distribution shape parameter
@@ -139,7 +138,7 @@ def _reducer_cid_data(acc, x):
     return {'prob': 0.5*(acc['prob'] + x['prob']), 'empdist': acc['empdist'] + x['empdist']}
 
 
-def generate_random_cids(random_state, chr_length, chr_prob=0.5, chr_bins=1000, chr_shape=8.0e-6,
+def generate_random_cids(random_state, chr_length, chr_prob=0.5, chr_bins=1000, chr_shape=8.0e-6, cdf_alpha=0.333,
                          min_cid_len=20000, max_cid_len=250000, num_cid=10, cid_bins=100, cid_shape=6.0e-6,
                          merge_overlaps=False):
     """
@@ -179,7 +178,8 @@ def generate_random_cids(random_state, chr_length, chr_prob=0.5, chr_bins=1000, 
     # We assume their distributions are of the same form as the full genome.
     cid_tree = IntervalTree(Interval(x, x+y,
                                      {'prob': cid_probs_iter.next(),
-                                      'empdist': EmpiricalDistribution(random_state, y, cid_bins, cdf_geom_unif, shape=cid_shape)}
+                                      'empdist': EmpiricalDistribution(random_state, y, cid_bins, cdf_geom_unif_ratio,
+                                                                       shape=cid_shape, alpha=cdf_alpha)}
                                      ) for x, y in data if y < chr_length)
 
     # If requested, simplify the CID tree into non-overlapping regions
@@ -188,8 +188,8 @@ def generate_random_cids(random_state, chr_length, chr_prob=0.5, chr_bins=1000, 
 
     # Add the interval governing the whole genome -- call it the genome-wide CID. mother of all CID? heh
     cid_tree[0:chr_length] = {'prob': chr_prob,
-                              'empdist': EmpiricalDistribution(random_state, chr_length, chr_bins,
-                                                                  cdf_geom_unif, shape=chr_shape)}
+                              'empdist': EmpiricalDistribution(random_state, chr_length, chr_bins, cdf_geom_unif_ratio,
+                                                               shape=chr_shape, alpha=cdf_alpha)}
 
     return cid_tree
 
@@ -227,8 +227,8 @@ def _random_nested_intervals(random_state, result, inv, min_len, max_len, min_nu
 
 
 def generate_nested_cids(random_state, chr_length, chr_prob, chr_bins, chr_shape, cid_bins, cid_shape,
-                         min_len=0.05, max_len=0.2, min_num=5, max_num=5, recur_depth=2):
-    """
+                         cdf_alpha=0.333, min_len=0.05, max_len=0.2, min_num=5, max_num=5, recur_depth=2):
+    """cdf
     Generate a set of nested CID intervals for the given genome size. This method better approximates the
     appearance of a bacterial contact map, conceptually that folded regions themselves fold again and so
     create intervals within themselves which interact. Default values to the method appear to produce
@@ -239,6 +239,7 @@ def generate_nested_cids(random_state, chr_length, chr_prob, chr_bins, chr_shape
     :param chr_prob: the probability of a regular backbone interaction vs CID interaction
     :param chr_bins: the number of bins over which to sample the backbone CDF
     :param chr_shape: the backbone shape parameter
+    :param cdf_alpha: proportion of CDF contributed by the uniform distribution term. [0..1]
     :param cid_bins: the number of bins over which to sample the CID CDFs
     :param cid_shape: the CID shape parameter
     :param min_len: the smallest proportional size of an interval [0..1]
@@ -270,14 +271,14 @@ def generate_nested_cids(random_state, chr_length, chr_prob, chr_bins, chr_shape
         # explicitly cast, avoiding a 1-element np array
         inv.data['prob'] = float(cid_probs_iter.next())
         inv.data['empdist'] = EmpiricalDistribution(random_state, inv.length(), cid_bins,
-                                                    cdf_geom_unif, shape=cid_shape)
+                                                    cdf_geom_unif_ratio, shape=cid_shape, alpha=cdf_alpha)
         cid_tree.add(inv)
 
     # Add the interval governing the whole genome
     data = {'depth': 0,
             'prob': chr_prob,
             'empdist': EmpiricalDistribution(random_state, chr_length, chr_bins,
-                                             cdf_geom_unif_ratio, shape=chr_shape, alpha=0.333)}
+                                             cdf_geom_unif_ratio, shape=chr_shape, alpha=cdf_alpha)}
     cid_tree.addi(0, chr_length, data=data)
 
     return cid_tree
