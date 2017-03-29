@@ -301,7 +301,7 @@ class Replicon:
     # Empirical distribution parameters. These might eventually be exposed to users.
     BACKBONE_PROB = 0.25
     GLOBAL_EMPDIST_BINS = 1000
-    GLOBAL_SHAPE_FACTOR = 3.0e-6
+    GLOBAL_SHAPE_FACTOR = 3.5e-6
     CDF_ALPHA = 0.1
     CID_EMPDIST_BINS = 100
     CID_SHAPE_FACTOR = 8.0e-6
