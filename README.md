@@ -107,19 +107,19 @@ Both a random seed and a output profile name can be specified at runtime. These 
 
 #### Faster simulation
 
-```---simple-reads```
+```--simple-reads```
 
 Although Sim3C can simulate read-errors, by use of art_illumina[1] machine profiles, there is currently a significant performance hit. If users are interested in faster simulations, possibly to explore a wider space more quickly before a more thorough validation, simple reads without error are possible.
 
 #### Compress output
 
-```--compress {gzip, bzip2} OR -C {gzip, bzip2}```
+```--compress {gzip, bzip2}``` OR ```-C {gzip, bzip2}```
 
 Write the output FASTQ in either gzip or bzip2 compressed format.
 
 #### Specify restriction digest enzyme
 
-```--enzyme [string] OR -e [string]```
+```--enzyme [string]``` OR ```-e [string]```
 
 For HiC and Meta3C simulation, an enzyme is required. The default is the 4-cutter NlaIII. The name is case-sensitive and supports most enzymes defined in ReBase[2], as implemented in BioPython Restriction.
 
