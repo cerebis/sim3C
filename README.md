@@ -4,9 +4,9 @@ Read-pair simulation of 3C-based sequencing methodologies (HiC, Meta3C, DNase-Hi
 
 ## Dependencies
 
-*Python 2.7*
+**Python 2.7**
 
-*Python modules*
+**Required python modules**
 
 - biopython
 - intervaltree
@@ -54,7 +54,7 @@ seq3    bac2  0.6        1
 
 ##### Column definitions
 
-*1. chromosome:* (string)
+**1. chromosome:** (string)
  
 Each chromosome name must match a sequence id within the reference FASTA file, therefore all constraints on FASTA id fields are imposed on this column. For long IDs, such as those in Refseq, no attempt to parse the namespaces is attempted in Sim3C and so the entire ID must be included. 
   
@@ -75,15 +75,15 @@ The profile line might be
 db|foo|bar|1234  mycell  1  1
 ```
 
-*2. cell:* (string)
+**2. cell:** (string)
 
 Cells act as containers of chromosomes. Users can choose any label they desire, baring whitespace. For multi-chromosome cell/genome definitions, this label will be repeated, as it indicates which container in to which the chromosome is placed.
 
-*3. relative abundance:* (float)
+**3. relative abundance:** (float)
 
 Relative abundances are defined per-cell, therefore this value will be repeated for each chromosome belonging to the cell. The abundances do not need to sum to 1 as the profile is normalised internally.
 
-*4. copy number:* (int)
+**4. copy number:** (int)
 
 Copy number is most often set to 1, but gives the user the freedom to increase the abundance of chromosomes independent of the cellular abundance.
 
