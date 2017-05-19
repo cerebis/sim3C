@@ -2,6 +2,25 @@
 
 Read-pair simulation of 3C-based sequencing methodologies (HiC, Meta3C, DNase-HiC)
 
+## Dependencies
+
+*Python 2.7*
+
+*Python modules*
+
+- biopython
+- intervaltree
+- numpy
+- scipy
+- tqdm
+- PyYAML
+
+Dependencies can be satisfied through pip, using the supplied requirements file.
+
+```bash
+pip install -U -r requirements.txt
+````
+
 ## Intro
 
 Analogous to the well established process of simulating whole-genome shotgun reads, sim3C.py simulates read-pairs as if generated from a sequencing library prepared using a HiC/3C methodology.
