@@ -93,12 +93,12 @@ The simplest runtime scenario would be a strictly mono-chromosomal community, wh
 
 Simulate 500k 150bp read-pairs using traditional HiC, NlaIII as an enzyme and uniformly random abundance across all sequences.
 ```bash
-> sim3C --dist uniform -n 500000 -l 150 -e NlaIII -m hic myref.fasta sim.fastq
+> sim3C.py --dist uniform -n 500000 -l 150 -e NlaIII -m hic myref.fasta sim.fastq
 ```
 
 If a community profile has been prepared and we wish to simulate Meta3C.
 ```bash
-> sim3C --profile mycom.txt -n 500000 -l 150 -e NlaIII -m meta3c myref.fasta sim.fastq
+> sim3C.py --profile mycom.txt -n 500000 -l 150 -e NlaIII -m meta3c myref.fasta sim.fastq
 ```
 
 Both a random seed and a output profile name can be specified at runtime. These make reducibility possible. The random seed is used to initialise all number generators within the simulation and, if given, the profile name will allow Sim3C to save the state of the profile when drawn at random from a distribution. Though saving the profile state is not necessary to reproducibly rerun Sim3C, it assists downstream analyses which may wish to know the true state.
