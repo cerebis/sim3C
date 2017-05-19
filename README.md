@@ -1,8 +1,8 @@
-# Sim3C
+#Sim3C
 
 Read-pair simulation of 3C-based sequencing methodologies (HiC, Meta3C, DNase-HiC)
 
-## Dependencies
+##Dependencies
 
 *Python 2.7*
 
@@ -21,25 +21,106 @@ Dependencies can be satisfied through pip, using the supplied requirements file.
 pip install -U -r requirements.txt
 ````
 
-## Intro
+##Usage
 
-Analogous to the well established process of simulating whole-genome shotgun reads, sim3C.py simulates read-pairs as if generated from a sequencing library prepared using a HiC/3C methodology.
+###External files
 
-Experimental noise is considered both in terms of Illumina-based sequencing error and that inherent in the production of HiC/3C library generation. Sequencing error is afforded by a reimplementation of art_illumina (Huang et al, 2011) in Python (Art.py). HiC/3C noise, in the form of spurious ligation products, is modeled as the uniformly random association of any two sites across the entire extent of the source genome(s), the rate of which is user controlled.
+####Reference Sequence(s) (mandatory)
 
-To support community sampling (metagenomes), an abundance profile is supplied along with the set of reference sequences at runtime. The profile can either take the form of an explicit table or be drawn at random from a user chosen probability distribution (equal, uniform random or log-normal).
+At a minimum, Sim3C requires a reference sequence (or sequences) from which to draw reads. This reference must be in FASTA format. For multiple references, all must be contained in the single multi-FASTA file. All sequence identifiers must be unique must be unique in a multi-FASTA file.
 
-The tool conceptualises the process of HiC/3C read-pair generation, as a series of conditional probabilities. For intra-chromosomal read-pairs, genomic separation is constrained to follow an empirically determined long-tailed composition of the geometric and uniform distributions. For inter-chromosomal (but same cell) pairs, genomic position is constrained only by proximity to a restriction site. Lastly, inter-cellular read-pairs are not considered.
+####Community Profile (optional)
 
-Fine scale structurally related features that have been observed via contact maps in real experiments (Tung et al, 2013) are also reproduced in our simulation. Namely, contacts between the two arms of the chromosome and chromosomal interacting domains (CID). Within bacterial HiC contact maps, inter-arm contacts are responsible for the fainter anti-diagonal observed (y=-x rather than y=x), while the tightly folded CID domains act to modulate contact frequencies over their local extent, resulting in blocks of density. In our simulation, CIDs are randomly generated at runtime using the supplied seed, and the strength of their effect adjusted or disabled by the user.
+A community profile can be supplied, which gives the user more control over the definition. Without this enternal profile file, each individual sequence encountered in the supplied reference will be treated as a separate monochromosomal genome.
 
-Pseudocode
+A profile is a simple tabular text file with the columns:
+
+1. chromosome
+2. cell
+3. relative abundance
+4. chromosome copy number.
+
+There is a mismatch between the hierarchical nature of a community and the flat nature of this simple format. Despite the repetition that can occur for more complicated profiles, we have chosen to stick with this format for simplicity for the time being.
+
+It is easiest to regard column 1 as the primary column, for which each entry must be unique. Column 2 is inherently redundant when dealing with multi-chromosomal cell definitions. The third column refers to the abundance of the cell, and so is as equally redundant as column 2. The forth column allows users to increase the number of copies of a chosen chromosome within a cell. Optional comments are prefixed with a #.
+
+Eg. A simple 2 cell definition, where the first has 2 replicons.
 ```
-If a spurious event:
-  unconstrained pairing of any two sites across entire (meta)genome
-Else if an inter-chromosomal event: 
-  unconstrained positions on Chr_A, Chr_B from Genome_N
-Else is an intra-chromosomal event:
-  contrained positions x1, x2 ~ g(x) on Chr_A
-Where g(x) reflects both the empirical constraint on distance and fine-scale features mentioned above.
+#chrom  cell  abundance  copy_number
+seq1    bac1  0.4        1
+seq2    bac1  0.4        4
+seq3    bac2  0.6        1
 ```
+
+#####Column definitions
+
+*1. chromosome:* (string)
+ 
+Each chromosome name must match a sequence id within the reference FASTA file, therefore all constraints on FASTA id fields are imposed on this column. For long IDs, such as those in Refseq, no attempt to parse the namespaces is attempted in Sim3C and so the entire ID must be included. 
+  
+I.E. For the following reference FASTA fragment:
+```
+>db|foo|bar|12345
+AGCTTTTCATTCTGACTGCAACGGGCAATATGTCTCTGTGTGGATTAAAAAAAGAGTGTCTGATAGCAGC
+TTCTGAACTGGTTACCTGCCGTGAGTAAATTAAAATTTTATTGACTTAGGTCACTAAATACTTTAACCAA
+TATAGGCATAGCGCACAGACAGATAAAAATTACAGAGTACACAACATCCATGAAACGCATTAGCACCACC
+ATTACCACCACCATCACCATTACCACAGGTAACGGTGCGGGCTGACGCGTACAGGAAACACAGAAAAAAG
+CCCGCACCTGACAGTGCGGGCTTTTTTTTTCGACCAAAGGTAACGAGGTAACAACCATGCGAGTGTTGAA
+GTTCGGCGGTACATCAGTGGCAAATGCAGAACGTTTTCTGCGTGTTGCCGATATTCTGGAAAGCAATGCC
+```e
+
+The profile line might be
+
+```
+db|foo|bar|1234  mycell  1  1
+```
+
+*2. cell:* (string)
+
+Cells act as containers of chromosomes. Users can choose any label they desire, baring whitespace. For multi-chromosome cell/genome definitions, this label will be repeated, as it indicates which container in to which the chromosome is placed.
+
+*3. relative abundance:* (float)
+
+Relative abundances are defined per-cell, therefore this value will be repeated for each chromosome belonging to the cell. The abundances do not need to sum to 1 as the profile is normalised internally.
+
+*4. copy number:* (int)
+
+Copy number is most often set to 1, but gives the user the freedom to increase the abundance of chromosomes independent of the cellular abundance.
+
+###Runtime
+
+The simplest runtime scenario would be a strictly mono-chromosomal community, which requires only reference FASTA.
+
+Simulate 500k 150bp read-pairs using traditional HiC, NlaIII as an enzyme and uniformly random abundance across all sequences.
+```bash
+> sim3C --dist uniform -n 500000 -l 150 -e NlaIII -m hic myref.fasta sim.fastq
+```
+
+If a community profile has been prepared and we wish to simulate Meta3C.
+```bash
+> sim3C --profile mycom.txt -n 500000 -l 150 -e NlaIII -m meta3c myref.fasta sim.fastq
+```
+
+Both a random seed and a output profile name can be specified at runtime. These make reducibility possible. The random seed is used to initialise all number generators within the simulation and, if given, the profile name will allow Sim3C to save the state of the profile when drawn at random from a distribution. Though saving the profile state is not necessary to reproducibly rerun Sim3C, it assists downstream analyses which may wish to know the true state.
+
+###Useful options
+
+####Faster simulation
+
+```---simple-reads```
+
+Although Sim3C can simulate read-errors, by use of art_illumina[1] machine profiles, there is currently a significant performance hit. If users are interested in faster simulations, possibly to explore a wider space more quickly before a more thorough validation, simple reads without error are possible.
+
+```--compress {gzip, bzip2} OR -C {gzip, bzip2}```
+
+Write the output FASTQ in either gzip or bzip2 compressed format.
+
+```--enzyme [string] OR -e [string]```
+
+For HiC and Meta3C simulation, an enzyme is required. The default is the 4-cutter NlaIII. The name is case-sensitive and supports most enzymes defined in ReBase[2], as implemented in BioPython Restriction.
+
+##References
+
+1. Huang, Weichun, Leping Li, Jason R. Myers, and Gabor T. Marth. 2012. “ART: A next-Generation Sequencing Read Simulator.” Bioinformatics  28 (4). Oxford University Press: 593–94.
+
+2. Roberts, Richard J., Tamas Vincze, Janos Posfai, and Dana Macelis. 2015. “REBASE--a Database for DNA Restriction and Modification: Enzymes, Genes and Genomes.” Nucleic Acids Research 43 (Database issue): D298–99.
