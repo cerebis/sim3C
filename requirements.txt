@@ -1,0 +1,8 @@
+# biopython requires gcc installed
+biopython
+intervaltree
+numpy
+scipy
+tqdm
+pyyaml
+
