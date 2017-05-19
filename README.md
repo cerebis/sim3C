@@ -1,8 +1,8 @@
-#Sim3C
+# Sim3C
 
 Read-pair simulation of 3C-based sequencing methodologies (HiC, Meta3C, DNase-HiC)
 
-##Dependencies
+## Dependencies
 
 *Python 2.7*
 
@@ -19,17 +19,17 @@ Dependencies can be satisfied through pip, using the supplied requirements file.
 
 ```bash
 pip install -U -r requirements.txt
-````
+```
 
-##Usage
+## Usage
 
-###External files
+### External files
 
-####Reference Sequence(s) (mandatory)
+#### Reference Sequence(s) (mandatory)
 
 At a minimum, Sim3C requires a reference sequence (or sequences) from which to draw reads. This reference must be in FASTA format. For multiple references, all must be contained in the single multi-FASTA file. All sequence identifiers must be unique must be unique in a multi-FASTA file.
 
-####Community Profile (optional)
+#### Community Profile (optional)
 
 A community profile can be supplied, which gives the user more control over the definition. Without this enternal profile file, each individual sequence encountered in the supplied reference will be treated as a separate monochromosomal genome.
 
@@ -52,7 +52,7 @@ seq2    bac1  0.4        4
 seq3    bac2  0.6        1
 ```
 
-#####Column definitions
+##### Column definitions
 
 *1. chromosome:* (string)
  
@@ -67,7 +67,7 @@ TATAGGCATAGCGCACAGACAGATAAAAATTACAGAGTACACAACATCCATGAAACGCATTAGCACCACC
 ATTACCACCACCATCACCATTACCACAGGTAACGGTGCGGGCTGACGCGTACAGGAAACACAGAAAAAAG
 CCCGCACCTGACAGTGCGGGCTTTTTTTTTCGACCAAAGGTAACGAGGTAACAACCATGCGAGTGTTGAA
 GTTCGGCGGTACATCAGTGGCAAATGCAGAACGTTTTCTGCGTGTTGCCGATATTCTGGAAAGCAATGCC
-```e
+```
 
 The profile line might be
 
@@ -87,7 +87,7 @@ Relative abundances are defined per-cell, therefore this value will be repeated 
 
 Copy number is most often set to 1, but gives the user the freedom to increase the abundance of chromosomes independent of the cellular abundance.
 
-###Runtime
+### Runtime
 
 The simplest runtime scenario would be a strictly mono-chromosomal community, which requires only reference FASTA.
 
@@ -103,23 +103,27 @@ If a community profile has been prepared and we wish to simulate Meta3C.
 
 Both a random seed and a output profile name can be specified at runtime. These make reducibility possible. The random seed is used to initialise all number generators within the simulation and, if given, the profile name will allow Sim3C to save the state of the profile when drawn at random from a distribution. Though saving the profile state is not necessary to reproducibly rerun Sim3C, it assists downstream analyses which may wish to know the true state.
 
-###Useful options
+### Useful options
 
-####Faster simulation
+#### Faster simulation
 
 ```---simple-reads```
 
 Although Sim3C can simulate read-errors, by use of art_illumina[1] machine profiles, there is currently a significant performance hit. If users are interested in faster simulations, possibly to explore a wider space more quickly before a more thorough validation, simple reads without error are possible.
 
+#### Compress output
+
 ```--compress {gzip, bzip2} OR -C {gzip, bzip2}```
 
 Write the output FASTQ in either gzip or bzip2 compressed format.
+
+#### Specify restriction digest enzyme
 
 ```--enzyme [string] OR -e [string]```
 
 For HiC and Meta3C simulation, an enzyme is required. The default is the 4-cutter NlaIII. The name is case-sensitive and supports most enzymes defined in ReBase[2], as implemented in BioPython Restriction.
 
-##References
+## References
 
 1. Huang, Weichun, Leping Li, Jason R. Myers, and Gabor T. Marth. 2012. “ART: A next-Generation Sequencing Read Simulator.” Bioinformatics  28 (4). Oxford University Press: 593–94.
 
