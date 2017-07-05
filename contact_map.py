@@ -99,7 +99,8 @@ def strong_match(mr, min_match=None, match_start=True, min_mapq=None):
 class ContactMap:
 
     def __init__(self, bam, enz_name, seq_file, bin_size, ins_mean, ins_sd, min_mapq, ref_min_len=0,
-                 subsample=None, random_seed=None, strong=None, max_site_dist=None, spacing_factor=1.0):
+                 subsample=None, random_seed=None, strong=None, max_site_dist=None, spacing_factor=1.0,
+                 count_reads=True):
 
         self.bam = bam
         self.bin_size = bin_size
@@ -111,9 +112,12 @@ class ContactMap:
         self.strong = strong
         self.max_site_dist = max_site_dist
         self.spacing_factor = spacing_factor
+        self.count_reads = count_reads
 
-        print 'Counting reads in bam file...'
-        self.total_reads = bam.count(until_eof=True)
+        self.total_reads = None
+        if count_reads:
+            print 'Counting reads in bam file...'
+            self.total_reads = bam.count(until_eof=True)
 
         self.active_seq = OrderedDict()
         self.total_len = 0
@@ -129,7 +133,8 @@ class ContactMap:
         print 'Map based upon mapping containing:\n' \
               '\t{0} sequences\n' \
               '\t{1}bp total length\n' \
-              '\t{2} alignments'.format(self.total_seq, self.total_len, self.total_reads)
+              '\t{2} alignments'.format(self.total_seq, self.total_len,
+                                        self.total_reads if self.count_reads else 'unknown')
 
         self.bin_count = int(self.total_len / self.bin_size) + 1
         print 'Map details:\n' \
@@ -146,7 +151,8 @@ class ContactMap:
     def _init_seq_info(self, enz_name, seq_file):
         """
         Initialise information to do with the sites of the given template sequences.
-        Each sequence is digested, the sites recorded and statistics collected.
+        Each sequence is digested, the sites recorded and statistics collected. In parsing
+        the references, the list of active sequences may change.
         :param enz_name: the name of the enzyme (case sensitive)
         :param seq_file: the multi-fasta to digest
         """
@@ -169,6 +175,7 @@ class ContactMap:
 
             if self.enzyme:
                 sites = np.array(self.enzyme.search(rseq.seq, linear=False))
+
                 sites.sort()  # pedantic check for order
                 medspc = np.median(np.diff(sites))
                 self.seq_info[xi] = {'sites': sites,
@@ -176,7 +183,7 @@ class ContactMap:
                                      'max_dist': self.spacing_factor * medspc,
                                      'offset': offset}
                 print 'Found {0} cut-sites for \"{1}\" ' \
-                      'med_spc: {2:.1f} max_dist: {3:.1f}'.format(args.enzyme, rseq.id, medspc,
+                      'med_spc: {2:.1f} max_dist: {3:.1f}'.format(enz_name, rseq.id, medspc,
                                                                   self.spacing_factor*medspc)
             else:
                 self.seq_info[xi] = {'offset': offset}
@@ -225,100 +232,103 @@ class ContactMap:
         # initialise a map matrix for fine-binning and seq-binning
         self.raw_map = self._init_map()
 
-        with tqdm.tqdm(total=self.total_reads) as pbar:
+        if self.total_reads:
+            progress_bar = tqdm.tqdm(total=self.total_reads)
+        else:
+            progress_bar = tqdm.tqdm()
 
-            # maximum separation being 3 std from mean
-            _wgs_max = self.ins_mean + 2.0*self.ins_sd
+        # maximum separation being 3 std from mean
+        _wgs_max = self.ins_mean + 2.0*self.ins_sd
 
-            _hic_max = self.max_site_dist
+        _hic_max = self.max_site_dist
 
-            _mapq = self.min_mapq
-            _map = self.raw_map
-            _seq_info = self.seq_info
-            _active_ids = set(self.active_seq.values())
-            wgs_count = 0
-            dropped_3c = 0
-            kept_3c = 0
+        _mapq = self.min_mapq
+        _map = self.raw_map
+        _seq_info = self.seq_info
+        _active_ids = set(self.active_seq.values())
+        wgs_count = 0
+        dropped_3c = 0
+        kept_3c = 0
 
-            sub_thres = self.subsample
-            if self.subsample:
-                uniform = self.random_state.uniform
+        sub_thres = self.subsample
+        if self.subsample:
+            uniform = self.random_state.uniform
 
-            bam.reset()
-            bam_iter = bam.fetch(until_eof=True)
-            while True:
+        bam.reset()
+        bam_iter = bam.fetch(until_eof=True)
+        while True:
 
-                try:
-                    r1 = bam_iter.next()
-                    pbar.update()
-                    while True:
-                        # read records until we get a pair
-                        r2 = bam_iter.next()
-                        pbar.update()
-                        if r1.query_name == r2.query_name:
-                            break
-                        r1 = r2
-                except StopIteration:
-                    break
+            try:
+                r1 = bam_iter.next()
+                progress_bar.update()
+                while True:
+                    # read records until we get a pair
+                    r2 = bam_iter.next()
+                    progress_bar.update()
+                    if r1.query_name == r2.query_name:
+                        break
+                    r1 = r2
+            except StopIteration:
+                break
 
-                if r1.reference_id not in _active_ids or r2.reference_id not in _active_ids:
+            if r1.reference_id not in _active_ids or r2.reference_id not in _active_ids:
+                continue
+
+            if sub_thres and sub_thres < uniform():
+                continue
+
+            if not _matcher(r1) or not _matcher(r2):
+                continue
+
+            if r1.is_read2:
+                r1, r2 = r2, r1
+
+            assume_wgs = False
+            if r1.is_proper_pair:
+                # x1 = r1.pos + r1.alen if r1.is_reverse else r1.pos
+                # x2 = r2.pos + r2.alen if r2.is_reverse else r2.pos
+                # if x2 < x1:
+                #     x1, x2 = x2, x1
+                #
+                # if not _seq_info[r1.reference_id]['invtree'].overlaps(x1, x2+1):
+                #     wgs_count += 1
+                #     continue
+
+                fwd, rev = (r2, r1) if r1.is_reverse else (r1, r2)
+                ins_len = rev.pos + rev.alen - fwd.pos
+
+                if fwd.pos <= rev.pos and ins_len < _wgs_max:
+                    assume_wgs = True
+                    wgs_count += 1
                     continue
 
-                if sub_thres and sub_thres < uniform():
-                    continue
+            if not assume_wgs:
 
-                if not _matcher(r1) or not _matcher(r2):
-                    continue
+                if not self.unrestricted:
 
-                if r1.is_read2:
-                    r1, r2 = r2, r1
-
-                assume_wgs = False
-                if r1.is_proper_pair:
-                    # x1 = r1.pos + r1.alen if r1.is_reverse else r1.pos
-                    # x2 = r2.pos + r2.alen if r2.is_reverse else r2.pos
-                    # if x2 < x1:
-                    #     x1, x2 = x2, x1
-                    #
-                    # if not _seq_info[r1.reference_id]['invtree'].overlaps(x1, x2+1):
-                    #     wgs_count += 1
-                    #     continue
-
-                    fwd, rev = (r2, r1) if r1.is_reverse else (r1, r2)
-                    ins_len = rev.pos + rev.alen - fwd.pos
-
-                    if fwd.pos <= rev.pos and ins_len < _wgs_max:
-                        assume_wgs = True
-                        wgs_count += 1
+                    r1_dist = upstream_dist(r1, _seq_info[r1.reference_id]['sites'], r1.reference_length)
+                    if is_toofar(r1_dist, _hic_max, _seq_info[r1.reference_id]['max_dist']):
+                        dropped_3c += 1
                         continue
 
-                if not assume_wgs:
+                    r2_dist = upstream_dist(r2, _seq_info[r2.reference_id]['sites'], r2.reference_length)
+                    if is_toofar(r2_dist, _hic_max, _seq_info[r2.reference_id]['max_dist']):
+                        dropped_3c += 1
+                        continue
 
-                    if not self.unrestricted:
+                kept_3c += 1
+                self.seq_map[r1.reference_id][r2.reference_id] += 1
 
-                        r1_dist = upstream_dist(r1, _seq_info[r1.reference_id]['sites'], r1.reference_length)
-                        if is_toofar(r1_dist, _hic_max, _seq_info[r1.reference_id]['max_dist']):
-                            dropped_3c += 1
-                            continue
+            r1pos = r1.pos if not r1.is_reverse else r1.pos + r1.alen
+            r2pos = r2.pos if not r2.is_reverse else r2.pos + r2.alen
 
-                        r2_dist = upstream_dist(r2, _seq_info[r2.reference_id]['sites'], r2.reference_length)
-                        if is_toofar(r2_dist, _hic_max, _seq_info[r2.reference_id]['max_dist']):
-                            dropped_3c += 1
-                            continue
+            ix1 = int((_seq_info[r1.reference_id]['offset'] + r1pos) / self.bin_size)
+            ix2 = int((_seq_info[r2.reference_id]['offset'] + r2pos) / self.bin_size)
 
-                    kept_3c += 1
-                    self.seq_map[r1.reference_id][r2.reference_id] += 1
-
-                r1pos = r1.pos if not r1.is_reverse else r1.pos + r1.alen
-                r2pos = r2.pos if not r2.is_reverse else r2.pos + r2.alen
-
-                ix1 = int((_seq_info[r1.reference_id]['offset'] + r1pos) / self.bin_size)
-                ix2 = int((_seq_info[r2.reference_id]['offset'] + r2pos) / self.bin_size)
-
-                if ix1 < ix2:
-                    _map[ix1][ix2] += 1
-                else:
-                    _map[ix2][ix1] += 1
+            if ix1 < ix2:
+                _map[ix1][ix2] += 1
+            else:
+                _map[ix2][ix1] += 1
 
         print 'Assumed {0} were WGS pairs'.format(wgs_count)
         print 'Kept {0} and dropped {1} long-range (3C-ish) pairs'.format(kept_3c, dropped_3c)
@@ -352,21 +362,24 @@ class ContactMap:
         ax.imshow(np.log(_map), interpolation=interp)
         fig.savefig(pname, dpi=100)
 
-    def write_map(self, oname):
+    def write_map(self, oname, _fmt='%d'):
         """
         Write a contact map as an ascii table to a file.
         :param oname: the file name to write
+        :param _fmt: value format, defaults to int
         """
-        np.savetxt(oname, self.raw_map)
+        np.savetxt(oname, self.raw_map, fmt=_fmt)
 
-    def print_seqmap(self):
-        print
-        print "Sequence count map:"
-        rev_dict = dict(zip(self.active_seq.values(), self.active_seq.keys()))
-        print ',{0}'.format(','.join(self.active_seq.keys()))
-        for i in self.seq_map:
-            print '{0},{1}'.format(rev_dict[i], ','.join([str(j) for j in self.seq_map[i].values()]))
-
+    def write_seqmap(self, oname):
+        """
+        Write a map based on entire sequences
+        :param oname: output file name
+        """
+        with open(oname, 'w') as oh:
+            rev_dict = dict(zip(self.active_seq.values(), self.active_seq.keys()))
+            oh.write(',{0}\n'.format(','.join(self.active_seq.keys())))
+            for i in self.seq_map:
+                oh.write('{0},{1}\n'.format(rev_dict[i], ','.join([str(j) for j in self.seq_map[i].values()])))
 
 def get_enzyme_instance(enz_name):
     """
@@ -394,6 +407,7 @@ if __name__ == '__main__':
     parser.add_argument('--bin-size', type=int, default=25000, help='Bin size in bp (25000)')
     parser.add_argument('--remove-diag', default=False, action='store_true',
                         help='Remove the central diagonal from plot')
+    parser.add_argument('--skip-count', default=False, action='store_true', help='Skip initial read count for progress')
     parser.add_argument('-e', '--enzyme', default=None, help='Restriction enzyme (case sensitive)')
     parser.add_argument('refseq', metavar='FASTA', help='Reference fasta sequence (in same order)')
     parser.add_argument('bamfile', metavar='BAMFILE', help='Name-sorted BAM file')
@@ -410,11 +424,12 @@ if __name__ == '__main__':
         contacts = ContactMap(bam, args.enzyme, args.refseq, bin_size=args.bin_size, ins_mean=args.ins_mean,
                               ins_sd=args.ins_sd, ref_min_len=args.min_len, min_mapq=args.mapq,
                               subsample=args.sub_sample, strong=args.strong, max_site_dist=args.max_dist,
-                              spacing_factor=1.0 if not args.spc_factor else args.spc_factor)
+                              spacing_factor=1.0 if not args.spc_factor else args.spc_factor,
+                              count_reads=not args.skip_count)
 
         contacts.build_sorted()
 
-        print 'Writing raw output'
+        print 'Writing output...'
         contacts.write_map('{0}.raw.cm'.format(args.output))
+        contacts.write_seqmap('{0}.raw.sm'.format(args.output))
         contacts.plot_map('{0}.raw.png'.format(args.output), remove_diag=args.remove_diag)
-        contacts.print_seqmap()
