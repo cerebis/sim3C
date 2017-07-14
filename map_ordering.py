@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 
 import pysam
 import community as com
@@ -10,8 +10,6 @@ from collections import OrderedDict
 from intervaltree import IntervalTree, Interval
 
 from scoop import futures, shared
-import scoop
-
 from numba import jit, int64, float64, boolean
 
 
@@ -242,8 +240,11 @@ class Grouping:
         # when measuring separation.
         self.centers = {}
         for ix, locs in self.map.iteritems():
-            self.centers[ix] = np.array(
-                [locs[:, 0][np.where(locs[:, 1] == gi)].mean() for gi in np.unique(locs[:, 1])])
+            # centers with original input orientation
+            fwd = np.array([locs[:, 0][np.where(locs[:, 1] == gi)].mean() for gi in np.unique(locs[:, 1])])
+            # flipped orientation (i.e. seqlen - original centers)
+            rev = seq_info[ix]['length'] - fwd
+            self.centers[ix] = {True: rev, False: fwd}
 
     def total_bins(self):
         return np.sum(self.bins)
@@ -269,7 +270,8 @@ class Grouping:
             else:
                 return x2
 
-@jit(int64[:](int64[:,:], int64))
+
+@jit(int64[:](int64[:,:], int64), nopython=True)
 def find_nearest_jit(group_sites, x):
     """
     Find the nearest site from a given position on a contig.
@@ -303,15 +305,26 @@ class SeqOrder:
         """
         self.names = [k for k in seq_info]
         self.lengths = np.array([v['length'] for v in seq_info.values()])
-        self.order = np.arange(len(self.names))
+        _ord = np.arange(len(self.names))
+        _ori = np.zeros(len(self.names), dtype=np.int)
+        self.order = np.vstack((_ord, _ori)).T
 
-    def set_order(self, _ord):
-        assert len(_ord) == len(self.order), 'New order was a different length'
+    def set_only_order(self, _ord):
+        """
+        Set only the order, assuming orientation is ignored
+        :param _ord: 1d ordering
+        """
+        assert len(_ord) == len(self.order), 'new order was a different length'
+        self.order[:, 0] = _ord
 
-        if isinstance(_ord, np.ndarray):
-            self.order = _ord
-        else:
-            self.order = np.array(_ord)
+    def set_ord_and_ori(self, _ord):
+        """
+        Set an order where _ord is a 2d (N x 2) array of numeric id and orientation (0,1)
+        :param _ord: 2d ordering and orientation (N x 2)
+        """
+        assert isinstance(_ord, np.ndarray), 'ord/ori was not a numpy array'
+        assert _ord.shape == self.order.shape, 'new ord/ori has different dimensions'
+        self.order = _ord
 
     def get_name(self, _id):
         """
@@ -336,7 +349,7 @@ class SeqOrder:
         """
         assert a != b, 'Surrogate ids must be different'
 
-        _o = self.order
+        _o = self.order[:, 0]
         ia = np.argwhere(_o == a)
         ib = np.argwhere(_o == b)
         return ia < ib
@@ -352,7 +365,7 @@ class SeqOrder:
         """
         assert a != b, 'Surrogate ids must be different'
 
-        _o = self.order
+        _o = self.order[:, 0]
         ix1, ix2 = np.where((_o == a) | (_o == b))[0]
         if ix1 > ix2:
             ix1, ix2 = ix2, ix1
@@ -365,36 +378,36 @@ class SeqOrder:
         np.random.shuffle(self.order)
 
 
-@jit(boolean(int64[:], int64, int64))
+@jit(boolean(int64[:, :], int64, int64), nopython=True)
 def before(_ord, a, b):
 
     ix1 = None
     for i in xrange(len(_ord)):
-        if a == _ord[i]:
+        if a == _ord[i, 0]:
             ix1 = i
             break
 
     ix2 = None
     for i in xrange(len(_ord)):
-        if b == _ord[i]:
+        if b == _ord[i, 0]:
             ix2 = i
             break
 
     return ix1 < ix2
 
 
-@jit(int64(int64[:], int64[:], int64, int64))
+@jit(int64(int64[:, :], int64[:], int64, int64), nopython=True)
 def intervening(_ord, _lengths, a, b):
 
     ix1 = None
     for i in xrange(len(_ord)):
-        if a == _ord[i]:
+        if a == _ord[i, 0]:
             ix1 = i
             break
 
     ix2 = None
     for i in xrange(len(_ord)):
-        if b == _ord[i]:
+        if b == _ord[i, 0]:
             ix2 = i
             break
 
@@ -404,7 +417,7 @@ def intervening(_ord, _lengths, a, b):
     if ix1 > ix2:
         ix1, ix2 = ix2, ix1
 
-    return np.sum(_lengths[_ord[ix1 + 1:ix2]])
+    return np.sum(_lengths[_ord[ix1 + 1:ix2, 0]])
 
 
 class ContactMap:
@@ -699,13 +712,9 @@ class ContactMap:
             m = np.divide(m, bc)
         return m
 
-    def set_order(self, ord_array):
-        self.order.set_order(ord_array)
-
     def get_ordered_bins(self):
-        # make sure the two arrays are np arrays for fancy indexing tricks
-        _order = np.array(self.order.order)
-        _bins = np.array(self.grouping.bins)
+        _order = self.order.order[:, 0]
+        _bins = self.grouping.bins
         return _bins[_order]
 
     def _determine_block_shifts(self):
@@ -714,7 +723,7 @@ class ContactMap:
         to permute the contact matrix to match the order.
         :return: list of tuples (start, stop, shift)
         """
-        _order = self.order.order
+        _order = self.order.order[:, 0]
         _bins = self.grouping.bins
         _shuf_bins = _bins[_order]
 
@@ -775,7 +784,7 @@ class ContactMap:
     
         :return: graph of contigs
         """
-        _order = self.order.order
+        _order = self.order.order[:, 0]
         _n = self.order.names
 
         g = nx.Graph()
@@ -798,7 +807,7 @@ class ContactMap:
         inverse_edge_weights(g)
         D = squareform(nx.adjacency_matrix(g).todense())
         Z = complete(D)
-        return dendrogram(Z)['leaves']
+        return np.array(dendrogram(Z)['leaves'])
 
     def get_adhoc_order(self):
         """
@@ -832,7 +841,7 @@ class ContactMap:
             else:
                 isolates.extend(gi.nodes())
 
-        return new_order + isolates
+        return np.array(new_order + isolates)
 
     def plot(self, fname, norm=False, with_indexes=False):
         import matplotlib.pyplot as plt
@@ -876,7 +885,7 @@ from numpy import log, pi
 from numba import vectorize, int32
 
 
-@jit(float64(int32[:, :], float64[:, :]))
+@jit(float64(int32[:, :], float64[:, :]), nopython=True)
 def poisson_lpmf(ob, ex):
     s = 0.0
     for i in xrange(ob.shape[0]):
@@ -889,12 +898,13 @@ def poisson_lpmf(ob, ex):
                 s += aij * log(aij/bij) + bij - aij + 0.5 * log(2.0 * pi * aij)
     return -s
 
-
+GEOM_SCALE = 3e-6
 @vectorize([float64(float64)])
 def piecewise_3c(s):
     pr = 1./3.e6/10.
     if s < 1000e3:
-        pr = 0.5 * (3e-6 * (1 - 3e-6)**s + 1/3e6)
+        # pr = 0.5 * (GEOM_SCALE * (1 - GEOM_SCALE)**s + 1/3e6)
+        pr = GEOM_SCALE * (1 - GEOM_SCALE)**s
     return pr
 
 
@@ -911,8 +921,6 @@ def calc_likelihood(an_order):
 
     cm = shared.getConst('cm')
 
-    #cm.order.order = an_order
-
     Nd = cm.map_weight
 
     sumL = 0.0
@@ -921,13 +929,14 @@ def calc_likelihood(an_order):
     _centers = cm.grouping.centers
     _lengths = cm.order.lengths
     _map = cm.raw_map
+    _ord = an_order
 
     for i, j in itertools.combinations(cm.grouping.index.values(), 2):
 
         # inter-contig separation defined by cumulative
         # intervening contig length.
         # L = cm.order.intervening(i, j)
-        L = intervening(an_order, _lengths, i, j)
+        L = intervening(_ord, _lengths, i, j)
 
         # bin centers
         centers_i = _centers[_id[i]]
@@ -936,12 +945,18 @@ def calc_likelihood(an_order):
         # determine relative origin for measuring separation
         # between sequences. If i comes before j, then distances
         # to j will be measured from the end of i -- and visa versa
-        if before(an_order, i, j):
-            s_i = _lengths[i] - centers_i
-            s_j = centers_j
+        # print 'i={} j={}'.format(i, j)
+        # print _ord
+        # print _ord[i, :], _ord[j, :]
+        # print centers_i[_ord[i, 1]]
+        # print centers_j[_ord[j, 1]]
+
+        if before(_ord, i, j):
+            s_i = _lengths[i] - centers_i[_ord[i, 1]]
+            s_j = centers_j[_ord[j, 1]]
         else:
-            s_i = centers_i
-            s_j = _lengths[j] - centers_j
+            s_i = centers_i[_ord[i, 1]]
+            s_j = _lengths[j] - centers_j[_ord[j, 1]]
 
         # separations between contigs in this ordering
         d_ij = np.abs(L + s_i[:, np.newaxis] - s_j)
@@ -954,47 +969,107 @@ def calc_likelihood(an_order):
     return float(sumL),
 
 
-def myMutate(individual, psnv, plarge, inv_size, inv_pb=0.5):
-    # chx = np.random.randint(0, 3)
+def mutate(individual, psnv, pflip, plarge, inv_size, inv_pb=0.5):
+
+    for _p in [psnv, pflip, plarge]:
+        assert _p <= 1.0, 'a mutation probability is greater than 1'
+
     n = len(individual)
     x = individual
 
-    # inversions and transposition
-    if np.random.uniform() < plarge:
-        if np.random.uniform() < 0.5:
-            # invert a range.
-            d = np.random.binomial(inv_size, inv_pb)
-            i1 = np.random.randint(0, n-d)
-            x[i1:i1+d] = x[i1:i1+d][::-1]
+    rnd = random.random
+    sample = random.sample
 
-        else:
-            # transpose
-            d = np.random.binomial(inv_size, inv_pb)
+    # inversions and transposition
+
+    if n > 2 * inv_size and rnd() < plarge:
+        # invert a range.
+        if rnd() < 0.5:
+            d = max(1, np.random.binomial(inv_size, inv_pb))
             i1 = np.random.randint(0, n-d)
+            x[i1:i1+d, :] = x[i1:i1+d, :][::-1]
+
+        # transpose
+        else:
+            # segment size
+            d = max(1, np.random.binomial(inv_size, inv_pb))
+
+            # positions
+            i1 = np.random.randint(0, n-d+1)
             while True:
-                i2 = np.random.randint(0, n-d)
+                i2 = np.random.randint(0, n-d+1)
                 if i1 != i2:
                     break
             if i2 < i1:
                 i2, i1 = i1, i2
 
-            y = np.hstack((x[:i1], x[i1+d:]))
-            y = np.hstack((y[:i2], x[i1:i1+d], y[i2:]))
-            x[:] = y[:]
+            assert i2 + d <= len(x), 'shifted segment will not fit in array bounds'
+            x[i1:i2+d, :] = np.roll(x[i1:i2+d, :], -d, axis=0)
     else:
         # point mutations instead
         xset = set(range(n))
+
+        if n > 2:
+            for i1 in xrange(n):
+                if rnd() < psnv:
+                    i2 = sample(xset - {i1}, 1)[0]
+                    if rnd() < 0.5:
+                        # swap two elements
+                        # seems we need to use a temp for this array structure
+                        t0, t1 = x[i1, :]
+                        x[i1, :] = x[i2, :]
+                        x[i2, :] = t0, t1
+                    else:
+                        # move an element
+                        if i1 > i2:
+                            i1, i2 = i2, i1
+                        x[i1:i2+1, :] = np.roll(x[i1:i2+1, :], -1, axis=0)
+
+        # flip orientations
         for i1 in xrange(n):
-            if np.random.uniform() < psnv:
-                if np.random.uniform() < 0.5:
-                    # move one
-                    i2 = np.random.choice(list(xset - {i1}))
-                    x[i1:i2+1] = np.roll(x[i1:i2+1], -1)
-                else:
-                    # swap two
-                    i2 = np.random.choice(list(xset - {i1}))
-                    x[i1], x[i2] = x[i2], x[i1]
+            if rnd() < pflip:
+                # flip orientation
+                x[i1, 1] = not x[i1, 1]
+
     return x,
+
+
+def crossover(ind1, ind2):
+
+    # a random segment
+    size = len(ind1)
+    a, b = random.sample(range(size), 2)
+    if a > b:
+        a, b = b, a
+
+    # receiving arrays
+    mut1 = np.empty_like(ind1)
+    mut2 = np.empty_like(ind2)
+    mut1.fill(-1)
+    mut2.fill(-1)
+
+    # place swapped regions
+    mut1[a:b+1, :] = ind2[a:b+1, :]
+    mut2[a:b+1, :] = ind1[a:b+1, :]
+
+    # what was not part of the region in each, order retained
+    extra1 = ind1[np.invert(np.isin(ind1[:, 0], ind2[a:b+1, 0])), :]
+    extra2 = ind2[np.invert(np.isin(ind2[:, 0], ind1[a:b+1, 0])), :]
+
+    # fill in these extras, where placed segment does not occupy
+    n1, n2 = 0, 0
+    for i in xrange(size):
+        if mut1[i, 0] < 0:
+            mut1[i, :] = extra1[n1, :]
+            n1 += 1
+        if mut2[i, 0] < 0:
+            mut2[i, :] = extra2[n2, :]
+            n2 += 1
+
+    ind1[:, :] = mut1[:, :]
+    ind2[:, :] = mut2[:, :]
+
+    return ind1, ind2
 
 
 def myEaMuPlusLambda(population, toolbox, genlog, mu, lambda_, cxpb, mutpb, ngen,
@@ -1044,9 +1119,10 @@ def myEaMuPlusLambda(population, toolbox, genlog, mu, lambda_, cxpb, mutpb, ngen
         if verbose:
             print logbook.stream
 
-        genlog.append(tools.selBest(population, 1))
+        genlog.append(tools.selBest(population, 1)[0])
 
     return population, logbook
+
 
 
 def numpy_similar(a, b):
@@ -1057,6 +1133,7 @@ creator.create('Individual', np.ndarray, fitness=creator.FitnessML)
 
 
 if __name__ == '__main__':
+    import traceback, sys, pdb
     import argparse
     import pickle
 
@@ -1087,40 +1164,57 @@ if __name__ == '__main__':
     parser.add_argument('--min-reflen', type=int, default=0, help='Minimum acceptable reference length [0]')
     parser.add_argument('--spc-factor', type=float, default=3.0,
                         help='Maximum sigma factor separation from read to nearest site [3]')
+    parser.add_argument('--pickle', help='Picked contact map')
+    parser.add_argument('--ngen', default=100, type=int, help='Number of ES generations')
+    parser.add_argument('--lambda', dest='lamb', default=50, type=int, help='Number of offspring')
+    parser.add_argument('--mu', type=int, default=50, help='Number of parents')
     parser.add_argument('fasta', help='Reference fasta sequence')
     parser.add_argument('bam', help='Input bam file')
 
     args = parser.parse_args()
 
-    with pysam.AlignmentFile(args.bam, 'rb') as bam_file:
+    t = Timer()
 
-        cm = ContactMap(bam_file,
-                        args.enzyme,
-                        args.fasta,
-                        args.bin_size,
-                        args.insert_mean, args.insert_sd,
-                        args.min_mapq,
-                        spacing_factor=args.spc_factor,
-                        min_sites=args.min_sites,
-                        ref_min_len=args.min_reflen,
-                        strong=args.strong)
-
-        t = Timer()
+    if args.pickle:
+        import pickle
+        with open(args.pickle, 'rb') as input_h:
+            cm = pickle.load(input_h)
+    else:
+        with pysam.AlignmentFile(args.bam, 'rb') as bam_file:
+            cm = ContactMap(bam_file,
+                            args.enzyme,
+                            args.fasta,
+                            args.bin_size,
+                            args.insert_mean, args.insert_sd,
+                            args.min_mapq,
+                            spacing_factor=args.spc_factor,
+                            min_sites=args.min_sites,
+                            ref_min_len=args.min_reflen,
+                            strong=args.strong)
 
         print 'Saving contact map instance...'
         cm.save('cm.p')
         print t.elapsed()
 
-        print 'Saving raw contact maps as csv...'
-        # original map
-        t.reset()
-        np.savetxt('raw.csv', cm.to_dense(), fmt='%d', delimiter=',')
+    t.reset()
+    print 'Plotting starting image...'
+    cm.plot('start.png', norm=True)
+    print t.elapsed()
+
+    print 'Saving raw contact maps as csv...'
+    # original map
+    t.reset()
+    np.savetxt('raw.csv', cm.to_dense(), fmt='%d', delimiter=',')
+
+    try:
+        shared.setConst(cm=cm)
 
         print 'Ordering by HC...'
         # hc order
         t.reset()
         o = cm.get_hc_order()
-        cm.set_order(o)
+        cm.order.set_only_order(o)
+        print 'HC logL {}'.format(calc_likelihood(cm.order.order)[0])
         m = cm.get_ordered_map()
         print t.elapsed()
         print 'Saving hc contact maps as csv...'
@@ -1132,7 +1226,8 @@ if __name__ == '__main__':
         print 'Ordering by adhoc...'
         t.reset()
         o = cm.get_adhoc_order()
-        cm.set_order(o)
+        cm.order.set_only_order(o)
+        print 'Adhoc logL {}'.format(calc_likelihood(cm.order.order)[0])
         m = cm.get_ordered_map()
         print t.elapsed()
         print 'Saving adhoc contact maps as csv...'
@@ -1145,31 +1240,45 @@ if __name__ == '__main__':
         cm.plot('adhoc.png', norm=True)
         print t.elapsed()
 
+        with open('adhoc-order.csv', 'w') as out_h:
+            ord_str = str([(-1)**d * o for o, d in cm.order.order])
+            out_h.write('{}\n'.format(ord_str))
+
         print 'Beginning ES ordering...'
         t.reset()
 
-        shared.setConst(cm=cm)
+    except:
+        type, value, tb = sys.exc_info()
+        traceback.print_exc()
+        pdb.post_mortem(tb)
 
-        history = tools.History()
-        toolbox = base.Toolbox()
-        active = list(cm.order.order)
+    history = tools.History()
+    toolbox = base.Toolbox()
+    active = list(cm.order.order[:, 0])
 
-        toolbox.register('indices', random.sample, active, len(active))
-        toolbox.register('individual', tools.initIterate, creator.Individual, toolbox.indices)
-        toolbox.register('population', tools.initRepeat, list, toolbox.individual)
+    def create_ordering(names):
+        ord = random.sample(names, len(names))
+        ori = np.zeros(len(ord), dtype=np.int)
+        return np.vstack((ord, ori)).T
 
-        toolbox.register('evaluate', calc_likelihood)
-        toolbox.register("mate", tools.cxOrdered)
+    #toolbox.register('indices', random.sample, active, len(active))
+    toolbox.register('indices', create_ordering, active)
+    toolbox.register('individual', tools.initIterate, creator.Individual, toolbox.indices)
+    toolbox.register('population', tools.initRepeat, list, toolbox.individual)
 
-        toolbox.register("mutate", myMutate, psnv=0.05, plarge=0.1, inv_size=10)
-        toolbox.register("select", tools.selSPEA2)
+    toolbox.register('evaluate', calc_likelihood)
+    toolbox.register("mate", crossover)
 
-        toolbox.decorate("mate", history.decorator)
-        toolbox.decorate("mutate", history.decorator)
+    toolbox.register("mutate", mutate, psnv=0.05, pflip=0.05, plarge=0.2, inv_size=10)
+    toolbox.register("select", tools.selNSGA2)
 
-        toolbox.register('map', futures.map)
+    toolbox.decorate("mate", history.decorator)
+    toolbox.decorate("mutate", history.decorator)
 
-        MU, LAMBDA, NGEN = 50, 50, 200
+    toolbox.register('map', futures.map)
+
+    try:
+        MU, LAMBDA, NGEN = args.mu, args.lamb, args.ngen
 
         population = toolbox.population(n=MU)
         hof = tools.ParetoFront(similar=numpy_similar)
@@ -1182,14 +1291,15 @@ if __name__ == '__main__':
         genlog = []
 
         pop, logbook = myEaMuPlusLambda(population, toolbox, genlog, mu=MU, lambda_=LAMBDA,
-                                        cxpb=0.5, mutpb=0.5, ngen=NGEN,
+                                        cxpb=0.5, mutpb=0.3, ngen=NGEN,
                                         stats=stats, halloffame=hof)
 
         with open('gen_best.csv', 'w') as out_h:
             for n, order_i in enumerate(genlog):
-                out_h.write('{0}: {1}\n'.format(n, ' '.join([str(v) for v in order_i])))
+                ord_str = str([(-1)**d * o for o, d in order_i])
+                out_h.write('{0}: {1}\n'.format(n, ord_str))
 
-        cm.set_order(np.array(hof[0]))
+        cm.order.set_ord_and_ori(np.array(hof[0]))
         m = cm.get_ordered_map()
         print t.elapsed()
 
@@ -1202,3 +1312,8 @@ if __name__ == '__main__':
         t.reset()
         cm.plot('es.png', norm=True)
         print t.elapsed()
+    except:
+        type, value, tb = sys.exc_info()
+        traceback.print_exc()
+        pdb.post_mortem(tb)
+
