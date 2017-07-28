@@ -1,16 +1,37 @@
 #!/usr/bin/env python2
 
-import pysam
+import itertools
+import logging
+import random
+import os
+from collections import OrderedDict
+
 import community as com
-import numpy as np
 import networkx as nx
+import numpy as np
+import pysam
 from Bio import SeqIO
 from Bio.Restriction import Restriction
-from collections import OrderedDict
+from deap import creator, base, tools
+from deap.algorithms import varOr
 from intervaltree import IntervalTree, Interval
-
-from scoop import futures, shared
 from numba import jit, int64, float64, boolean
+from numba import vectorize, int32
+from numpy import log, pi
+from scoop import futures, shared
+
+
+logging.basicConfig(level=logging.DEBUG,
+                    format='%(asctime)s %(name)-12s %(levelname)-8s %(message)s',
+                    datefmt='%m-%d %H:%M',
+                    filename='map_ordering.log',
+                    filemode='w')
+console = logging.StreamHandler()
+console.setLevel(logging.INFO)
+formatter = logging.Formatter('%(name)-12s: %(levelname)-8s %(message)s')
+console.setFormatter(formatter)
+logger = logging.getLogger('map_ordering')
+logger.addHandler(console)
 
 
 def get_enzyme_instance(enz_name):
@@ -22,23 +43,29 @@ def get_enzyme_instance(enz_name):
     return getattr(Restriction, enz_name)
 
 
-def upstream_dist(read, cut_sites, ref_length):
+def upstream_dist(read, cut_sites, ref_length, linear=False):
     """
     Upstream distance to nearest cut-site from the end of this
-    reads alignment. Note: always assumes circular
-
+    reads alignment. When linear, it is possible that a cutsite will not
+    exist upstream. In these situations, None is returned. For circular
+    references, the separation is measured from the nearest cut-site
+    that cross the origin.
     :param read: read in question
     :param cut_sites: the cut-sites for the aligning reference
     :param ref_length: the reference length
-    :return:
+    :param linear: treat reference as linear
+    :return: None or separation between end of read and nearest upstream cutsite.     
     """
+    d = None
     if read.is_reverse:
         # reverse reads look left
         r_end = read.pos
         xi = np.searchsorted(cut_sites, r_end, side='left')
         if xi > 0:
             d = r_end - cut_sites[xi - 1]
-        else:
+        elif r_end == cut_sites[0]:
+            d = 0
+        elif not linear:
             # crossing the origin
             d = ref_length - cut_sites[-1] + r_end
     else:
@@ -47,7 +74,9 @@ def upstream_dist(read, cut_sites, ref_length):
         xi = np.searchsorted(cut_sites, r_end, side='right')
         if xi < len(cut_sites):
             d = cut_sites[xi] - r_end
-        else:
+        elif r_end == cut_sites[-1]:
+            d = 0
+        elif not linear:
             # crossing the origin
             d = cut_sites[0] - (r_end - ref_length)
     return d
@@ -186,13 +215,15 @@ def decompose_graph(g):
 
 
 class Grouping:
+
     def __init__(self, seq_info, bin_size, min_sites):
-        total_sites = 0
         self.bins = []
         self.map = OrderedDict()
         self.index = OrderedDict()
         self.bin_size = bin_size
         self.min_sites = min_sites
+
+        total_sites = 0
 
         for n, ix in enumerate(seq_info.keys()):
 
@@ -210,8 +241,8 @@ class Grouping:
                 required_bins += 1
 
             if required_bins == 1 and num_sites < min_sites:
-                print '\tSequence had only {0} sites, which is less ' \
-                      'than the minimum threshold {1}'.format(required_bins, min_sites)
+                logger.debug('Sequence had only {0} sites, which is less '
+                              'than the minimum threshold {1}'.format(required_bins, min_sites))
                 # remove the sequence from seq_info
                 del seq_info[ix]
                 continue
@@ -230,7 +261,7 @@ class Grouping:
 
             total_sites += num_sites
 
-            print '\t{0} sites in {1} bins. Bins: {2}'.format(num_sites, required_bins, np.bincount(grp))
+            logger.debug('{0} sites in {1} bins. Bins: {2}'.format(num_sites, required_bins, np.bincount(grp)))
 
         self.bins = np.array(self.bins)
 
@@ -420,8 +451,17 @@ def intervening(_ord, _lengths, a, b):
     return np.sum(_lengths[_ord[ix1 + 1:ix2, 0]])
 
 
+@jit(float64(float64[:, :]))
+def _calc_map_weight(raw_map):
+    w = 0
+    for i in raw_map:
+        for j in raw_map[i]:
+            w += np.sum(raw_map[i][j])
+    map_weight = w
+
 class ContactMap:
-    def __init__(self, bam, enz_name, seq_file, bin_size, ins_mean, ins_sd, min_mapq, ref_min_len=0,
+
+    def __init__(self, bam_file, enz_name, seq_file, bin_size, ins_mean, ins_sd, min_mapq, ref_min_len=0,
                  subsample=None, random_seed=None, strong=None, max_site_dist=None, spacing_factor=1.0,
                  linear=True, min_sites=1):
 
@@ -438,96 +478,106 @@ class ContactMap:
         self.spacing_factor = spacing_factor
         self.linear = linear
         self.min_sites = min_sites
-        self.total_seq = len(bam.references)
         self.total_length = 0
 
-        # test that BAM file is the corret sort order
-        if 'SO' not in bam.header['HD'] or bam.header['HD']['SO'] != 'queryname':
-            raise IOError('BAM file must be sorted by read name')
+        with pysam.AlignmentFile(bam_file, 'rb') as bam:
 
-        if enz_name:
-            self.enzyme = get_enzyme_instance(enz_name)
-            print 'Cut-site spacing naive expectation: {0}'.format(4 ** self.enzyme.size)
-        else:
-            # non-RE based ligation-pairs
-            self.enzyme = None
-            print 'Warning: no enzyme was specified, therefore ligation pairs ' \
-                  'are considered unconstrained in position.'
-            raise RuntimeError('not implemented')
+            self.total_seq = len(bam.references)
 
-        self.unrestricted = False if enz_name else True
+            # test that BAM file is the corret sort order
+            if 'SO' not in bam.header['HD'] or bam.header['HD']['SO'] != 'queryname':
+                raise IOError('BAM file must be sorted by read name')
 
-        # we'll pull sequences from a store as we go through the bam metadata
-        seq_db = SeqIO.index_db(':memory:', seq_file, 'fasta')
-
-        # determine the set of active sequences
-        # where the first filtration step is by length
-        self.seq_info = OrderedDict()
-        offset = 0
-        print 'Reading sequences...'
-        for n, li in enumerate(bam.lengths):
-
-            # minimum length threshold
-            if li < ref_min_len:
-                continue
-
-            seq_id = bam.references[n]
-            seq = seq_db[seq_id].seq
-            if self.enzyme:
-
-                sites = np.array(self.enzyme.search(seq, linear=self.linear))
-
-                # must have at least one site
-                if len(sites) < min_sites:
-                    continue
-
-                # don't apply spacing analysis to single site sequences
-                medspc = 0.0
-                if len(sites) > 1:
-                    sites.sort()  # pedantic check for order
-                    medspc = np.median(np.diff(sites))
-
-                self.seq_info[n] = {'sites': sites,
-                                    'invtree': IntervalTree(Interval(si, si + 1) for si in sites),
-                                    'max_dist': self.spacing_factor * medspc,
-                                    'offset': offset,
-                                    'name': seq_id,
-                                    'length': li}
-
-                print '\tFound {0} cut-sites for \"{1}\" ' \
-                      'med_spc: {2:.1f} max_dist: {3:.1f}'.format(len(sites), seq_id, medspc,
-                                                                  self.spacing_factor * medspc)
+            if enz_name:
+                self.enzyme = get_enzyme_instance(enz_name)
+                logger.debug('Cut-site spacing naive expectation: {0}'.format(4 ** self.enzyme.size))
             else:
-                self.seq_info[n] = {'offset': self.total_len}
+                # non-RE based ligation-pairs
+                self.enzyme = None
+                logger.debug('Warning: no enzyme was specified, therefore ligation '
+                                  'pairs are considered unconstrained in position.')
+                raise RuntimeError('not implemented')
 
-            offset += li
+            self.unrestricted = False if enz_name else True
 
-        self.total_len = offset
+            # we'll pull sequences from a store as we go through the bam metadata
 
-        print 'Initially: {0} sequences and {1}bp'.format(len(self.seq_info), self.sum_active())
+            # ':memory:'
+            idxfile = '{}.db'.format(seq_file)
+            if os.path.exists(idxfile):
+                logging.warn('Found existing fasta index')
+            seq_db = SeqIO.index_db(idxfile, seq_file, 'fasta')
 
-        print 'Determining binning...'
-        self.grouping = Grouping(self.seq_info, self.bin_size, self.min_sites)
-        print 'After grouping: {0} sequences and {1}bp'.format(len(self.seq_info), self.sum_active())
+            try:
+                # determine the set of active sequences
+                # where the first filtration step is by length
+                self.seq_info = OrderedDict()
+                offset = 0
+                logger.info('Reading sequences...')
+                for n, li in enumerate(bam.lengths):
 
-        self.raw_map = None
+                    # minimum length threshold
+                    if li < ref_min_len:
+                        continue
 
-        print 'Counting reads in bam file...'
-        self.total_reads = bam.count(until_eof=True)
+                    seq_id = bam.references[n]
+                    seq = seq_db[seq_id].seq
+                    if self.enzyme:
 
-        print 'BAM file contains:\n' \
-              '\t{0} sequences\n' \
-              '\t{1}bp total length\n' \
-              '\t{2} alignments'.format(self.total_seq, self.total_len, self.total_reads)
+                        sites = np.array(self.enzyme.search(seq, linear=self.linear))
 
-        # a simple associative map for binning on whole sequences
-        id_set = set(self.seq_info)
-        self.seq_map = OrderedDict((n, OrderedDict(zip(id_set, [0] * len(id_set)))) for n in id_set)
+                        # must have at least one site
+                        if len(sites) < min_sites:
+                            continue
 
-        # initialise the ordercm.order.order
-        self.order = SeqOrder(self.seq_info)
+                        # don't apply spacing analysis to single site sequences
+                        medspc = 0.0
+                        if len(sites) > 1:
+                            sites.sort()  # pedantic check for order
+                            medspc = np.median(np.diff(sites))
 
-        self._bin_map(bam)
+                        self.seq_info[n] = {'sites': sites,
+                                            'invtree': IntervalTree(Interval(si, si + 1) for si in sites),
+                                            'max_dist': self.spacing_factor * medspc,
+                                            'offset': offset,
+                                            'name': seq_id,
+                                            'length': li}
+
+                        logger.debug('Found {0} cut-sites for {1} med_spc: {2:.1f} max_dist: {3:.1f}'.format(
+                            len(sites), seq_id, medspc, self.spacing_factor * medspc))
+                    else:
+                        self.seq_info[n] = {'offset': self.total_len}
+
+                    offset += li
+            finally:
+                seq_db.close()
+
+            self.total_len = offset
+
+            logger.info('Initially: {0} sequences and {1} bp'.format(
+                len(self.seq_info), self.sum_active()))
+
+            logger.info('Determining binning...')
+            self.grouping = Grouping(self.seq_info, self.bin_size, self.min_sites)
+            logger.info('After grouping: {0} sequences and {1} bp'.format(
+                len(self.seq_info), self.sum_active()))
+
+            self.raw_map = None
+
+            logger.info('Counting reads in bam file...')
+            self.total_reads = bam.count(until_eof=True)
+
+            logger.info('BAM file contains: {0} references over {1} bp, {2} alignments'.format(
+                self.total_seq, self.total_len, self.total_reads))
+
+            # a simple associative map for binning on whole sequences
+            #id_set = set(self.seq_info)
+            #self.seq_map = OrderedDict((n, OrderedDict(zip(id_set, [0] * len(id_set)))) for n in id_set)
+
+            # initialise the ordercm.order.order
+            self.order = SeqOrder(self.seq_info)
+
+            self._bin_map(bam)
 
     def sum_active(self):
         sum_len = 0
@@ -541,8 +591,8 @@ class ContactMap:
     def _init_map(self):
         n_bins = self.grouping.total_bins()
 
-        print 'Initialising contact map of {0}x{0} fragment bins, ' \
-              'representing {1} bp over {2} sequences'.format(n_bins, self.sum_active(), self.num_active())
+        logger.info('Initialising contact map of {0}x{0} fragment bins, '
+                         'representing {1} bp over {2} sequences'.format(n_bins, self.sum_active(), self.num_active()))
 
         _m = {}
         for bi, seq_i in enumerate(self.grouping.map):
@@ -612,9 +662,13 @@ class ContactMap:
             _seq_info = self.seq_info
             _active_ids = set(self.seq_info)
 
-            wgs_count = 0
-            dropped_3c = 0
-            kept_3c = 0
+            counts = OrderedDict({
+                'accepted': 0,
+                'assumed_wgs': 0,
+                'site_toofar': 0,
+                'ref_excluded': 0,
+                'skipped': 0,
+                'poor_match': 0})
 
             bam.reset()
             bam_iter = bam.fetch(until_eof=True)
@@ -634,12 +688,15 @@ class ContactMap:
                     break
 
                 if r1.reference_id not in _active_ids or r2.reference_id not in _active_ids:
+                    counts['ref_excluded'] += 1
                     continue
 
                 if sub_thres and sub_thres < uniform():
+                    counts['skipped'] += 1
                     continue
 
                 if not _matcher(r1) or not _matcher(r2):
+                    counts['poor_match'] += 1
                     continue
 
                 if r1.is_read2:
@@ -653,25 +710,25 @@ class ContactMap:
 
                     if fwd.pos <= rev.pos and ins_len < _wgs_max:
                         # assume this read-pair is a WGS read-pair, not HiC
-                        wgs_count += 1
+                        counts['assumed_wgs'] += 1
                         continue
 
                 if not assume_wgs:
 
                     if not self.unrestricted:
 
-                        r1_dist = upstream_dist(r1, _seq_info[r1.reference_id]['sites'], r1.reference_length)
-                        if is_toofar(r1_dist, _hic_max, _seq_info[r1.reference_id]['max_dist']):
-                            dropped_3c += 1
+                        r1_dist = upstream_dist(r1, _seq_info[r1.reference_id]['sites'], r1.reference_length, self.linear)
+                        if not r1_dist or is_toofar(r1_dist, _hic_max, _seq_info[r1.reference_id]['max_dist']):
+                            counts['site_toofar'] += 1
                             continue
 
-                        r2_dist = upstream_dist(r2, _seq_info[r2.reference_id]['sites'], r2.reference_length)
-                        if is_toofar(r2_dist, _hic_max, _seq_info[r2.reference_id]['max_dist']):
-                            dropped_3c += 1
+                        r2_dist = upstream_dist(r2, _seq_info[r2.reference_id]['sites'], r2.reference_length, self.linear)
+                        if not r2_dist or is_toofar(r2_dist, _hic_max, _seq_info[r2.reference_id]['max_dist']):
+                            counts['site_toofar'] += 1
                             continue
 
-                    kept_3c += 1
-                    self.seq_map[r1.reference_id][r2.reference_id] += 1
+                    counts['accepted'] += 1
+                    #self.seq_map[r1.reference_id][r2.reference_id] += 1
 
                 r1pos = r1.pos if not r1.is_reverse else r1.pos + r1.alen
                 r2pos = r2.pos if not r2.is_reverse else r2.pos + r2.alen
@@ -696,9 +753,8 @@ class ContactMap:
 
         self._calc_map_weight()
 
-        print 'Assumed {0} were WGS pairs'.format(wgs_count)
-        print 'Kept {0} and dropped {1} long-range (3C-ish) pairs'.format(kept_3c, dropped_3c)
-        print 'Total raw map weight {0}'.format(self.map_weight)
+        logger.info('Pair accounting: {}'.format(counts))
+        logger.info('Total raw map weight {0}'.format(self.map_weight))
 
     def to_dense(self, norm=False):
         """
@@ -775,28 +831,55 @@ class ContactMap:
         # finally, convert the result back into a triangular matrix.
         return np.triu(np.dot(np.dot(pm, full_map), pm.T))
 
-    def create_contig_graph(self):
+    def create_contig_graph(self, norm=True, scale=False, extern_ids=False):
         """
         Create a graph where contigs are nodes and edges linking
         nodes are weighted by the cumulative weight of contacts shared
         between them, normalized by the product of the number of fragments
         involved.
-    
+        
+        :param norm: normalize weights by site count, Ni x Nj
+        :param scale: scale weights (max_w = 1)
+        :param extern_ids: use the original external sequence identifiers for node ids
         :return: graph of contigs
         """
         _order = self.order.order[:, 0]
-        _n = self.order.names
+        _id = self.order.names
+        _len = self.order.lengths
+
+        if extern_ids:
+            _nn = lambda x: self.seq_info[_id[x]]['name']
+        else:
+            _nn = lambda x: x
 
         g = nx.Graph()
-        g.add_nodes_from(_order)
+        for u in _order:
+            # as networkx chokes serialising numpy types, explicitly type cast
+            g.add_node(_nn(u), length=int(_len[u]))
 
+        max_w = 0
         for i in xrange(len(_order)):
+            ni = len(self.grouping.map[_id[i]])
             for j in xrange(i + 1, len(_order)):
-                # networkx can choke on numpy floats when writing graphml format
-                obs = float(np.sum(self.raw_map[_n[i]][_n[j]]))
-                nsq = len(self.grouping.map[_n[i]]) * len(self.grouping.map[_n[j]])
-                if obs > 0:
-                    g.add_edge(i, j, weight=obs / nsq)
+                # as networkx chokes serialising numpy types, explicitly type cast
+                obs = float(np.sum(self.raw_map[_id[i]][_id[j]]))
+                if obs == 0:
+                    continue
+
+                if norm:
+                    nsq = ni * len(self.grouping.map[_id[j]])
+                    if obs != 0:
+                        obs /= nsq
+
+                g.add_edge(_nn(i), _nn(j), weight=obs)
+                if obs > max_w:
+                    max_w = obs
+
+        if scale:
+            for u, v in g.edges_iter():
+                if g[u][v] > 0:
+                    g[u][v]['weight'] /= max_w
+
         return g
 
     def get_hc_order(self):
@@ -827,7 +910,8 @@ class ContactMap:
     
         :return: order of contigs
         """
-        g = self.create_contig_graph()
+        g = self.create_contig_graph(norm=True, scale=True)
+
         decomposed_subgraphs = decompose_graph(g)
 
         isolates = []
@@ -865,24 +949,15 @@ class ContactMap:
         plt.savefig(fname, dpi=180)
 
     def save(self, fname):
-        import cPickle as p
+        import cPickle
         with open(fname, 'wb') as out_h:
-            p.dump(self, out_h)
+            cPickle.dump(self, out_h)
 
     @staticmethod
     def load(fname):
-        import cPickle as p
+        import cPickle
         with open(fname, 'rb') as in_h:
-            return p.load(in_h)
-
-
-import random
-from deap import creator, base, tools
-from deap.algorithms import varOr
-import itertools
-
-from numpy import log, pi
-from numba import vectorize, int32
+            return cPickle.load(in_h)
 
 
 @jit(float64(int32[:, :], float64[:, :]), nopython=True)
@@ -908,7 +983,12 @@ def piecewise_3c(s):
     return pr
 
 
-def calc_likelihood(an_order):
+def scoop_calc_likelihood(an_order):
+    cm = shared.getConst('cm')
+    return calc_likelihood(an_order, cm)
+
+
+def calc_likelihood(an_order, cm):
     """
     Calculate the logLikelihood of a given sequence configuration. The model is adapted from
     GRAAL. Counts are Poisson, with lambda parameter dependent on expected observed contact
@@ -919,51 +999,43 @@ def calc_likelihood(an_order):
     :return:
     """
 
-    cm = shared.getConst('cm')
-
     Nd = cm.map_weight
 
     sumL = 0.0
 
-    _id = cm.order.names
-    _centers = cm.grouping.centers
-    _lengths = cm.order.lengths
-    _map = cm.raw_map
-    _ord = an_order
+    ids = cm.order.names
+    centers = cm.grouping.centers
+    lengths = cm.order.lengths
+    raw_map = cm.raw_map
+    indexes = cm.grouping.index
 
-    for i, j in itertools.combinations(cm.grouping.index.values(), 2):
+    for i, j in itertools.combinations(indexes.values(), 2):
 
         # inter-contig separation defined by cumulative
         # intervening contig length.
         # L = cm.order.intervening(i, j)
-        L = intervening(_ord, _lengths, i, j)
+        L = intervening(an_order, lengths, i, j)
 
         # bin centers
-        centers_i = _centers[_id[i]]
-        centers_j = _centers[_id[j]]
+        centers_i = centers[ids[i]]
+        centers_j = centers[ids[j]]
 
         # determine relative origin for measuring separation
         # between sequences. If i comes before j, then distances
         # to j will be measured from the end of i -- and visa versa
-        # print 'i={} j={}'.format(i, j)
-        # print _ord
-        # print _ord[i, :], _ord[j, :]
-        # print centers_i[_ord[i, 1]]
-        # print centers_j[_ord[j, 1]]
-
-        if before(_ord, i, j):
-            s_i = _lengths[i] - centers_i[_ord[i, 1]]
-            s_j = centers_j[_ord[j, 1]]
+        if before(an_order, i, j):
+            s_i = lengths[i] - centers_i[an_order[i, 1]]
+            s_j = centers_j[an_order[j, 1]]
         else:
-            s_i = centers_i[_ord[i, 1]]
-            s_j = _lengths[j] - centers_j[_ord[j, 1]]
+            s_i = centers_i[an_order[i, 1]]
+            s_j = lengths[j] - centers_j[an_order[j, 1]]
 
         # separations between contigs in this ordering
         d_ij = np.abs(L + s_i[:, np.newaxis] - s_j)
 
         q_ij = piecewise_3c(d_ij)
 
-        n_ij = _map[_id[i]][_id[j]]
+        n_ij = raw_map[ids[i]][ids[j]]
         sumL += poisson_lpmf(n_ij, Nd * q_ij)
 
     return float(sumL),
@@ -1072,8 +1144,8 @@ def crossover(ind1, ind2):
     return ind1, ind2
 
 
-def myEaMuPlusLambda(population, toolbox, genlog, mu, lambda_, cxpb, mutpb, ngen,
-                     stats=None, halloffame=None, verbose=__debug__):
+def ea_mu_plus_lambda(population, toolbox, genlog, mu, lambda_, cxpb, mutpb, ngen,
+                      stats=None, halloffame=None):
 
     logbook = tools.Logbook()
     logbook.header = ['gen', 'nevals'] + (stats.fields if stats else [])
@@ -1091,8 +1163,8 @@ def myEaMuPlusLambda(population, toolbox, genlog, mu, lambda_, cxpb, mutpb, ngen
 
     record = stats.compile(population) if stats is not None else {}
     logbook.record(gen=0, nevals=len(invalid_ind), **record)
-    if verbose:
-        print logbook.stream
+
+    print logbook.stream
 
     # Begin the generational process
     for gen in range(1, ngen + 1):
@@ -1116,13 +1188,11 @@ def myEaMuPlusLambda(population, toolbox, genlog, mu, lambda_, cxpb, mutpb, ngen
         # Update the statistics with the new population
         record = stats.compile(population) if stats is not None else {}
         logbook.record(gen=gen, nevals=len(invalid_ind), **record)
-        if verbose:
-            print logbook.stream
+        print logbook.stream
 
         genlog.append(tools.selBest(population, 1)[0])
 
     return population, logbook
-
 
 
 def numpy_similar(a, b):
@@ -1131,28 +1201,30 @@ def numpy_similar(a, b):
 creator.create('FitnessML', base.Fitness, weights=(1.0,))
 creator.create('Individual', np.ndarray, fitness=creator.FitnessML)
 
-
 if __name__ == '__main__':
     import traceback, sys, pdb
     import argparse
     import pickle
+    import mapio
 
     from datetime import timedelta
     from monotonic import monotonic
 
     class Timer:
         def __init__(self):
-            self.start = monotonic()
+            self.start_time = monotonic()
 
-        def reset(self):
-            self.start = monotonic()
+        def start(self):
+            self.start_time = monotonic()
 
         def elapsed(self):
-            end = monotonic()
-            return timedelta(seconds=end - self.start)
-
+            return timedelta(seconds=monotonic() - self.start_time)
 
     parser = argparse.ArgumentParser(description='Create a 3C fragment map from a BAM file')
+    parser.add_argument('-v', '--verbose', default=False, action='store_true', help='Verbose output')
+    parser.add_argument('-f', '--format', choices=['csv', 'h5'], default='csv',
+                        help='Input contact map format')
+    parser.add_argument('--circular', default=False, action='store_true', help='Treat all references as circular')
     parser.add_argument('--strong', type=int, default=None,
                         help='Using strong matching constraint (minimum matches in alignments).')
     parser.add_argument('--bin-size', type=int, required=True, help='Size of bins in numbers of enzymatic sites')
@@ -1165,7 +1237,7 @@ if __name__ == '__main__':
     parser.add_argument('--spc-factor', type=float, default=3.0,
                         help='Maximum sigma factor separation from read to nearest site [3]')
     parser.add_argument('--pickle', help='Picked contact map')
-    parser.add_argument('--ngen', default=100, type=int, help='Number of ES generations')
+    parser.add_argument('--ngen', default=0, type=int, help='Number of ES generations')
     parser.add_argument('--lambda', dest='lamb', default=50, type=int, help='Number of offspring')
     parser.add_argument('--mu', type=int, default=50, help='Number of parents')
     parser.add_argument('fasta', help='Reference fasta sequence')
@@ -1173,15 +1245,16 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
 
-    t = Timer()
+    try:
+        t = Timer()
 
-    if args.pickle:
-        import pickle
-        with open(args.pickle, 'rb') as input_h:
-            cm = pickle.load(input_h)
-    else:
-        with pysam.AlignmentFile(args.bam, 'rb') as bam_file:
-            cm = ContactMap(bam_file,
+        if args.pickle:
+            import pickle
+            with open(args.pickle, 'rb') as input_h:
+                cm = pickle.load(input_h)
+        else:
+            t.start()
+            cm = ContactMap(args.bam,
                             args.enzyme,
                             args.fasta,
                             args.bin_size,
@@ -1190,130 +1263,126 @@ if __name__ == '__main__':
                             spacing_factor=args.spc_factor,
                             min_sites=args.min_sites,
                             ref_min_len=args.min_reflen,
-                            strong=args.strong)
+                            strong=args.strong,
+                            linear=not args.circular)
 
-        print 'Saving contact map instance...'
-        cm.save('cm.p')
-        print t.elapsed()
+            logger.info('Saving contact map instance...')
+            cm.save('cm.p')
+            logger.info('Contact map took: {}'.format(t.elapsed()))
 
-    t.reset()
-    print 'Plotting starting image...'
-    cm.plot('start.png', norm=True)
-    print t.elapsed()
+        # logger.info('Saving graph...')
+        # nx.write_graphml(cm.create_contig_graph(norm=True, scale=True, extern_ids=True), 'cm.graphml')
+        logger.info('Plotting starting image...')
+        cm.plot('start.png', norm=True)
 
-    print 'Saving raw contact maps as csv...'
-    # original map
-    t.reset()
-    np.savetxt('raw.csv', cm.to_dense(), fmt='%d', delimiter=',')
+        logger.info('Saving raw contact map...')
+        mapio.write_map(cm.to_dense(), 'raw', args.format, np.int)
 
-    try:
-        shared.setConst(cm=cm)
+        # logL = calc_likelihood(cm.order.order, cm)
+        # logger.info('Initial logL {}'.format(logL[0]))
 
-        print 'Ordering by HC...'
-        # hc order
-        t.reset()
-        o = cm.get_hc_order()
-        cm.order.set_only_order(o)
-        print 'HC logL {}'.format(calc_likelihood(cm.order.order)[0])
-        m = cm.get_ordered_map()
-        print t.elapsed()
-        print 'Saving hc contact maps as csv...'
-        t.reset()
-        np.savetxt('hc.csv', m, fmt='%d', delimiter=',')
-        print t.elapsed()
+        # print 'Ordering by HC...'
+        # # hc order
+        # t.reset()
+        # o = cm.get_hc_order()
+        # cm.order.set_only_order(o)
+        # print 'HC logL {}'.format(calc_likelihood(cm.order.order)[0])
+        # m = cm.get_ordered_map()
+        # print t.elapsed()
+        # print 'Saving hc contact maps as csv...'
+        # t.reset()
+        # mapio.write_map(m, 'hc', args.format, np.int)
+        # print t.elapsed()
 
         # adhoc order
-        print 'Ordering by adhoc...'
-        t.reset()
-        o = cm.get_adhoc_order()
-        cm.order.set_only_order(o)
-        print 'Adhoc logL {}'.format(calc_likelihood(cm.order.order)[0])
-        m = cm.get_ordered_map()
-        print t.elapsed()
-        print 'Saving adhoc contact maps as csv...'
-        t.reset()
-        np.savetxt('adhoc.csv', m, fmt='%d', delimiter=',')
-        print t.elapsed()
-
-        print 'Plotting adhoc image...'
-        t.reset()
-        cm.plot('adhoc.png', norm=True)
-        print t.elapsed()
-
-        with open('adhoc-order.csv', 'w') as out_h:
-            ord_str = str([(-1)**d * o for o, d in cm.order.order])
-            out_h.write('{}\n'.format(ord_str))
-
-        print 'Beginning ES ordering...'
-        t.reset()
+        # logger.info('Beginning adhoc ordering...')
+        # t.start()
+        # o = cm.get_adhoc_order()
+        # cm.order.set_only_order(o)
+        # logL = calc_likelihood(cm.order.order, cm)
+        # logger.info('Adhoc logL {}'.format(logL[0]))
+        # m = cm.get_ordered_map()
+        # logger.debug(t.elapsed())
+        # logger.info('Saving adhoc contact maps as csv...')
+        # np.savetxt('adhoc.csv', m, fmt='%d', delimiter=',')
+        # mapio.write_map(m, 'adhoc', args.format, np.int)
+        # logger.info('Plotting adhoc image...')
+        # cm.plot('adhoc.png', norm=True)
+        # logger.info('Adhoc took: {}'.format(t.elapsed()))
+        #
+        # with open('adhoc-order.csv', 'w') as out_h:
+        #     ord_str = str([(-1)**d * o for o, d in cm.order.order])
+        #     out_h.write('{}\n'.format(ord_str))
 
     except:
         type, value, tb = sys.exc_info()
         traceback.print_exc()
         pdb.post_mortem(tb)
 
-    history = tools.History()
-    toolbox = base.Toolbox()
-    active = list(cm.order.order[:, 0])
+    if args.ngen > 0:
 
-    def create_ordering(names):
-        ord = random.sample(names, len(names))
-        ori = np.zeros(len(ord), dtype=np.int)
-        return np.vstack((ord, ori)).T
+        logger.info('Beginning EA ordering...')
 
-    #toolbox.register('indices', random.sample, active, len(active))
-    toolbox.register('indices', create_ordering, active)
-    toolbox.register('individual', tools.initIterate, creator.Individual, toolbox.indices)
-    toolbox.register('population', tools.initRepeat, list, toolbox.individual)
+        shared.setConst(cm=cm)
 
-    toolbox.register('evaluate', calc_likelihood)
-    toolbox.register("mate", crossover)
+        history = tools.History()
+        toolbox = base.Toolbox()
+        active = list(cm.order.order[:, 0])
 
-    toolbox.register("mutate", mutate, psnv=0.05, pflip=0.05, plarge=0.2, inv_size=10)
-    toolbox.register("select", tools.selNSGA2)
+        def create_ordering(names):
+            ord = random.sample(names, len(names))
+            ori = np.zeros(len(ord), dtype=np.int)
+            return np.vstack((ord, ori)).T
 
-    toolbox.decorate("mate", history.decorator)
-    toolbox.decorate("mutate", history.decorator)
+        toolbox.register('indices', create_ordering, active)
+        toolbox.register('individual', tools.initIterate, creator.Individual, toolbox.indices)
+        toolbox.register('population', tools.initRepeat, list, toolbox.individual)
 
-    toolbox.register('map', futures.map)
+        toolbox.register('evaluate', scoop_calc_likelihood)
+        toolbox.register("mate", crossover)
 
-    try:
-        MU, LAMBDA, NGEN = args.mu, args.lamb, args.ngen
+        toolbox.register("mutate", mutate, psnv=0.05, pflip=0.05, plarge=0.2, inv_size=10)
+        toolbox.register("select", tools.selNSGA2)
 
-        population = toolbox.population(n=MU)
-        hof = tools.ParetoFront(similar=numpy_similar)
-        stats = tools.Statistics(lambda ind: ind.fitness.values)
-        stats.register("avg", np.mean, axis=0)
-        stats.register("std", np.std, axis=0)
-        stats.register("min", np.min, axis=0)
-        stats.register("max", np.max, axis=0)
+        toolbox.decorate("mate", history.decorator)
+        toolbox.decorate("mutate", history.decorator)
 
-        genlog = []
+        toolbox.register('map', futures.map)
 
-        pop, logbook = myEaMuPlusLambda(population, toolbox, genlog, mu=MU, lambda_=LAMBDA,
-                                        cxpb=0.5, mutpb=0.3, ngen=NGEN,
-                                        stats=stats, halloffame=hof)
+        try:
+            MU, LAMBDA, NGEN = args.mu, args.lamb, args.ngen
 
-        with open('gen_best.csv', 'w') as out_h:
-            for n, order_i in enumerate(genlog):
-                ord_str = str([(-1)**d * o for o, d in order_i])
-                out_h.write('{0}: {1}\n'.format(n, ord_str))
+            population = toolbox.population(n=MU)
+            hof = tools.ParetoFront(similar=numpy_similar)
+            stats = tools.Statistics(lambda ind: ind.fitness.values)
+            stats.register("avg", np.mean, axis=0)
+            stats.register("std", np.std, axis=0)
+            stats.register("min", np.min, axis=0)
+            stats.register("max", np.max, axis=0)
 
-        cm.order.set_ord_and_ori(np.array(hof[0]))
-        m = cm.get_ordered_map()
-        print t.elapsed()
+            genlog = []
 
-        print 'Saving es contact maps as csv...'
-        t.reset()
-        np.savetxt('es.csv', m, fmt='%d', delimiter=',')
-        print t.elapsed()
+            t.start()
+            pop, logbook = ea_mu_plus_lambda(population, toolbox, genlog, mu=MU, lambda_=LAMBDA,
+                                             cxpb=0.5, mutpb=0.3, ngen=NGEN,
+                                             stats=stats, halloffame=hof)
+            logger.info('EA took: {}'.format(t.elapsed()))
 
-        print 'Plotting es image...'
-        t.reset()
-        cm.plot('es.png', norm=True)
-        print t.elapsed()
-    except:
-        type, value, tb = sys.exc_info()
-        traceback.print_exc()
-        pdb.post_mortem(tb)
+            with open('gen_best.csv', 'w') as out_h:
+                for n, order_i in enumerate(genlog):
+                    ord_str = str([(-1)**d * o for o, d in order_i])
+                    out_h.write('{0}: {1}\n'.format(n, ord_str))
 
+            cm.order.set_ord_and_ori(np.array(hof[0]))
+            m = cm.get_ordered_map()
+
+            logger.info('Saving es contact maps as csv...')
+            mapio.write_map(m, 'es', args.format, np.int)
+            logger.info('Plotting final EA image...')
+            cm.plot('es.png', norm=True)
+
+        except:
+
+            type, value, tb = sys.exc_info()
+            traceback.print_exc()
+            pdb.post_mortem(tb)
