@@ -20,6 +20,18 @@ from collections import OrderedDict
 
 import numpy as np
 import re
+import yaml
+
+
+defaults = {}
+# read default values
+with open('sim3C_config.yaml', 'r') as hndl:
+    defaults = yaml.load(hndl)
+    defaults.setdefault('anti_rate', 0.1)
+    defaults.setdefault('trans_rate', 0.1)
+    defaults.setdefault('copy_number', 1)
+    defaults.setdefault('linear', False)
+    defaults.setdefault('create_cids', False)
 
 
 def generate_profile(seed, taxa, mode, **kwargs):
@@ -77,45 +89,73 @@ def generate_profile(seed, taxa, mode, **kwargs):
         return abn_val.tolist()
 
 
-class ChromAbundance:
+def as_type(v, type_func, accept_none, msg='Unexpected type'):
+    try:
+        if accept_none:
+            return v
+        else:
+            return type_func(v)
+    except:
+        raise ValueError(msg)
+
+
+def as_float(v, accept_none=False, msg='Float expected'):
+    return as_type(v, float, accept_none, msg)
+
+
+def as_int(v, accept_none=False, msg='Int expected'):
+    return as_type(v, int, accept_none, msg)
+
+
+def as_bool(v, accept_none=False, msg='Bool expected'):
+    return as_type(v, bool, accept_none, msg)
+
+
+class RepliconDefinition:
     """
     An entry in a profile, where object identity is keyed by both chromosome and cell name. Cell names are explicit
     and important for supporting multi-chromosomal genome definitions in simulations of 3C read-pairs, where inter
     and intra chromsomal sampling behaviour is drastically different. In situations where a community simulation is
     entirely monochromosomal.
     """
-    def __init__(self, name, abundance, copy_number, cell=None):
+    def __init__(self, cell, name, copy_number, anti_rate, create_cids, linear, centromere):
         """
-
-        :param name: chromsome name
-        :param abundance: cellular abundance [0..1]
+        :param cell: containing CellDefintion
+        :param name: replicon name
         :param copy_number: chromsome/replicon copy number
-        :param cell: cell/species name. If none, takes on the name of the chromosome
+        :param anti_rate: anti-diagonal interaction rate
+        :param create_cids: create CIDS/TAD interactions
+        :param linear: treat replicon as linear
+        :param centromere: set centromere location for simulation
         """
+        self.cell = cell
         self.name = name
-        self.cell = name if not cell else cell
-
-        try:
-            self.abundance = float(abundance)
-        except ValueError:
-            raise ValueError('abundance expected to be number')
-
-        try:
-            self.copy_number = int(copy_number)
-        except ValueError:
-            raise ValueError('copy_number expected be an integer')
+        self.copy_number = as_int(copy_number, msg='copy_number expected be an integer')
+        self.anti_rate = as_float(anti_rate, msg='anti_rate expected to be a number')
+        self.linear = as_bool(linear, msg='linear expected to be True or False')
+        self.create_cids = as_bool(create_cids, msg='create_cids expected to be True or False')
+        self.centromere = as_int(centromere, True, msg='centromere expected to be an integer')
 
     def effective_abundance(self):
         """
         Product of cellular abundance and this chromosome's copy-number.
         :return: abundance * copy_number
         """
-        return self.abundance * self.copy_number
+        return self.cell.abundance * self.copy_number
 
     @property
     def long_name(self):
         return '{0}-{1}'.format(self.cell, self.name)
-    
+
+    def to_dict(self):
+        d = {'name': self.name,
+             'copy_number': self.copy_number,
+             'anti_rate': self.anti_rate,
+             'linear': self.linear,
+             'create_cids': self.create_cids,
+             'centromere': self.centromere}
+        return d
+
     def __hash__(self):
         return hash(self.name)
 
@@ -128,7 +168,7 @@ class ChromAbundance:
         return not self.__eq__(other)
 
     def __cmp__(self, other):
-        return self.cell + self.name > other.cell + other.name
+        return self.cell > other.cell and self.name > other.name
 
     def __str__(self):
         return repr(self)
@@ -137,7 +177,55 @@ class ChromAbundance:
         return self.name
 
 
-class Profile(OrderedDict):
+class CellDefinition:
+
+    def __init__(self, name, seq_file, abundance, trans_rate, replicons):
+        self.name = name
+        self.seq_file = seq_file
+        self.abundance = as_float(abundance, msg='abundance expeected to be a number')
+        self.trans_rate = as_float(trans_rate, msg='trans_rate expected to be a number')
+        self.repl_repository = OrderedDict()
+        for repl_name, repl_info in replicons.iteritems():
+            self.add_replicon(RepliconDefinition(cell=self, name=repl_name, **repl_info))
+
+    def add_replicon(self, repl):
+        if not isinstance(repl, RepliconDefinition):
+            raise ValueError('repl must be a RepliconDefinition')
+        if repl in self.repl_repository:
+            raise ValueError('Duplicate replicon name [{}]'.format(repl.name))
+        self.repl_repository[repl] = repl
+
+    def to_dict(self):
+        d = {'seq_file': self.seq_file,
+             'abundance': self.abundance,
+             'trans_rate': self.trans_rate,
+             'replicons': []}
+        for ri in self.repl_repository:
+            d['replicons'].append(ri.to_dict())
+        return d
+
+    def __repr__(self):
+        return self.name
+
+    def __hash__(self):
+        return hash(self.name)
+
+    def __eq__(self, other):
+        if not isinstance(other, self.__class__):
+            return False
+        return self.name == other.name
+
+    def __ne__(self, other):
+        return not self.__eq__(other)
+
+    def __cmp__(self, other):
+        return self.name > other.name
+
+    def __str__(self):
+        return repr(self)
+
+
+class Profile:
     """
     The Profile class represents an abundance profile of a single community. Relative abundance
     values are keyed by both cell and chromsome, thereby permitting more than mono-chromosomal
@@ -146,69 +234,63 @@ class Profile(OrderedDict):
     Abundance entries are kept in order of entry but are sorted by default when writing
     tabular output.
     """
-    def __init__(self, *args, **kwargs):
-        super(Profile, self).__init__(*args, **kwargs)
+    def __init__(self, ):
+        self.cell_repository = OrderedDict()
 
-    def add(self, chr_name, abundance, copy_number, cell=None):
-        """
-        Convenience method adding an entry to the profile. The Abundance object
-        is created internally.
-        :param chr_name: chromosome name
-        :param abundance: cellular abundance float: [0..1]
-        :param copy_number: chromosome/replicon copy number int:[>0]
-        :param cell: cell/species name, defaults to chrom if not specified
-        """
-        self.add_abundance(ChromAbundance(chr_name, abundance, copy_number, cell))
+    def add_cell(self, cell):
+        if not isinstance(cell, CellDefinition):
+            raise ValueError('cell must be a CellDefinition')
+        if cell in self.cell_repository:
+            raise ValueError('Duplicate cell name [{}]'.format(cell.name))
+        self.cell_repository[cell] = cell
 
-    def add_abundance(self, abn):
-        """
-        Add an abundance object to the Profile.
-        :param abn: abundance object to add
-        """
-        if abn in self:
-            raise RuntimeError('Error: duplicate abundances with identity [{0}] in profile'.format(abn))
-        self[abn] = abn
-
-    def to_table(self, sort=True):
+    def to_table(self):
         """
         Table form, were rows are in the order: [chrom, cell, abundance, copy_number]
-        :param sort: sort entries before creating table
         :return: table representation of profile
         """
-        t = []
-        keys = sorted(self.keys()) if sort else self.keys()
-        for n, k in enumerate(keys):
-            t.append([self[k].name, self[k].cell, self[k].abundance, self[k].copy_number])
+        t = [['name', 'cell', 'seq_file', 'abundance', 'copy_number', 'anti_rate',
+              'trans_rate', 'linear', 'create_cids', 'centromere']]
+        for ci in sorted(self.cell_repository):
+            for ri in sorted(ci.repl_repository):
+                t.append([ri.name, ri.cell.name, ci.seq_file, ci.abundance, ri.copy_number, ri.anti_rate,
+                          ci.trans_rate, ri.linear, ri.create_cids, ri.centromere])
         return t
 
-    def write_table(self, hndl, sort=True):
+    def write_table(self, hndl):
         """
         Write a profile to an output stream as a tab-delimited table.
         :param hndl: output stream handle
-        :param sort: Sort by names prior to writing
         """
-        t = self.to_table(sort)
-        hndl.write('#chrom\tcell\tabundance\tcopy_number\n')
-        for row in t:
-            hndl.write('{0}\t{1}\t{2:f}\t{3:d}\n'.format(row[0], row[1], row[2], row[3]))
+        tbl = self.to_table()
+        hndl.write('#{}\n'.format('\t'.join(str(v) for v in tbl[0])))
+        if len(tbl) > 1:
+            for row in tbl[1:]:
+                hndl.write('{}\n'.format('\t'.join(str(v) for v in row)))
+
+    def write_yaml(self, hndl):
+        out = {}
+        for ci in self.cell_repository:
+            out[ci.name] = ci.to_dict()
+        yaml.dump(out, hndl, default_flow_style=False, indent=4)
 
     def normalize(self):
         """
         Normalize a profile so that all abundance entries sum to 1.
         """
-        val_sum = sum([ai.abundance for ai in self.values()])
-        for ai in self.values():
-            ai.abundance /= val_sum
+        val_sum = sum([cell_i.abundance for cell_i in self.cell_repository.values()])
+        for cell_i in self.cell_repository:
+            cell_i.abundance /= val_sum
 
 
-def read_profile(hndl, normalise=False):
+def read_table(hndl, normalise=False):
     """
-    Read a profile from an input stream.
+    Read a profile from an input stream. Column position dictates field and must be in the expected
+    order -- as written out by write_table()
     :param hndl: the input file name or file object
     :param normalise: when true, normalise after reading
     :return: Profile object
     """
-
     close_handle = False
     try:
         if isinstance(hndl, basestring):
@@ -216,19 +298,31 @@ def read_profile(hndl, normalise=False):
             close_handle = True
 
         profile = Profile()
-        n = 1
-        for line in hndl:
+        for n, line in enumerate(hndl, start=1):
             line = line.strip()
+            print line
             if len(line) <= 0:
                 continue
             if line.startswith('#'):
                 continue
             try:
-                chrom, cell, abn, cn = re.split('[\s,]+', line)
-                profile.add(chrom, abn, cn, cell)
-            except:
-                raise IOError('Error: invalid table at line {0} [{0}]'.format(n, line))
-            n += 1
+                # split line and associate with field names
+                fields = re.split('[\s,]+', line)
+                labels = ['name', 'cell', 'seq_file', 'abundance', 'copy_number', 'anti_rate',
+                          'trans_rate', 'linear', 'create_cids', 'centromere']
+                t = dict(zip(labels, fields))
+
+                # instantiate cell->repl
+                cell = CellDefinition(t['cell'], t['seq_file'], t['abundance'], t['trans_rate'], {})
+                cell = profile.cell_repository.setdefault(cell, cell)
+                repl = RepliconDefinition(cell, t['name'], t['copy_number'], t['anti_rate'],
+                                          t['create_cids'], t['linear'],
+                                          t['centromere'])
+                cell.add_replicon(repl)
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
+                raise IOError('invalid table at line {0} [{0}]'.format(n, line))
 
         if normalise:
             profile.normalize()
@@ -237,3 +331,52 @@ def read_profile(hndl, normalise=False):
     finally:
         if close_handle:
             hndl.close()
+
+
+def read_yaml(fname):
+    """
+    Read a community profile definition file in YAML format. The method returns a ordered
+    dict of cells, which each contain an ordered dict of replicons, where all fields
+    pertinent to the object are populated. Non-mandatory fields not specified in the file
+    are returned with values set to None.
+    
+    Unspecified mandatory fields will raise an IOError.
+    
+    :param fname: a yaml format profile
+    :return: an ordered dict of dicts
+    """
+
+    with open(fname, 'r') as hndl:
+        cfg = yaml.load(hndl)
+
+    com_def = OrderedDict()
+    for cell_name, cell_info in sorted(cfg.items(), key=lambda x: x[0]):
+
+        if 'abundance' not in cell_info:
+            raise IOError('Invalid community definition: cell [{}] has no abundance specified'.format(cell_name))
+
+        if 'seq_file' not in cell_info:
+            raise IOError('Invalid community definition: cell [{}] has no sequence file specified'.format(cell_name))
+
+        com_def[cell_name] = {
+            'trans_rate': cell_info.get('trans_rate', defaults['trans_rate']),
+            'abundance': cell_info['abundance'],
+            'seq_file': cell_info['seq_file']
+        }
+
+        rd = OrderedDict()
+        com_def[cell_name]['replicons'] = rd
+        for repl_info in sorted(cell_info['replicons'], key=lambda x: x['name']):
+            rd[repl_info['name']] = {
+                'anti_rate': repl_info.get('anti_rate', defaults['anti_rate']),
+                'create_cids': repl_info.get('create_cids', defaults['create_cids']),
+                'linear': repl_info.get('linear', defaults['linear']),
+                'copy_number': repl_info.get('copy_number', defaults['copy_number']),
+                'centromere': repl_info.get('centromere', None)
+            }
+
+    profile = Profile()
+    for cell_name, cell_info in com_def.iteritems():
+        profile.add_cell(CellDefinition(name=cell_name, **cell_info))
+
+    return profile

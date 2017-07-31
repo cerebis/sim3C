@@ -1,0 +1,25 @@
+# Default values for simulation parameters.
+#
+# If left unset in the profile definition, these values will be used
+# as defaults.
+
+# Probability of inter-arm interaction, which produces the anti-diagonal seen in contact maps.
+# type: floating point
+'anti_rate': 0.1
+
+# Probability of trans (inter-chromosomal) interactions.
+# type: floating point
+'trans_rate': 0.1
+
+# Default number of copies of a given replicon in a cell. This parameter givens experimenters
+# the flexibility to increase the relative abundance of individual replicons within a cell.
+# type: integer
+'copy_number': 1
+
+# By default, treat replicons as linear (linear: True) or circular (linear: False)
+# type: boolean
+'linear': False
+
+# By default, do/do not simulate a randomly generated CID/TAD structure.
+# type: boolean
+'create_cids': False
