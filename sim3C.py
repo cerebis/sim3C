@@ -328,6 +328,7 @@ class Replicon:
         self.choice = random_state.choice
         self.uniform = random_state.uniform
         self.randint = random_state.randint
+        self.linear = linear
 
         self.name = name
         self.copy_number = cn
@@ -401,6 +402,12 @@ class Replicon:
         Get a second genomic location (x2) on this replicon, where the separation |x2-x1|
         is constrained by the experimentally determined distribution for 3C/HiC ligation
         products.
+        Note: this method does not explicitly treat linear replicons. To do so, we must 
+        handle the edge case of drawing beyond first and last positions. Simple approaches 
+        using redraw are potentially computationally terrible if the first position is 
+        very close to the end of the replicon. For now, we accept the modulo solution
+        for both linear and circular.
+        
         :param emp_dist: empirical distribution of separation
         :param x1: the first position
         :param length: the length (bp) of the replicon
@@ -479,7 +486,7 @@ class Replicon:
 
     def subseq(self, x1, length, rev=False):
         """
-        Create a subsequence, where the replicon is always treated as circular.
+        Create a subsequence.
 
         :param x1: starting genomic position
         :param length: length of subsequence
@@ -487,16 +494,22 @@ class Replicon:
         :return: subseq Seq object
         """
 
-        # handle negative starts as wrapping around.
+        # handle negative starts as wrapping around or,
+        # in linear cases, terminates at first position
         if x1 < 0:
-            x1 %= self.length
+            x1 = x1 % self.length if not self.linear else 0
 
         x2 = x1 + length
         diff = x2 - self.length
         if diff > 0:
-            # sequence will wrap around
-            ss = self.seq[x1:] + self.seq[:diff]
-            ss.description = Replicon.PART_DESC_FMT.format(rev, x1+1, diff)
+            if self.linear:
+                # sequence terminates early
+                ss = self.seq[x1:-1]
+                ss.description = Replicon.PART_DESC_FMT.format(rev, x1+1, self.length)
+            else:
+                # sequence will wrap around
+                ss = self.seq[x1:] + self.seq[:diff]
+                ss.description = Replicon.PART_DESC_FMT.format(rev, x1+1, diff)
         else:
             ss = self.seq[x1:x2]
             ss.description = Replicon.PART_DESC_FMT.format(rev, x1+1, x2)
