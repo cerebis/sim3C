@@ -23,3 +23,6 @@
 # By default, do/do not simulate a randomly generated CID/TAD structure.
 # type: boolean
 'create_cids': False
+
+# By default, no centromere position is defined
+'centromere': None

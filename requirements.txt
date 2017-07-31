@@ -4,5 +4,4 @@ intervaltree
 numpy
 scipy
 tqdm
-pyyaml
-
+PyYAML

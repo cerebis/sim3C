@@ -23,6 +23,9 @@ import re
 import yaml
 
 
+"""
+Initialise default values
+"""
 defaults = {}
 # read default values
 with open('sim3C_config.yaml', 'r') as hndl:
@@ -32,19 +35,69 @@ with open('sim3C_config.yaml', 'r') as hndl:
     defaults.setdefault('copy_number', 1)
     defaults.setdefault('linear', False)
     defaults.setdefault('create_cids', False)
+    defaults.setdefault('centromere', None)
+
+
+def as_type(v, type_func, accept_none, msg='Unexpected type'):
+    """
+    Cast to type with a message on error
+    :param v: value to cast
+    :param type_func: casting method
+    :param accept_none: accept None as well
+    :param msg: message on error
+    :return: type cast value
+    """
+    try:
+        if accept_none:
+            return v
+        else:
+            return type_func(v)
+    except:
+        raise ValueError(msg)
+
+
+def as_float(v, accept_none=False, msg='Float expected'):
+    """
+    Cast to float
+    :param v: value
+    :param accept_none: accept None 
+    :param msg: message on error
+    :return: float
+    """
+    return as_type(v, float, accept_none, msg)
+
+
+def as_int(v, accept_none=False, msg='Int expected'):
+    """
+    Cast to int
+    :param v: value
+    :param accept_none: accept None 
+    :param msg: message on error
+    :return: int
+    """
+    return as_type(v, int, accept_none, msg)
+
+
+def as_bool(v, accept_none=False, msg='Bool expected'):
+    """
+    Cast to boolean
+    :param v: value
+    :param accept_none: accept None 
+    :param msg: message on error
+    :return: boolean
+    """
+    return as_type(v, bool, accept_none, msg)
 
 
 def generate_profile(seed, taxa, mode, **kwargs):
     """
     Generate a relative abundance profile.
-
     :param seed: random state initialisation seed
     :param taxa: the number of taxa in the profile or a list of names (chrom) or tuples (chrom, cell)
     :param mode: selected mode [equal, uniform or lognormal]
     :param kwargs: additional options for mode. Log-normal requires lognorm_mu, lognorm_sigma
-    :return: array of abundance values
+    :return: Profile object
     """
-
     random_state = np.random.RandomState(seed)
 
     is_named = False
@@ -77,46 +130,28 @@ def generate_profile(seed, taxa, mode, **kwargs):
     else:
         raise RuntimeError('unsupported mode [{0}]'.format(mode))
 
-    if is_named:
-        # names to be inserted in alphabetical order
-        ordered_names = sorted(taxa)
-        profile = Profile()
-        for n, (chr_name, cell) in enumerate(ordered_names):
-            profile.add(chr_name, abn_val[n], 1, cell)
-        return profile
+    if not is_named:
+        nm = ['chr_{0}'.format(v) for v in range(ntax)]
+        repl_names = zip(nm, nm)
     else:
-        # otherwise just return a plain list of values
-        return abn_val.tolist()
+        # names to be inserted in alphabetical order
+        repl_names = sorted(taxa)
 
+    profile = Profile()
+    for n, (repl_name, cell_name) in enumerate(repl_names):
+        print repl_name, cell_name
+        cell_name = CellDefinition(repl_name, None, abn_val[n], defaults['trans_rate'], {})
+        cell_name = profile.cell_repository.setdefault(cell_name, cell_name)
+        repl = RepliconDefinition(cell_name, repl_name, defaults['copy_number'], defaults['anti_rate'],
+                                  defaults['create_cids'], defaults['linear'], defaults['centromere'])
+        cell_name.add_replicon(repl)
 
-def as_type(v, type_func, accept_none, msg='Unexpected type'):
-    try:
-        if accept_none:
-            return v
-        else:
-            return type_func(v)
-    except:
-        raise ValueError(msg)
-
-
-def as_float(v, accept_none=False, msg='Float expected'):
-    return as_type(v, float, accept_none, msg)
-
-
-def as_int(v, accept_none=False, msg='Int expected'):
-    return as_type(v, int, accept_none, msg)
-
-
-def as_bool(v, accept_none=False, msg='Bool expected'):
-    return as_type(v, bool, accept_none, msg)
+    return profile
 
 
 class RepliconDefinition:
     """
-    An entry in a profile, where object identity is keyed by both chromosome and cell name. Cell names are explicit
-    and important for supporting multi-chromosomal genome definitions in simulations of 3C read-pairs, where inter
-    and intra chromsomal sampling behaviour is drastically different. In situations where a community simulation is
-    entirely monochromosomal.
+    Relevant values required for simulation, pertinent to an individual replicon.
     """
     def __init__(self, cell, name, copy_number, anti_rate, create_cids, linear, centromere):
         """
@@ -178,8 +213,18 @@ class RepliconDefinition:
 
 
 class CellDefinition:
+    """
+    Relevant values required for simulation, pertinent to an individual Cell
+    """
 
     def __init__(self, name, seq_file, abundance, trans_rate, replicons):
+        """
+        :param name: cell name (must by unique across a profile) 
+        :param seq_file: file from which all replicons belong to this cell can be found
+        :param abundance: abundance of cell
+        :param trans_rate: trans (inter-chr) probability
+        :param replicons: dictionary of replicons, indexed by themselves. ie. {replicon: replicon}
+        """
         self.name = name
         self.seq_file = seq_file
         self.abundance = as_float(abundance, msg='abundance expeected to be a number')
@@ -189,6 +234,10 @@ class CellDefinition:
             self.add_replicon(RepliconDefinition(cell=self, name=repl_name, **repl_info))
 
     def add_replicon(self, repl):
+        """
+        Add a replicon to this cell. Must by unique by name.
+        :param repl: RepliconDefinition instance
+        """
         if not isinstance(repl, RepliconDefinition):
             raise ValueError('repl must be a RepliconDefinition')
         if repl in self.repl_repository:
@@ -196,6 +245,11 @@ class CellDefinition:
         self.repl_repository[repl] = repl
 
     def to_dict(self):
+        """
+        Convert a cell to a dictionary representation. This is used to get a simple
+        serialisation with YAML.
+        :return: dict
+        """
         d = {'seq_file': self.seq_file,
              'abundance': self.abundance,
              'trans_rate': self.trans_rate,
@@ -228,7 +282,7 @@ class CellDefinition:
 class Profile:
     """
     The Profile class represents an abundance profile of a single community. Relative abundance
-    values are keyed by both cell and chromsome, thereby permitting more than mono-chromosomal
+    values are keyed by both cell and replicon, thereby permitting more than mono-chromosomal
     cell definitions and varying copy number.
 
     Abundance entries are kept in order of entry but are sorted by default when writing
@@ -238,6 +292,10 @@ class Profile:
         self.cell_repository = OrderedDict()
 
     def add_cell(self, cell):
+        """
+        Add a cell to this profile. Cell name must be unique across profile.
+        :param cell: CellDefinition instance
+        """
         if not isinstance(cell, CellDefinition):
             raise ValueError('cell must be a CellDefinition')
         if cell in self.cell_repository:
@@ -246,7 +304,7 @@ class Profile:
 
     def to_table(self):
         """
-        Table form, were rows are in the order: [chrom, cell, abundance, copy_number]
+        Table form of this profile, where column definition is positional.
         :return: table representation of profile
         """
         t = [['name', 'cell', 'seq_file', 'abundance', 'copy_number', 'anti_rate',
@@ -259,7 +317,7 @@ class Profile:
 
     def write_table(self, hndl):
         """
-        Write a profile to an output stream as a tab-delimited table.
+        Serialise this profile to a file in tabular form.
         :param hndl: output stream handle
         """
         tbl = self.to_table()
@@ -269,6 +327,10 @@ class Profile:
                 hndl.write('{}\n'.format('\t'.join(str(v) for v in row)))
 
     def write_yaml(self, hndl):
+        """
+        Serialise this profile to a file in YAML format.
+        :param hndl: 
+        """
         out = {}
         for ci in self.cell_repository:
             out[ci.name] = ci.to_dict()
@@ -276,7 +338,7 @@ class Profile:
 
     def normalize(self):
         """
-        Normalize a profile so that all abundance entries sum to 1.
+        Normalize a profile so that cell abundances sum to 1.
         """
         val_sum = sum([cell_i.abundance for cell_i in self.cell_repository.values()])
         for cell_i in self.cell_repository:
