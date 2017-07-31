@@ -526,7 +526,7 @@ class Cell:
     own copy-number in addition to the relative abundance of their containing cell.
     """
 
-    def __init__(self, name, abundance, random_state, trans_rate=0.1):
+    def __init__(self, name, abundance, random_state, trans_rate):
         """
         The definition of a cell.
         :param name: a unique name for this cell.
@@ -732,20 +732,14 @@ class Community:
     of simulation parameters are exposed.
     """
 
-    def __init__(self, seq_file, profile, enzyme, random_state, anti_rate=0.2, spurious_rate=0.02,
-                 trans_rate=0.1, create_cids=True, linear=False):
+    def __init__(self, profile, enzyme, spurious_rate, random_state):
         """
         Initialise a community.
 
-        :param seq_file: the multi-fasta sequences for all replicons in the community
         :param profile: the accompanying abundance profile of all replicons in the community
         :param enzyme: the enzyme used to digest DNA in the 3C/HiC library preparation
-        :param anti_rate: the rate of anti-diagonal interactions
         :param random_state: a numpy random state used for random number generation
         :param spurious_rate: the rate of spurious ligation products
-        :param trans_rate: the rate of inter-replicon (trans) ligation products within a cell
-        :param create_cids: when true, simulate chromosome-interacting-domains
-        :param linear: treat replicons as linear
         """
 
         # init a random state if one was not supplied.
@@ -753,24 +747,29 @@ class Community:
         self.random_state = random_state
         self.uniform = random_state.uniform
 
+        # inter-cellular rate is scaled by the product of all chrom site probs
+        self.spurious_rate = spurious_rate
+
         # global replicon and cell registries
         self.repl_registry = OrderedDict()
         self.cell_registry = OrderedDict()
 
-        # reference fasta will be accessed by index.
-        seq_index = SeqIO.index(seq_file, 'fasta', alphabet=Alphabet.generic_dna)
+        for ci in profile.cell_repository:
 
-        # initialise the registries using the community profile
-        for ri in profile.values():
+            # reference fasta will be accessed by index.
+            seq_index = SeqIO.index(ci.seq_file, 'fasta', alphabet=Alphabet.generic_dna)
+
             # register the cell
-            cell = self._register_cell(Cell(ri.cell, ri.abundance, self.random_state, trans_rate))
-            try:
-                rseq = seq_index[ri.name]
-            except Exception:
-                raise Sim3CException('Error getting sequence {0} from fasta file'.format(ri.name))
-            # community-wide replicon registry
-            self._register_replicon(Replicon(ri.name, cell, ri.copy_number, rseq, enzyme, anti_rate,
-                                             random_state, create_cids, linear))
+            cell = self._register_cell(Cell(ci.name, ci.abundance, self.random_state, ci.trans_rate))
+            for ri in ci.repl_repository:
+                try:
+                    rseq = seq_index[ri.name]
+                except Exception:
+                    raise Sim3CException('Error getting sequence {0} from fasta file'.format(ri.name))
+
+                # community-wide replicon registry
+                self._register_replicon(Replicon(ri.name, cell, ri.copy_number, rseq, enzyme, ri.anti_rate,
+                                                 random_state, ri.create_cids, ri.linear))
 
         # now we're finished reading replicons, initialise the probs for each cell
         for cell in self.cell_registry.values():
@@ -813,9 +812,6 @@ class Community:
                 pi = self.pdf_sites[ix]
                 pi /= pi.sum()
                 self.cdf_sites_inter[rni] = {'names': self.repl_names[ix], 'prob': np.cumsum(pi)}
-
-        # inter-cellular rate is scaled by the product of all chrom site probs
-        self.spurious_rate = spurious_rate
 
         # keep the number of cells handy
         self.num_cells = len(self.cell_registry)
@@ -1132,19 +1128,17 @@ class SequencingStrategy:
 
     Strategy = namedtuple('Strategy', 'method run')
 
-    def __init__(self, seed, prof_filename, seq_filename, enz_name, number_pairs,
+    def __init__(self, seed, profile, enz_name, number_pairs,
                  method, read_length, prefix, machine_profile,
                  insert_mean=400, insert_sd=50, insert_min=50, insert_max=None,
-                 anti_rate=0.25, spurious_rate=0.02, trans_rate=0.1,
-                 efficiency=0.02,
+                 spurious_rate=0.02, efficiency=0.02,
                  ins_rate=9.e-5, del_rate=1.1e-4,
-                 create_cids=True, simple_reads=True, linear=False):
+                 simple_reads=True):
         """
         Initialise a SequencingStrategy.
 
         :param seed: the random seed for all subsequent calls to numpy.random methods.
-        :param prof_filename: the abundance profile for the community
-        :param seq_filename: the matching sequence of replicon sequences in Fasta format
+        :param profile: the abundance profile for the community
         :param enz_name: the restriction enzyme name (case sensitive)
         :param number_pairs: the number of read-pairs to generate
         :param method: the library preparation method (Either: 3c or hic)
@@ -1155,19 +1149,14 @@ class SequencingStrategy:
         :param insert_sd: stddev insert length
         :param insert_min: minimum allowable insert length (must be > 50)
         :param insert_max: maximum allowable insert length (must be > mean)
-        :param anti_rate: rate of anti-diagonal interactions
         :param spurious_rate: rate of spurious ligation products
-        :param trans_rate: rate of inter-replicon (trans) ligation product
         :param efficiency: for meta3c simulation, the efficiency of ligation product generation.
         :param ins_rate: rate of sequencing insert errors
         :param del_rate: rate of sequencing deletion errors
-        :param create_cids: simulate 3D structure, chromosomal interacting domains (CID)
         :param simple_reads: True: sequencing reads do not simulate error (faster), False: full simulation of sequencing
-        :param linear: treat replicons as linear
         """
         self.seed = seed
-        self.prof_filename = prof_filename
-        self.seq_filename = seq_filename
+        self.profile = profile
         self.enz_name = enz_name
         self.number_pairs = number_pairs
         self.simple_reads = simple_reads
@@ -1175,18 +1164,17 @@ class SequencingStrategy:
         self.read_length = read_length
         self.insert_min = insert_min
         self.insert_max = insert_max
+        self.spurious_rate = spurious_rate
         self.efficiency = efficiency
 
         # initialise the random state for the simulation
         self.random_state = np.random.RandomState(seed)
 
         self.enzyme = None if not enz_name else get_enzyme_instance(enz_name)
-        self.profile = abn.read_profile(prof_filename, True)
+        self.profile = profile
 
         # initialise the community for the reference data
-        self.community = Community(seq_filename, self.profile, self.enzyme, self.random_state, anti_rate=anti_rate,
-                                   spurious_rate=spurious_rate, trans_rate=trans_rate,
-                                   create_cids=create_cids, linear=linear)
+        self.community = Community(self.profile, self.enzyme, self.spurious_rate, self.random_state)
 
         # preparate the read simulator for output
         self.read_generator = ReadGenerator(method, self.enzyme, seed, self.random_state,
@@ -1457,22 +1445,16 @@ if __name__ == '__main__':
     parser.add_argument('--insert-max', metavar='INT', type=int, default=None,
                         help='Maximum allowed insert size [None]')
 
-    parser.add_argument('--create-cids', default=False, action='store_true',
-                        help='Simulate chromosome interacting domains')
-    parser.add_argument('--linear', default=False, action='store_true',
-                        help='Treat all replicons as linear molecules')
     parser.add_argument('--efficiency', metavar='FLOAT', type=float,
                         help='HiC/Meta3C efficiency factor [hic: 0.5 or meta3c: 0.02]')
-    parser.add_argument('--anti-rate', metavar='FLOAT', type=float, default=0.2,
-                        help='Rate of anti-diagonal fragments [0.2]')
-    parser.add_argument('--trans-rate', metavar='FLOAT', type=float, default=0.1,
-                        help='Rate of inter-replicon (trans) fragment formation [0.1]')
     parser.add_argument('--spurious-rate', metavar='FLOAT', type=float, default=0.02,
                         help='Rate of spurious fragment formation [0.02]')
 
     parser.add_argument('-P', '--profile', dest='profile_in', metavar='FILE',
                         help='Community abundance profile')
-    parser.add_argument('--profile-name', metavar='FILE', default='profile.tsv',
+    parser.add_argument('--profile-format', default='yaml', choices=['yaml', 'table'],
+                        help='File format for reading/writing community profiles [yaml]', required=False)
+    parser.add_argument('--profile-name', metavar='FILE', default='profile.yaml',
                         help='Output file name for a procedural community profile', required=False)
 
     parser.add_argument('--dist', metavar='DISTNAME', choices=['equal', 'uniform', 'lognormal'],
@@ -1488,11 +1470,12 @@ if __name__ == '__main__':
     parser.add_argument('--ins-rate', type=float, default=9.e-5, help='Insert rate [9e-5]')
     parser.add_argument('--del-rate', type=float, default=1.1e-4, help='Deletion rate [1.1e-4]')
 
-    parser.add_argument(dest='genome_seq', metavar='FASTA',
-                        help='Genome sequences for the community')
+    parser.add_argument('--fasta', metavar='FASTA', help='Genome sequences for the community')
     parser.add_argument(dest='output_file', metavar='OUTPUT',
                         help='Output Hi-C reads file')
     args = parser.parse_args()
+
+    import traceback, sys, pdb
 
     try:
 
@@ -1515,10 +1498,19 @@ if __name__ == '__main__':
             print 'An abundance profile must be supplied either as a file or procedurally'
             sys.exit(1)
 
-        profile = None
-        if args.dist:
-            # generate a procedural profile.ebug
+        if args.fasta and not args.dist:
+            print 'A multi-fasta is only accepted when using procedural profile generation'
+            sys.exit(1)
+
+        if not args.dist:
+            profile = abn.read(args.profile_name, args.profile_format, True)
+        else:
+            # generate a procedural profile
             # the number of taxa is defined by number of sequences. i.e. monochromosomal organisms
+
+            if not args.fasta:
+                print 'A procedural profile requires a multi-fasta be supplied'
+                sys.exit(1)
 
             if os.path.basename(args.profile_name) != args.profile_name:
                 print 'Arguments to profile-name should not contain path information'
@@ -1526,26 +1518,16 @@ if __name__ == '__main__':
 
             profile_path = os.path.join(os.path.dirname(args.output_file), args.profile_name)
             if os.path.exists(profile_path):
-                print 'A previous procedural abundance proebugfile already exists'
+                print 'A previous procedural abundance profile already exists'
                 print 'Please delete or move away: {0}'.format(profile_path)
                 sys.exit(1)
 
-            seq_names = None
-            seq_index = SeqIO.index(args.genome_seq, 'fasta')
-            try:
-                seq_names = list(seq_index)
-            finally:
-                seq_index.close()
-
-            profile = abundance.generate_profile(args.seed, seq_names, mode=args.dist,
+            profile = abundance.generate_profile(args.seed, args.fasta, mode=args.dist,
                                                  lognorm_mu=args.lognorm_mu, lognorm_sigma=args.lognorm_sigma)
-
-            # present result to console
-            profile.write_table(sys.stdout)
 
             # save result to file
             with open(profile_path, 'w') as h_out:
-                profile.write_table(h_out)
+                profile.write(h_out, args.profile_format)
 
             # generated profile will be used downstream
             args.profile_in = profile_path
@@ -1557,18 +1539,17 @@ if __name__ == '__main__':
                 args.efficiency = 0.02
 
         # list of CLI arguments to pass as parameters to the simulation
-        kw_names = ['prefix', 'machine_profile', 'insert_mean', 'insert_sd', 'insert_min', 'insert_max',
-                    'anti_rate', 'spurious_rate', 'trans_rate',
-                    'efficiency',
-                    'ins_rate', 'del_rate',
-                    'create_cids', 'simple_reads', 'linear']
+        kw_names = ['prefix', 'machine_profile',
+                    'insert_mean', 'insert_sd', 'insert_min', 'insert_max',
+                    'spurious_rate',
+                    'efficiency', 'ins_rate', 'del_rate', 'simple_reads']
 
         # extract these parameters from the parsed arguments
         kw_args = {k: v for k, v in vars(args).items() if k in kw_names}
 
         # initialise a sequencing strategy for this community
         # and the given experimental parameters
-        strategy = SequencingStrategy(args.seed, args.profile_in, args.genome_seq, args.enzyme_name,
+        strategy = SequencingStrategy(args.seed, profile, args.enzyme_name,
                                       args.num_pairs, args.method, args.read_length, **kw_args)
 
         # Run the simulation
@@ -1577,3 +1558,6 @@ if __name__ == '__main__':
 
     except Exception as ex:
         print 'Error: {0}'.format(ex)
+        type, value, tb = sys.exc_info()
+        traceback.print_exc()
+        pdb.post_mortem(tb)

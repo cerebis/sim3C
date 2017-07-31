@@ -17,6 +17,7 @@ You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """
 from collections import OrderedDict
+from Bio import SeqIO
 
 import numpy as np
 import re
@@ -89,34 +90,25 @@ def as_bool(v, accept_none=False, msg='Bool expected'):
     return as_type(v, bool, accept_none, msg)
 
 
-def generate_profile(seed, taxa, mode, **kwargs):
+def generate_profile(seed, seq_file, mode, **kwargs):
     """
     Generate a relative abundance profile.
     :param seed: random state initialisation seed
-    :param taxa: the number of taxa in the profile or a list of names (chrom) or tuples (chrom, cell)
+    :param seq_file: input sequences from which to generate profile
     :param mode: selected mode [equal, uniform or lognormal]
     :param kwargs: additional options for mode. Log-normal requires lognorm_mu, lognorm_sigma
-    :return: Profile object
+    :return: Profile objecttrans
     """
     random_state = np.random.RandomState(seed)
 
-    is_named = False
-    if isinstance(taxa, int):
-        ntax = taxa
-    elif isinstance(taxa, (list, tuple)):
-        ntax = len(taxa)
-        print 'Profile will be over {0} taxa'.format(ntax)
-        # use the first element to determine if we've been passed a list of scalars
-        if not isinstance(taxa[0], (list, tuple)):
-            # convert single chrom names to (chrom, None) explicit tuples with no cell name.
-            tx = []
-            for ti in taxa:
-                tx.append((ti, None))
-            taxa = tx
-        is_named = True
-    else:
-        raise RuntimeError('taxa parameter must be a integer or '
-                           'a list/tuple of names. was [{0}]'.format(taxa.__class__))
+    seq_index = SeqIO.index(seq_file, 'fasta')
+    try:
+        taxa = list(seq_index)
+    finally:
+        seq_index.close()
+
+    ntax = len(taxa)
+    print 'Profile will be over {0} taxa'.format(ntax)
 
     # obtain the set of values from the chosen distribution
     if mode == 'equal':
@@ -130,21 +122,17 @@ def generate_profile(seed, taxa, mode, **kwargs):
     else:
         raise RuntimeError('unsupported mode [{0}]'.format(mode))
 
-    if not is_named:
-        nm = ['chr_{0}'.format(v) for v in range(ntax)]
-        repl_names = zip(nm, nm)
-    else:
-        # names to be inserted in alphabetical order
-        repl_names = sorted(taxa)
+    # names to be inserted in alphabetical order
+    repl_names = sorted(taxa)
 
     profile = Profile()
-    for n, (repl_name, cell_name) in enumerate(repl_names):
-        print repl_name, cell_name
-        cell_name = CellDefinition(repl_name, None, abn_val[n], defaults['trans_rate'], {})
-        cell_name = profile.cell_repository.setdefault(cell_name, cell_name)
-        repl = RepliconDefinition(cell_name, repl_name, defaults['copy_number'], defaults['anti_rate'],
+    for n, name in enumerate(repl_names):
+        print name
+        cell = CellDefinition(name, seq_file, abn_val[n], defaults['trans_rate'], {})
+        cell = profile.cell_repository.setdefault(cell, cell)
+        repl = RepliconDefinition(cell, name, defaults['copy_number'], defaults['anti_rate'],
                                   defaults['create_cids'], defaults['linear'], defaults['centromere'])
-        cell_name.add_replicon(repl)
+        cell.add_replicon(repl)
 
     return profile
 
@@ -315,6 +303,27 @@ class Profile:
                           ci.trans_rate, ri.linear, ri.create_cids, ri.centromere])
         return t
 
+    def write(self, output, fmt='yaml'):
+        """
+        Write a profile to output to either 'yaml' or 'table' format.
+        :param output: either a filename or open output stream
+        :param fmt: yaml or table format
+        """
+        close_output = False
+        try:
+            if isinstance(output, basestring):
+                output = open(output, 'w')
+                close_output = True
+            if fmt == 'yaml':
+                self.write_yaml(output)
+            elif fmt == 'table':
+                self.write_table(output)
+            else:
+                raise RuntimeError('unknown profile format [{}]'.format(fmt))
+        finally:
+            if close_output:
+                output.close()
+
     def write_table(self, hndl):
         """
         Serialise this profile to a file in tabular form.
@@ -345,57 +354,73 @@ class Profile:
             cell_i.abundance /= val_sum
 
 
-def read_table(hndl, normalise=False):
+def read(input, fmt='yaml', normalize=False):
+    """
+    Read a profile from an open input stream, either in yaml (fmt=yaml) or tabular format (fmt=table).
+    :param input: 
+    :param fmt: 
+    :param normalize: 
+    :return: 
+    """
+    close_input = False
+    if isinstance(input, basestring):
+        input = open(input, 'r')
+        close_input = True
+
+    try:
+        if fmt == 'yaml':
+            return read_yaml(input, normalize)
+        elif fmt == 'table':
+            return read_table(input, normalize)
+        else:
+            raise RuntimeError('unknown profile format [{}]'.format(fmt))
+    finally:
+        if close_input:
+            input.close()
+
+
+def read_table(hndl, normalize=False):
     """
     Read a profile from an input stream. Column position dictates field and must be in the expected
     order -- as written out by write_table()
-    :param hndl: the input file name or file object
-    :param normalise: when true, normalise after reading
+    :param hndl: the input stream
+    :param normalize: when true, normalise after reading
     :return: Profile object
     """
-    close_handle = False
-    try:
-        if isinstance(hndl, basestring):
-            hndl = open(hndl, 'r')
-            close_handle = True
+    profile = Profile()
+    for n, line in enumerate(hndl, start=1):
+        line = line.strip()
+        print line
+        if len(line) <= 0:
+            continue
+        if line.startswith('#'):
+            continue
+        try:
+            # split line and associate with field names
+            fields = re.split('[\s,]+', line)
+            labels = ['name', 'cell', 'seq_file', 'abundance', 'copy_number', 'anti_rate',
+                      'trans_rate', 'linear', 'create_cids', 'centromere']
+            t = dict(zip(labels, fields))
 
-        profile = Profile()
-        for n, line in enumerate(hndl, start=1):
-            line = line.strip()
-            print line
-            if len(line) <= 0:
-                continue
-            if line.startswith('#'):
-                continue
-            try:
-                # split line and associate with field names
-                fields = re.split('[\s,]+', line)
-                labels = ['name', 'cell', 'seq_file', 'abundance', 'copy_number', 'anti_rate',
-                          'trans_rate', 'linear', 'create_cids', 'centromere']
-                t = dict(zip(labels, fields))
+            # instantiate cell->repl
+            cell = CellDefinition(t['cell'], t['seq_file'], t['abundance'], t['trans_rate'], {})
+            cell = profile.cell_repository.setdefault(cell, cell)
+            repl = RepliconDefinition(cell, t['name'], t['copy_number'], t['anti_rate'],
+                                      t['create_cids'], t['linear'],
+                                      t['centromere'])
+            cell.add_replicon(repl)
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            raise IOError('invalid table at line {0} [{0}]'.format(n, line))
 
-                # instantiate cell->repl
-                cell = CellDefinition(t['cell'], t['seq_file'], t['abundance'], t['trans_rate'], {})
-                cell = profile.cell_repository.setdefault(cell, cell)
-                repl = RepliconDefinition(cell, t['name'], t['copy_number'], t['anti_rate'],
-                                          t['create_cids'], t['linear'],
-                                          t['centromere'])
-                cell.add_replicon(repl)
-            except Exception as e:
-                import traceback
-                traceback.print_exc()
-                raise IOError('invalid table at line {0} [{0}]'.format(n, line))
+    if normalize:
+        profile.normalize()
 
-        if normalise:
-            profile.normalize()
-
-        return profile
-    finally:
-        if close_handle:
-            hndl.close()
+    return profile
 
 
-def read_yaml(fname):
+def read_yaml(hndl, normalize=False):
     """
     Read a community profile definition file in YAML format. The method returns a ordered
     dict of cells, which each contain an ordered dict of replicons, where all fields
@@ -404,14 +429,14 @@ def read_yaml(fname):
     
     Unspecified mandatory fields will raise an IOError.
     
-    :param fname: a yaml format profile
+    :param hndl: input stream
+    :param normalize: when true, normalise after reading
     :return: an ordered dict of dicts
     """
 
-    with open(fname, 'r') as hndl:
-        cfg = yaml.load(hndl)
+    cfg = yaml.load(hndl)
 
-    com_def = OrderedDict()
+    comm_def = OrderedDict()
     for cell_name, cell_info in sorted(cfg.items(), key=lambda x: x[0]):
 
         if 'abundance' not in cell_info:
@@ -420,14 +445,14 @@ def read_yaml(fname):
         if 'seq_file' not in cell_info:
             raise IOError('Invalid community definition: cell [{}] has no sequence file specified'.format(cell_name))
 
-        com_def[cell_name] = {
+        comm_def[cell_name] = {
             'trans_rate': cell_info.get('trans_rate', defaults['trans_rate']),
             'abundance': cell_info['abundance'],
             'seq_file': cell_info['seq_file']
         }
 
         rd = OrderedDict()
-        com_def[cell_name]['replicons'] = rd
+        comm_def[cell_name]['replicons'] = rd
         for repl_info in sorted(cell_info['replicons'], key=lambda x: x['name']):
             rd[repl_info['name']] = {
                 'anti_rate': repl_info.get('anti_rate', defaults['anti_rate']),
@@ -438,7 +463,10 @@ def read_yaml(fname):
             }
 
     profile = Profile()
-    for cell_name, cell_info in com_def.iteritems():
+    for cell_name, cell_info in comm_def.iteritems():
         profile.add_cell(CellDefinition(name=cell_name, **cell_info))
+
+    if normalize:
+        profile.normalize()
 
     return profile

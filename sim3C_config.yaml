@@ -16,13 +16,14 @@
 # type: integer
 'copy_number': 1
 
-# By default, treat replicons as linear (linear: True) or circular (linear: False)
+# Default, treat replicons as linear (linear: True) or circular (linear: False)
 # type: boolean
 'linear': False
 
-# By default, do/do not simulate a randomly generated CID/TAD structure.
+# Default choice to simulate a randomly generated CID/TAD structure.
 # type: boolean
 'create_cids': False
 
-# By default, no centromere position is defined
+# Default no centromere position is defined
 'centromere': None
+
