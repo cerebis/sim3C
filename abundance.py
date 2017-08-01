@@ -127,7 +127,6 @@ def generate_profile(seed, seq_file, mode, **kwargs):
 
     profile = Profile()
     for n, name in enumerate(repl_names):
-        print name
         cell = CellDefinition(name, seq_file, abn_val[n], defaults['trans_rate'], {})
         cell = profile.cell_repository.setdefault(cell, cell)
         repl = RepliconDefinition(cell, name, defaults['copy_number'], defaults['anti_rate'],

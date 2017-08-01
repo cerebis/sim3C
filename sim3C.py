@@ -1453,15 +1453,15 @@ if __name__ == '__main__':
     parser.add_argument('-P', '--profile', dest='profile_in', metavar='FILE',
                         help='Community abundance profile')
     parser.add_argument('--profile-format', default='yaml', choices=['yaml', 'table'],
-                        help='File format for reading/writing community profiles [yaml]', required=False)
-    parser.add_argument('--profile-name', metavar='FILE', default='profile.yaml',
-                        help='Output file name for a procedural community profile', required=False)
+                        help='File format for reading/writing community profiles [yaml]')
+    parser.add_argument('--profile-out', metavar='FILE', default='profile',
+                        help='Output base filename for procedural community profiles')
 
     parser.add_argument('--dist', metavar='DISTNAME', choices=['equal', 'uniform', 'lognormal'],
                         help='Abundance profile distribution choices: equal, uniform, lognormal')
-    parser.add_argument('--lognorm-mu', metavar='FLOAT', type=float, default='1', required=False,
+    parser.add_argument('--lognorm-mu', metavar='FLOAT', type=float, default='1',
                         help='Log-normal relative abundance mu parameter')
-    parser.add_argument('--lognorm-sigma', metavar='FLOAT', type=float, default='1', required=False,
+    parser.add_argument('--lognorm-sigma', metavar='FLOAT', type=float, default='1',
                         help='Log-normal relative abundance sigma parameter')
 
     parser.add_argument('--simple-reads', default=False, action='store_true', help='Do not simulate sequencing errors')
@@ -1474,6 +1474,23 @@ if __name__ == '__main__':
     parser.add_argument(dest='output_file', metavar='OUTPUT',
                         help='Output Hi-C reads file')
     args = parser.parse_args()
+
+    ALLOWED_ENDINGS = ['tab', 'tsv', 'yaml', 'yml']
+
+    def validate_filename(fname, suffix, allowed_endings):
+        """
+        Verify that a given filename ends in an expected suffix. This method does not try
+        to be too clever, and will append the supplied suffix when the file is not found
+        to end in any of the allowed ways.
+        :param fname: the file name to validate
+        :param suffix: the suffix to append when an ending is missing 
+        :param allowed_endings: the list of allowed endings. This are expected to be suffixes.
+        :return: 
+        """
+        if fname.split('.')[-1] not in allowed_endings:
+            return '{}.{}'.format(fname, suffix)
+        else:
+            return fname
 
     import traceback, sys, pdb
 
@@ -1503,7 +1520,7 @@ if __name__ == '__main__':
             sys.exit(1)
 
         if not args.dist:
-            profile = abn.read(args.profile_name, args.profile_format, True)
+            profile = abn.read(args.profile_in, args.profile_format, True)
         else:
             # generate a procedural profile
             # the number of taxa is defined by number of sequences. i.e. monochromosomal organisms
@@ -1512,11 +1529,13 @@ if __name__ == '__main__':
                 print 'A procedural profile requires a multi-fasta be supplied'
                 sys.exit(1)
 
-            if os.path.basename(args.profile_name) != args.profile_name:
+            args.profile_out = validate_filename(args.profile_out, args.profile_format, ALLOWED_ENDINGS)
+
+            if os.path.basename(args.profile_out) != args.profile_out:
                 print 'Arguments to profile-name should not contain path information'
                 sys.exit(1)
 
-            profile_path = os.path.join(os.path.dirname(args.output_file), args.profile_name)
+            profile_path = os.path.join(os.path.dirname(args.output_file), args.profile_out)
             if os.path.exists(profile_path):
                 print 'A previous procedural abundance profile already exists'
                 print 'Please delete or move away: {0}'.format(profile_path)
