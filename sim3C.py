@@ -309,7 +309,7 @@ class Replicon:
     CID_MAX = 6
     CID_DEPTH = 2
 
-    def __init__(self, name, cell, cn, seq, enzyme, anti_rate, random_state, create_cids=True):
+    def __init__(self, name, cell, cn, seq, enzyme, anti_rate, random_state, create_cids=True, linear=False):
         """
         The definition of a replicon (chromosome, plasmid, etc).
         :param name: a unique name for this replicon
@@ -320,6 +320,7 @@ class Replicon:
         :param anti_rate: the rate of anti-diagonal interactions
         :param random_state: a numpy RandomState object for random number generation
         :param create_cids: when true, simulate chromosome-interacting-domains
+        :param linear: treat replicon as linear
         """
 
         # if random state not supplied, initialise one
@@ -327,6 +328,7 @@ class Replicon:
         self.choice = random_state.choice
         self.uniform = random_state.uniform
         self.randint = random_state.randint
+        self.linear = linear
 
         self.name = name
         self.copy_number = cn
@@ -338,7 +340,7 @@ class Replicon:
         if not enzyme:
             self.sites = AllSites(len(seq.seq), self.random_state)
         else:
-            self.sites = CutSites(enzyme, seq.seq, self.random_state, linear=False)
+            self.sites = CutSites(enzyme, seq.seq, self.random_state, linear=linear)
 
         self.length = len(self.seq)
         self.num_sites = self.sites.size
@@ -400,6 +402,12 @@ class Replicon:
         Get a second genomic location (x2) on this replicon, where the separation |x2-x1|
         is constrained by the experimentally determined distribution for 3C/HiC ligation
         products.
+        Note TODO: this method does not explicitly treat linear replicons. To do so, we must 
+        handle the edge case of drawing beyond first and last positions. Simple approaches 
+        using redraw are potentially computationally terrible if the first position is 
+        very close to the end of the replicon. For now, we accept the modulo solution
+        for both linear and circular.
+        
         :param emp_dist: empirical distribution of separation
         :param x1: the first position
         :param length: the length (bp) of the replicon
@@ -478,7 +486,7 @@ class Replicon:
 
     def subseq(self, x1, length, rev=False):
         """
-        Create a subsequence, where the replicon is always treated as circular.
+        Create a subsequence.
 
         :param x1: starting genomic position
         :param length: length of subsequence
@@ -486,16 +494,22 @@ class Replicon:
         :return: subseq Seq object
         """
 
-        # handle negative starts as wrapping around.
+        # handle negative starts as wrapping around or,
+        # in linear cases, terminates at first position
         if x1 < 0:
-            x1 %= self.length
+            x1 = x1 % self.length if not self.linear else 0
 
         x2 = x1 + length
         diff = x2 - self.length
         if diff > 0:
-            # sequence will wrap around
-            ss = self.seq[x1:] + self.seq[:diff]
-            ss.description = Replicon.PART_DESC_FMT.format(rev, x1+1, diff)
+            if self.linear:
+                # sequence terminates early
+                ss = self.seq[x1:-1]
+                ss.description = Replicon.PART_DESC_FMT.format(rev, x1+1, self.length)
+            else:
+                # sequence will wrap around
+                ss = self.seq[x1:] + self.seq[:diff]
+                ss.description = Replicon.PART_DESC_FMT.format(rev, x1+1, diff)
         else:
             ss = self.seq[x1:x2]
             ss.description = Replicon.PART_DESC_FMT.format(rev, x1+1, x2)
@@ -719,7 +733,7 @@ class Community:
     """
 
     def __init__(self, seq_file, profile, enzyme, random_state, anti_rate=0.2, spurious_rate=0.02,
-                 trans_rate=0.1, create_cids=True):
+                 trans_rate=0.1, create_cids=True, linear=False):
         """
         Initialise a community.
 
@@ -731,6 +745,7 @@ class Community:
         :param spurious_rate: the rate of spurious ligation products
         :param trans_rate: the rate of inter-replicon (trans) ligation products within a cell
         :param create_cids: when true, simulate chromosome-interacting-domains
+        :param linear: treat replicons as linear
         """
 
         # init a random state if one was not supplied.
@@ -755,7 +770,7 @@ class Community:
                 raise Sim3CException('Error getting sequence {0} from fasta file'.format(ri.name))
             # community-wide replicon registry
             self._register_replicon(Replicon(ri.name, cell, ri.copy_number, rseq, enzyme, anti_rate,
-                                             random_state, create_cids))
+                                             random_state, create_cids, linear))
 
         # now we're finished reading replicons, initialise the probs for each cell
         for cell in self.cell_registry.values():
@@ -1123,7 +1138,7 @@ class SequencingStrategy:
                  anti_rate=0.25, spurious_rate=0.02, trans_rate=0.1,
                  efficiency=0.02,
                  ins_rate=9.e-5, del_rate=1.1e-4,
-                 create_cids=True, simple_reads=True):
+                 create_cids=True, simple_reads=True, linear=False):
         """
         Initialise a SequencingStrategy.
 
@@ -1148,6 +1163,7 @@ class SequencingStrategy:
         :param del_rate: rate of sequencing deletion errors
         :param create_cids: simulate 3D structure, chromosomal interacting domains (CID)
         :param simple_reads: True: sequencing reads do not simulate error (faster), False: full simulation of sequencing
+        :param linear: treat replicons as linear
         """
         self.seed = seed
         self.prof_filename = prof_filename
@@ -1170,7 +1186,7 @@ class SequencingStrategy:
         # initialise the community for the reference data
         self.community = Community(seq_filename, self.profile, self.enzyme, self.random_state, anti_rate=anti_rate,
                                    spurious_rate=spurious_rate, trans_rate=trans_rate,
-                                   create_cids=create_cids)
+                                   create_cids=create_cids, linear=linear)
 
         # preparate the read simulator for output
         self.read_generator = ReadGenerator(method, self.enzyme, seed, self.random_state,
@@ -1443,6 +1459,8 @@ if __name__ == '__main__':
 
     parser.add_argument('--create-cids', default=False, action='store_true',
                         help='Simulate chromosome interacting domains')
+    parser.add_argument('--linear', default=False, action='store_true',
+                        help='Treat all replicons as linear molecules')
     parser.add_argument('--efficiency', metavar='FLOAT', type=float,
                         help='HiC/Meta3C efficiency factor [hic: 0.5 or meta3c: 0.02]')
     parser.add_argument('--anti-rate', metavar='FLOAT', type=float, default=0.2,
@@ -1543,7 +1561,7 @@ if __name__ == '__main__':
                     'anti_rate', 'spurious_rate', 'trans_rate',
                     'efficiency',
                     'ins_rate', 'del_rate',
-                    'create_cids', 'simple_reads']
+                    'create_cids', 'simple_reads', 'linear']
 
         # extract these parameters from the parsed arguments
         kw_args = {k: v for k, v in vars(args).items() if k in kw_names}
