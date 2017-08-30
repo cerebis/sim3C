@@ -66,10 +66,11 @@ def create_weight(n, sigma, verbose=False, max_iter=1000):
     return w
 
 
-def seriate_spin_nh(x, sigma=None, step=5, weight_func=create_weight, verbose=False, maximize=False):
+def seriate_spin_nh(x, sigma=None, step_iters=5, weight_func=create_weight, verbose=False, maximize=False,
+                    sigma_steps=10, max_sigma=20., min_sigma=1.):
 
     if not sigma:
-        sigma = np.linspace(20, 1, 10)
+        sigma = np.linspace(max_sigma, min_sigma, sigma_steps)
 
     d = x.copy()
     d = d.astype(np.float)
@@ -92,7 +93,7 @@ def seriate_spin_nh(x, sigma=None, step=5, weight_func=create_weight, verbose=Fa
         argfunc = np.argmin
         best_energy = lambda e, best: e < best
 
-    for i in xrange(len(sigma)*step):
+    for i in xrange(len(sigma)*step_iters):
 
         if verbose:
             print 'Iteration {}...'.format(i+1),
@@ -116,8 +117,8 @@ def seriate_spin_nh(x, sigma=None, step=5, weight_func=create_weight, verbose=Fa
             p_best[:] = p[:]
 
         # adapt sigma
-        if ((i+1) % step) == 0 and (i+1) != len(sigma)*step:
-            s = sigma[i/step+1]
+        if ((i+1) % step_iters) == 0 and (i+1) != len(sigma)*step_iters:
+            s = sigma[i / step_iters + 1]
             if verbose:
                 print "\nReducing sigma to: {}".format(s)
 
@@ -146,6 +147,8 @@ if __name__ == '__main__':
     import mapio
 
     parser = argparse.ArgumentParser()
+    parser.add_argument('--headers', action='store_true', default=False,
+                        help='Input CSV file has matching row and column headers list sequence names')
     parser.add_argument('--delim', default=',', help='Matrix delimiter [,]')
     parser.add_argument('-v', '--verbose', default=False, action='store_true', help='Verbose output')
     parser.add_argument('--reduce', default=None, type=int,
@@ -153,15 +156,35 @@ if __name__ == '__main__':
     parser.add_argument('--maximize', default=False, action='store_true', help='Maximize energy rather than minimize')
     parser.add_argument('--recip', default=False, action='store_true', help='Apply per-element reciprocal')
     parser.add_argument('--symm', default=False, action='store_true', help='Make half-matrix symmetric')
+    parser.add_argument('--steps', type=int, default=10, help='Number of steps in simga reduction [10]')
+    parser.add_argument('--max-sigma', type=float, default=20., help='Maximum initial sigma value [20]')
+    parser.add_argument('--min-sigma', type=float, default=1., help='Minimum final sigma value [1]')
+    parser.add_argument('--sigma-iter', type=int, default=5, help='Number of settling iterations per sigma value [5]')
     parser.add_argument('-f', '--format', choices=['csv', 'h5'], default='csv',
                         help='Input contact map format')
-    parser.add_argument('--cmap-name', default='PuRd', help='Heatmap matplotlib color-map [PuRd]')
+    parser.add_argument('--cmap-name', default='PuRd', help='Colour palette used for heatmap (matplotlib) [PuRd]')
     parser.add_argument('map', help='Contact map')
     parser.add_argument('output', help='Output base')
     args = parser.parse_args()
 
+    if args.steps < 1:
+        raise RuntimeError('There must be at least one step.')
+
+    if args.max_sigma <= args.min_sigma:
+        raise RuntimeError('Sigma maximum must be greater than minimum')
+
     # read in contact map
-    cmap = mapio.read_map(args.map, args.format, delim=args.delim)
+    cmap = mapio.read_map(args.map, args.format, delim=args.delim, names=args.headers)
+
+    # set aside seq name information if supplied in input
+    if args.headers:
+        cmap, rnames, cnames = cmap
+        # just keeping one record of input sequence order, once we establish that our two sources agree.
+        if rnames != cnames:
+            raise RuntimeError('Row and column headers do not agree')
+        seq_names = np.array(rnames)
+        del cnames
+        del rnames
 
     print 'Contact matrix size {}x{}'.format(*cmap.shape)
 
@@ -169,16 +192,24 @@ if __name__ == '__main__':
         if args.reduce > len(cmap):
             raise RuntimeError('Reduction size is larger than starting matrix')
         cmap = cmap[:args.reduce, :args.reduce]
+        seq_names = seq_names[:args.reduce]
 
     if args.symm:
-        make_symmetric(cmap)
+        cmap = make_symmetric(cmap)
 
+    target_map = cmap.copy()
     if args.recip:
-        cmap = dissim_reciprocal(cmap.astype(np.float))
+        target_map = dissim_reciprocal(target_map.astype(np.float))
 
-    perm = seriate_spin_nh(cmap, verbose=args.verbose, maximize=args.maximize)
+    perm = seriate_spin_nh(target_map, verbose=args.verbose, maximize=args.maximize, sigma_steps=args.steps,
+                           max_sigma=args.max_sigma, min_sigma=args.min_sigma, step_iters=args.sigma_iter)
 
-    # permute the contact map
+    # extract indices order from permutation matrix
+    order_ix = np.argwhere(perm == 1)[:, 1]
+    # write a two-column table of original and final orders.
+    np.savetxt('the_order.csv', np.vstack((seq_names, seq_names[order_ix])).T, fmt='%s')
+
+    # permute the input contact map
     cmap = np.dot(np.dot(perm, cmap), perm.T)
 
     # write permuted map
