@@ -215,7 +215,7 @@ class CutSites:
         if ix == 0:
             return cs[0]
         elif ix == self.size:
-            return cs[1]
+            return cs[-1]
         else:
             # pick the closest of nearest neighbours
             x1 = cs[ix - 1]
