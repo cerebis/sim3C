@@ -479,6 +479,9 @@ class ContactMap:
         self.linear = linear
         self.min_sites = min_sites
         self.total_length = 0
+        self.seq_info = OrderedDict()
+        self.seq_map = None
+        self.grouping = None
 
         with pysam.AlignmentFile(bam_file, 'rb') as bam:
 
@@ -511,7 +514,6 @@ class ContactMap:
             try:
                 # determine the set of active sequences
                 # where the first filtration step is by length
-                self.seq_info = OrderedDict()
                 offset = 0
                 logger.info('Reading sequences...')
                 for n, li in enumerate(bam.lengths):
@@ -570,9 +572,10 @@ class ContactMap:
             logger.info('BAM file contains: {0} references over {1} bp, {2} alignments'.format(
                 self.total_seq, self.total_len, self.total_reads))
 
-            # a simple associative map for binning on whole sequences
-            #id_set = set(self.seq_info)
-            #self.seq_map = OrderedDict((n, OrderedDict(zip(id_set, [0] * len(id_set)))) for n in id_set)
+            # As sequences from the map file may have been excluded above,
+            # we use a dict of dicts to represent the potentially sparse sequence map.
+            # memory use could be reduced if symmetry was exploited.
+            self.seq_map = {i: {j: 0 for j in self.seq_info} for i in self.seq_info}
 
             # initialise the ordercm.order.order
             self.order = SeqOrder(self.seq_info)
@@ -728,7 +731,7 @@ class ContactMap:
                             continue
 
                     counts['accepted'] += 1
-                    #self.seq_map[r1.reference_id][r2.reference_id] += 1
+                    # self.seq_map[r1.reference_id][r2.reference_id] += 1
 
                 r1pos = r1.pos if not r1.is_reverse else r1.pos + r1.alen
                 r2pos = r2.pos if not r2.is_reverse else r2.pos + r2.alen
@@ -749,12 +752,30 @@ class ContactMap:
                     s1, s2 = s2, s1
                     bi, bj = bj, bi
 
+                self.seq_map[s1][s2] += 1
+
                 self.raw_map[s1][s2][bi, bj] += 1
 
         self._calc_map_weight()
 
         logger.info('Pair accounting: {}'.format(counts))
         logger.info('Total raw map weight {0}'.format(self.map_weight))
+
+    def save_simple_map(self, fname):
+        """
+        Save the simple sequence(contig) contact map.
+        The leading column and row are sequence names.
+        :param fname: destination file name  
+        """
+        with open(fname, 'w') as out_h:
+            # lets just order the ids for consistency
+            sorted_ids = sorted(self.seq_info)
+            # begin with a header row, first element refers to similar row ids
+            out_h.write('id,{}\n'.format(','.join(self.seq_info[i]['name'] for i in sorted_ids)))
+            for i in sorted_ids:
+                out_h.write('{},{}\n'.format(
+                    self.seq_info[i]['name'],
+                    ','.join(str(self.seq_map[i][j]) for j in sorted_ids)))
 
     def to_dense(self, norm=False):
         """
@@ -1267,8 +1288,12 @@ if __name__ == '__main__':
                             linear=not args.circular)
 
             logger.info('Saving contact map instance...')
-            cm.save('cm.p')
+
+# temporarily stopping pickling
+#            cm.save('cm.p')
+
             logger.info('Contact map took: {}'.format(t.elapsed()))
+            cm.save_simple_map('the_simple.csv')
 
         # logger.info('Saving graph...')
         # nx.write_graphml(cm.create_contig_graph(norm=True, scale=True, extern_ids=True), 'cm.graphml')
