@@ -309,7 +309,7 @@ class Replicon:
     CID_MAX = 6
     CID_DEPTH = 2
 
-    def __init__(self, name, cell, cn, seq, enzyme, anti_rate, random_state, create_cids=True, linear=False):
+    def __init__(self, name, cell, cn, seq, enzyme, anti_rate, random_state, create_cids=True, linear=False, centromere=None):
         """
         The definition of a replicon (chromosome, plasmid, etc).
         :param name: a unique name for this replicon
@@ -321,6 +321,7 @@ class Replicon:
         :param random_state: a numpy RandomState object for random number generation
         :param create_cids: when true, simulate chromosome-interacting-domains
         :param linear: treat replicon as linear
+        :param centromere: optional centromere location 
         """
 
         # if random state not supplied, initialise one
@@ -329,6 +330,9 @@ class Replicon:
         self.uniform = random_state.uniform
         self.randint = random_state.randint
         self.linear = linear
+        self.centromere = centromere
+        if self.centromere:
+            cell.centro_registry[name] = self
 
         self.name = name
         self.copy_number = cn
@@ -544,6 +548,9 @@ class Cell:
         self.replicon_registry = OrderedDict()
         # inter-replicon (trans) rate
         self.trans_rate = trans_rate
+        # centromere containing replicon registry
+        # initialized through child->parent
+        self.centro_registry = {}
 
         # probability properties, to be initialised by init_prob()
         self.cdf = None
@@ -693,6 +700,64 @@ class Cell:
                                         self.cdf_extents_inter[skip_repl]['names'],
                                         self.cdf_extents_inter[skip_repl]['prob']))
 
+    def draw_constrained_trans(self, r1, x1, r2):
+        """
+        Draw a site x2 on replicon r2, knowing (r1, x1), where a physical constraint is assumed. The physical constraint
+        is presently drived from the idea of centromere binding. Not all replicons must have this value defined,
+        and therefore in cases where either replicon centromere location is undefined, trans-interactions will be 
+        treated as unconstrained (uniformly random).
+        
+        :param r1: replicon 1
+        :param x1: site 1 on replicon 1
+        :param r2: replicon 2
+        :return: site 2 on replicon 2
+        """
+
+        def f2(p, x0, y0, x, y):
+            dx = np.abs(x - x0)
+            dy = np.abs(y - y0)
+            q = p
+            p *= dx/100.
+            q *= dy/100.
+            return p*(1-p)**dx + q*(1-q)**dy
+
+
+        if not self.is_centromeric() or not r1.centromere or not r2.centromere:
+            # centromeric interactions between r1 and r2 are undefined.
+            # fallback to unconstrained.
+            return r2.draw_any_site()
+
+        else:
+            x1 -= r1.centromereobjects
+            x2 = np.abs(x1)
+
+            if np.random.uniform() < 0.5:
+                if x1 < 0:
+                    m = float(r1.centromere) / r2.centromere
+                else:
+                    m = float(r1.length - r1.centromere) / r2.centromere
+                x2 = int(r2.centromere - 1/m*x2)
+            else:
+                if x1 < 0:
+                    m = float(r1.centromere) / (r2.length - r2.centromere)
+                else:
+                    m = float(r1.length - r1.centromere) / (r2.length - r2.centromere)
+                x2 = int(r2.centromere + 1/m*x2)
+
+            if x2 < 0:
+                raise OutOfBoundsException(x2, r2.length)
+
+            delta = int(r2.empdist.rand())
+            if np.random.uniform() < 0.5:
+                x2 -= delta
+            else:
+                x2 += delta
+
+            if x2 < 0 or x2 >= r2.length:
+                raise OutOfBoundsException(x2, r2.length)
+
+            return x2
+
     def draw_any_site(self):
         """
         Draw a cut-site from any replicon within this cell. The probability
@@ -719,6 +784,13 @@ class Cell:
         :return: True -- treat this as a trans event
         """
         return self.num_replicons() > 1 and self.uniform() < self.trans_rate
+
+    def is_centromeric(self):
+        """
+        Whether a cell contains 2 or more centromere specifying replicons.
+        :return: True - has 2 or more interacting replicons
+        """
+        return len(self.centro_registry) > 1
 
 
 class Community:
@@ -769,7 +841,7 @@ class Community:
 
                 # community-wide replicon registry
                 self._register_replicon(Replicon(ri.name, cell, ri.copy_number, rseq, enzyme, ri.anti_rate,
-                                                 random_state, ri.create_cids, ri.linear))
+                                                 random_state, ri.create_cids, ri.linear, ri.centromere))
 
         # now we're finished reading replicons, initialise the probs for each cell
         for cell in self.cell_registry.values():
@@ -1292,51 +1364,60 @@ class SequencingStrategy:
 
         n_wgs = 0
         n_3c = 0
+        noob = 0
+        ntrans = 0
 
         for n in tqdm.tqdm(xrange(1, self.number_pairs+1)):
+            try:
+                ins_len, midpoint, is_fwd = read_gen.draw_insert()
 
-            ins_len, midpoint, is_fwd = read_gen.draw_insert()
+                # is HIC pair?
+                if uniform() <= efficiency:
 
-            # is HIC pair?
-            if uniform() <= efficiency:
+                    n_3c += 1
 
-                n_3c += 1
+                    # draw the first replicon and site
+                    r1, x1 = comm.draw_any_by_site()
 
-                # draw the first replicon and site
-                r1, x1 = comm.draw_any_by_site()
+                    # is it spurious ligation
+                    if comm.is_spurious():
 
-                # is it spurious ligation
-                if comm.is_spurious():
+                        r2, x2 = comm.draw_any_by_site()
 
-                    r2, x2 = comm.draw_any_by_site()
+                    # is it an inter-replicon (trans) ligation
+                    elif r1.parent_cell.is_trans():
+                        ntrans += 1
+                        r2 = r1.parent_cell.draw_other_replicon_by_sites(r1.name)
+                        # x2 = r2.draw_any_site()
+                        x2 = r1.parent_cell.draw_constrained_trans(r1, x1, r2)
 
-                # is it an inter-replicon (trans) ligation
-                elif r1.parent_cell.is_trans():
+                    # otherwise an intra-replicon (cis) ligation
+                    else:
 
-                    r2 = r1.parent_cell.draw_other_replicon_by_sites(r1.name)
-                    x2 = r2.draw_any_site()
+                        x2 = r1.draw_constrained_site(x1)
+                        r2 = r1
 
-                # otherwise an intra-replicon (cis) ligation
+                    # randomly permute source/destination
+                    if uniform() < 0.5:
+                        x1, x2 = x2, x1
+                        r1, r2 = r2, r1
+
+                    # with coordinates, make hic read-pair
+                    pair = read_gen.make_ligation_readpair(r1, x1, r2, x2, ins_len, midpoint)
+
+                # otherwise WGS
                 else:
+                    n_wgs += 1
+                    r1, x1 = comm.draw_any_by_extent()
+                    pair = read_gen.make_wgs_readpair(r1, x1, ins_len, is_fwd)
 
-                    x2 = r1.draw_constrained_site(x1)
-                    r2 = r1
+                read_gen.write_readpair(ostream, pair, n)
 
-                # randomly permute source/destination
-                if uniform() < 0.5:
-                    x1, x2 = x2, x1
-                    r1, r2 = r2, r1
+            except OutOfBoundsException:
+                noob += 1
+                pass
 
-                # with coordinates, make hic read-pair
-                pair = read_gen.make_ligation_readpair(r1, x1, r2, x2, ins_len, midpoint)
-
-            # otherwise WGS
-            else:
-                n_wgs += 1
-                r1, x1 = comm.draw_any_by_extent()
-                pair = read_gen.make_wgs_readpair(r1, x1, ins_len, is_fwd)
-
-            read_gen.write_readpair(ostream, pair, n)
+        print 'out of bounds {} of {}'.format(noob, ntrans)
 
         assert self.number_pairs - n_wgs == n_3c, 'Error: WGS and 3C pairs did not sum to ' \
                                                   '{0} was did not add'.format(self.number_pairs)
