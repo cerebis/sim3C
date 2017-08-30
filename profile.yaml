@@ -1,0 +1,84 @@
+gi|116332681|ref|NC_008497.1|:
+    abundance: 0.125
+    replicons:
+    -   anti_rate: 0.1
+        centromere: None
+        copy_number: 1
+        create_cids: false
+        linear: true
+        name: gi|116332681|ref|NC_008497.1|
+    seq_file: beitel/hi_bact.fna
+    trans_rate: 0.1
+gi|116334867|ref|NC_008498.1|:
+    abundance: 0.125
+    replicons:
+    -   anti_rate: 0.1
+        centromere: None
+        copy_number: 1
+        create_cids: false
+        linear: true
+        name: gi|116334867|ref|NC_008498.1|
+    seq_file: beitel/hi_bact.fna
+    trans_rate: 0.1
+gi|116334879|ref|NC_008499.1|:
+    abundance: 0.125
+    replicons:
+    -   anti_rate: 0.1
+        centromere: None
+        copy_number: 1
+        create_cids: false
+        linear: true
+        name: gi|116334879|ref|NC_008499.1|
+    seq_file: beitel/hi_bact.fna
+    trans_rate: 0.1
+gi|116491818|ref|NC_008525.1|:
+    abundance: 0.125
+    replicons:
+    -   anti_rate: 0.1
+        centromere: None
+        copy_number: 1
+        create_cids: false
+        linear: true
+        name: gi|116491818|ref|NC_008525.1|
+    seq_file: beitel/hi_bact.fna
+    trans_rate: 0.1
+gi|170079663|ref|NC_010473.1|:
+    abundance: 0.125
+    replicons:
+    -   anti_rate: 0.1
+        centromere: None
+        copy_number: 1
+        create_cids: false
+        linear: true
+        name: gi|170079663|ref|NC_010473.1|
+    seq_file: beitel/hi_bact.fna
+    trans_rate: 0.1
+gi|387823261|ref|NC_012892.2|:
+    abundance: 0.125
+    replicons:
+    -   anti_rate: 0.1
+        centromere: None
+        copy_number: 1
+        create_cids: false
+        linear: true
+        name: gi|387823261|ref|NC_012892.2|
+    seq_file: beitel/hi_bact.fna
+    trans_rate: 0.1
+bthai:
+    abundance: 0.125
+    replicons:
+    -   anti_rate: 0.0
+        centromere: 1500000
+        copy_number: 1
+        create_cids: false
+        linear: true
+        name: gi|83716035|ref|NC_007650.1|
+    -   anti_rate: 0.0
+        centromere: 3000000
+        copy_number: 1
+        create_cids: false
+        linear: true
+        name: gi|83718394|ref|NC_007651.1|
+    seq_file: beitel/hi_bact.fna
+    trans_rate: 0.5
+
