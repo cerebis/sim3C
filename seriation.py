@@ -67,15 +67,20 @@ def create_weight(n, sigma, verbose=False, max_iter=1000):
 
 
 def seriate_spin_nh(x, sigma=None, step_iters=5, weight_func=create_weight, verbose=False, maximize=False,
-                    sigma_steps=10, max_sigma=20., min_sigma=1.):
+                    sigma_steps=10, max_sigma=20., min_sigma=1., sample_space='linear'):
 
     if not sigma:
-        sigma = np.linspace(max_sigma, min_sigma, sigma_steps)
+        if sample_space == 'linear':
+            sigma = np.linspace(max_sigma, min_sigma, sigma_steps, endpoint=True)
+        elif sample_space == 'log':
+            sigma = np.logspace(np.log10(max_sigma), np.log10(min_sigma), sigma_steps, endpoint=True)
 
     d = x.copy()
     d = d.astype(np.float)
 
     n = len(d)
+
+    s = sigma[0]
 
     # weight matrix
     w_orig = weight_func(n, sigma[0], verbose)
@@ -93,20 +98,33 @@ def seriate_spin_nh(x, sigma=None, step_iters=5, weight_func=create_weight, verb
         argfunc = np.argmin
         best_energy = lambda e, best: e < best
 
+    # for making animations of sort
+    # n_anim = 1
+    # plt.imshow(np.log10(cmap+1), cmap='PuRd', interpolation=None)
+    # plt.title('start')
+    # plt.savefig('anim/00001.png')
+    # plt.close()
+
     for i in xrange(len(sigma)*step_iters):
 
         if verbose:
             print 'Iteration {}...'.format(i+1),
 
+        # original paper had M.t = D x W.t
+        # M = D x W
         np.matmul(d, w, m)
 
-        # heuristic for the linear assignment problem
-        # (second argument to order breaks ties randomly)
+        # heuristic for the linear assignment problem.
+        # primary sequence (param 2) is column argfunc (min/max) and
+        # tie-breaking made possible by secondary sequence (param 1) of random numbers.
         o = np.lexsort((random.sample(xrange(n), n), argfunc(m, axis=1)))
+
+        # TODO p could just be cleared rather than instantiated each round
         p = np.zeros((n, n))
         for _j in xrange(n):
             p[_j, o[_j]] = 1.
 
+        # original paper E = trace( P.t x M.t )
         energy_new = np.einsum('ii', np.matmul(p, m))
         if verbose:
             print "best energy: {} new energy: {}".format(energy_best, energy_new)
@@ -115,6 +133,12 @@ def seriate_spin_nh(x, sigma=None, step_iters=5, weight_func=create_weight, verb
         if best_energy(energy_new, energy_best):
             energy_best = energy_new
             p_best[:] = p[:]
+            # for making animations of sort
+            # n_anim += 1
+            # plt.imshow(np.log10(np.dot(np.dot(p, cmap), p.T)+1), cmap='PuRd', interpolation=None)
+            # plt.title('{:.3f} {} {:.2f}'.format(s, i+1, energy_new))
+            # plt.savefig('anim/{:05d}.png'.format(n_anim))
+            # plt.close()
 
         # adapt sigma
         if ((i+1) % step_iters) == 0 and (i+1) != len(sigma)*step_iters:
@@ -156,6 +180,8 @@ if __name__ == '__main__':
     parser.add_argument('--maximize', default=False, action='store_true', help='Maximize energy rather than minimize')
     parser.add_argument('--recip', default=False, action='store_true', help='Apply per-element reciprocal')
     parser.add_argument('--symm', default=False, action='store_true', help='Make half-matrix symmetric')
+    parser.add_argument('--sample-space', default='linear', choices=['linear','log'],
+                        help='Sample spapce for sigma [linear]')
     parser.add_argument('--steps', type=int, default=10, help='Number of steps in simga reduction [10]')
     parser.add_argument('--max-sigma', type=float, default=20., help='Maximum initial sigma value [20]')
     parser.add_argument('--min-sigma', type=float, default=1., help='Minimum final sigma value [1]')
@@ -185,6 +211,8 @@ if __name__ == '__main__':
         seq_names = np.array(rnames)
         del cnames
         del rnames
+    else:
+        seq_names = range(len(cmap))
 
     print 'Contact matrix size {}x{}'.format(*cmap.shape)
 
@@ -202,7 +230,8 @@ if __name__ == '__main__':
         target_map = dissim_reciprocal(target_map.astype(np.float))
 
     perm = seriate_spin_nh(target_map, verbose=args.verbose, maximize=args.maximize, sigma_steps=args.steps,
-                           max_sigma=args.max_sigma, min_sigma=args.min_sigma, step_iters=args.sigma_iter)
+                           max_sigma=args.max_sigma, min_sigma=args.min_sigma, step_iters=args.sigma_iter,
+                           sample_space=args.sample_space)
 
     # extract indices order from permutation matrix
     order_ix = np.argwhere(perm == 1)[:, 1]
