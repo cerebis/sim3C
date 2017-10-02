@@ -20,6 +20,7 @@ import bz2
 import gzip
 import json
 import io
+import re
 
 import yaml
 
@@ -27,18 +28,38 @@ import yaml
 DEF_BUFFER = 16384
 
 
-def open_output(fname, mode, compress=None, gzlevel=6):
+def open_input(fname):
+    """
+    Open a text file for input. The filename is used to indicate if it has been
+    compressed. Recognising gzip and bz2.
+
+    :param fname: the name of the input file
+    :return: open file handle, possibly wrapped in a decompressor
+    """
+    suffix = fname.split('.')[-1].lower()
+    if suffix == 'bz2':
+        return bz2.BZ2File(fname, 'r')
+    elif suffix == 'gz':
+        return gzip.GzipFile(fname, 'r')
+    else:
+        return open(fname, 'r')
+
+
+def open_output(fname, append=False, compress=None, gzlevel=6):
     """
     Open a text stream for reading or writing. Compression can be enabled
     with either 'bzip2' or 'gzip'. Additional option for gzip compression
     level. Compressed filenames are only appended with suffix if not included.
 
     :param fname: file name of output
-    :param mode: read or write
+    :param append: append to any existing file
     :param compress: gzip, bzip2
     :param gzlevel: gzip level (default 6)
     :return:
     """
+
+    mode = 'w' if not append else 'w+'
+
     if compress == 'bzip2':
         if not fname.endswith('.bz2'):
             fname += '.bz2'
