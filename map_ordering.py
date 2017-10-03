@@ -508,6 +508,10 @@ class ContactMap:
             # ':memory:'
             idxfile = '{}.db'.format(seq_file)
             if os.path.exists(idxfile):
+                logging.warning('Removed preexisting target path "{}" for sequence database'.format(idxfile))
+                os.unlink(idxfile)
+
+            if os.path.exists(idxfile):
                 logging.warn('Found existing fasta index')
             seq_db = SeqIO.index_db(idxfile, seq_file, 'fasta')
 
@@ -1342,7 +1346,7 @@ if __name__ == '__main__':
         logger.info('Plotting adhoc image...')
         cm.plot(out_name(args.outbase, 'adhoc.png'), norm=True)
         #logger.info('Adhoc took: {}'.format(t.elapsed()))
-        
+
         with open(out_name(args.outbase, 'adhoc-order.csv'), 'w') as out_h:
             ord_str = str([(-1)**d * o for o, d in cm.order.order])
             out_h.write('{}\n'.format(ord_str))
