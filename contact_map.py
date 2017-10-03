@@ -169,6 +169,12 @@ class ContactMap:
 
             if self.enzyme:
                 sites = np.array(self.enzyme.search(rseq.seq, linear=False))
+                if len(sites) == 0:
+                    # as there are no sites, this sequence is not useable
+                    # therefore remove it from the list of active reference sequences
+                    del self.active_seq[rseq.id]
+                    continue
+
                 sites.sort()  # pedantic check for order
                 medspc = np.median(np.diff(sites))
                 self.seq_info[xi] = {'sites': sites,
