@@ -1,5 +1,8 @@
 # Created by .ignore support plugin (hsz.mobi)
 *.pyc
+*.png
+*.csv
+*.h5
 .RData
 .Rhistory
 work/
