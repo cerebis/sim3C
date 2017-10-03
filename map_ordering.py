@@ -514,6 +514,7 @@ class ContactMap:
             try:
                 # determine the set of active sequences
                 # where the first filtration step is by length
+                excluded_ref = 0
                 offset = 0
                 logger.info('Reading sequences...')
                 for n, li in enumerate(bam.lengths):
@@ -523,6 +524,10 @@ class ContactMap:
                         continue
 
                     seq_id = bam.references[n]
+                    if seq_id not in seq_db:
+                        excluded_ref += 1
+                        continue
+
                     seq = seq_db[seq_id].seq
                     if self.enzyme:
 
@@ -555,6 +560,7 @@ class ContactMap:
                 seq_db.close()
 
             self.total_len = offset
+            logger.info('Excluded reference count {}'.format(excluded_ref))
 
             logger.info('Initially: {0} sequences and {1} bp'.format(
                 len(self.seq_info), self.sum_active()))
@@ -731,7 +737,6 @@ class ContactMap:
                             continue
 
                     counts['accepted'] += 1
-                    # self.seq_map[r1.reference_id][r2.reference_id] += 1
 
                 r1pos = r1.pos if not r1.is_reverse else r1.pos + r1.alen
                 r2pos = r2.pos if not r2.is_reverse else r2.pos + r2.alen
@@ -1241,6 +1246,9 @@ if __name__ == '__main__':
         def elapsed(self):
             return timedelta(seconds=monotonic() - self.start_time)
 
+    def out_name(base, suffix):
+        return '{}_{}'.format(base, suffix)
+
     parser = argparse.ArgumentParser(description='Create a 3C fragment map from a BAM file')
     parser.add_argument('-v', '--verbose', default=False, action='store_true', help='Verbose output')
     parser.add_argument('-f', '--format', choices=['csv', 'h5'], default='csv',
@@ -1263,6 +1271,7 @@ if __name__ == '__main__':
     parser.add_argument('--mu', type=int, default=50, help='Number of parents')
     parser.add_argument('fasta', help='Reference fasta sequence')
     parser.add_argument('bam', help='Input bam file')
+    parser.add_argument('outbase', help='Output base file name')
 
     args = parser.parse_args()
 
@@ -1288,56 +1297,55 @@ if __name__ == '__main__':
                             linear=not args.circular)
 
             logger.info('Saving contact map instance...')
-
-# temporarily stopping pickling
-#            cm.save('cm.p')
-
+            cm.save(out_name(args.outbase, 'cm.p'))
             logger.info('Contact map took: {}'.format(t.elapsed()))
-            cm.save_simple_map('the_simple.csv')
+
+        cm.save_simple_map(out_name(args.outbase, 'simple.csv'))
 
         # logger.info('Saving graph...')
         # nx.write_graphml(cm.create_contig_graph(norm=True, scale=True, extern_ids=True), 'cm.graphml')
+
         logger.info('Plotting starting image...')
-        cm.plot('start.png', norm=True)
+        cm.plot(out_name(args.outbase, 'start.png'), norm=True)
 
         logger.info('Saving raw contact map...')
-        mapio.write_map(cm.to_dense(), 'raw', args.format, np.int)
+        mapio.write_map(cm.to_dense(), out_name(args.outbase, 'raw'), args.format)
 
-        # logL = calc_likelihood(cm.order.order, cm)
-        # logger.info('Initial logL {}'.format(logL[0]))
+        logL = calc_likelihood(cm.order.order, cm)
+        logger.info('Initial logL {}'.format(logL[0]))
 
-        # print 'Ordering by HC...'
+        print 'Ordering by HC...'
         # # hc order
         # t.reset()
-        # o = cm.get_hc_order()
-        # cm.order.set_only_order(o)
-        # print 'HC logL {}'.format(calc_likelihood(cm.order.order)[0])
-        # m = cm.get_ordered_map()
-        # print t.elapsed()
-        # print 'Saving hc contact maps as csv...'
-        # t.reset()
-        # mapio.write_map(m, 'hc', args.format, np.int)
-        # print t.elapsed()
+        o = cm.get_hc_order()
+        cm.order.set_only_order(o)
+        print 'HC logL {}'.format(calc_likelihood(cm.order.order, cm)[0])
+        m = cm.get_ordered_map()
+        #print t.elapsed()
+        print 'Saving hc contact maps as csv...'
+        #t.reset()
+        mapio.write_map(m, out_name(args.outbase, 'hc'), args.format)
+        #print t.elapsed()
 
         # adhoc order
-        # logger.info('Beginning adhoc ordering...')
-        # t.start()
-        # o = cm.get_adhoc_order()
-        # cm.order.set_only_order(o)
-        # logL = calc_likelihood(cm.order.order, cm)
-        # logger.info('Adhoc logL {}'.format(logL[0]))
-        # m = cm.get_ordered_map()
-        # logger.debug(t.elapsed())
-        # logger.info('Saving adhoc contact maps as csv...')
-        # np.savetxt('adhoc.csv', m, fmt='%d', delimiter=',')
-        # mapio.write_map(m, 'adhoc', args.format, np.int)
-        # logger.info('Plotting adhoc image...')
-        # cm.plot('adhoc.png', norm=True)
-        # logger.info('Adhoc took: {}'.format(t.elapsed()))
-        #
-        # with open('adhoc-order.csv', 'w') as out_h:
-        #     ord_str = str([(-1)**d * o for o, d in cm.order.order])
-        #     out_h.write('{}\n'.format(ord_str))
+        logger.info('Beginning adhoc ordering...')
+        #t.start()
+        o = cm.get_adhoc_order()
+        cm.order.set_only_order(o)
+        logL = calc_likelihood(cm.order.order, cm)
+        logger.info('Adhoc logL {}'.format(logL[0]))
+        m = cm.get_ordered_map()
+        logger.debug(t.elapsed())
+        logger.info('Saving adhoc contact maps as csv...')
+        np.savetxt(out_name(args.outbase, 'adhoc.csv'), m, fmt='%d', delimiter=',')
+        mapio.write_map(m, out_name(args.outbase, 'adhoc'), args.format)
+        logger.info('Plotting adhoc image...')
+        cm.plot(out_name(args.outbase, 'adhoc.png'), norm=True)
+        #logger.info('Adhoc took: {}'.format(t.elapsed()))
+        
+        with open(out_name(args.outbase, 'adhoc-order.csv'), 'w') as out_h:
+            ord_str = str([(-1)**d * o for o, d in cm.order.order])
+            out_h.write('{}\n'.format(ord_str))
 
     except:
         type, value, tb = sys.exc_info()
@@ -1393,7 +1401,7 @@ if __name__ == '__main__':
                                              stats=stats, halloffame=hof)
             logger.info('EA took: {}'.format(t.elapsed()))
 
-            with open('gen_best.csv', 'w') as out_h:
+            with open(out_name(args.outbase, 'gen_best.csv'), 'w') as out_h:
                 for n, order_i in enumerate(genlog):
                     ord_str = str([(-1)**d * o for o, d in order_i])
                     out_h.write('{0}: {1}\n'.format(n, ord_str))
@@ -1402,9 +1410,9 @@ if __name__ == '__main__':
             m = cm.get_ordered_map()
 
             logger.info('Saving es contact maps as csv...')
-            mapio.write_map(m, 'es', args.format, np.int)
+            mapio.write_map(m, out_name(args.outbase, 'es'), args.format)
             logger.info('Plotting final EA image...')
-            cm.plot('es.png', norm=True)
+            cm.plot(out_name(args.outbase, 'es.png'), norm=True)
 
         except:
 
