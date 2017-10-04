@@ -721,7 +721,6 @@ class Cell:
             q *= dy/100.
             return p*(1-p)**dx + q*(1-q)**dy
 
-
         if not self.is_centromeric() or not r1.centromere or not r2.centromere:
             # centromeric interactions between r1 and r2 are undefined.
             # fallback to unconstrained.
@@ -1496,6 +1495,9 @@ if __name__ == '__main__':
     import sys
     import time
     import os
+    import traceback
+    import pdb
+
 
     #
     # Commandline interface
@@ -1572,8 +1574,6 @@ if __name__ == '__main__':
             return '{}.{}'.format(fname, suffix)
         else:
             return fname
-
-    import traceback, sys, pdb
 
     try:
 
@@ -1653,11 +1653,11 @@ if __name__ == '__main__':
                                       args.num_pairs, args.method, args.read_length, **kw_args)
 
         # Run the simulation
-        with io_utils.open_output(args.output_file, mode='w', compress=args.compress) as out_stream:
+        with io_utils.open_output(args.output_file, compress=args.compress) as out_stream:
             strategy.run(out_stream)
 
     except Exception as ex:
         print 'Error: {0}'.format(ex)
-        type, value, tb = sys.exc_info()
+        _, value, tb = sys.exc_info()
         traceback.print_exc()
         pdb.post_mortem(tb)
