@@ -1,5 +1,4 @@
-#!/usr/bin/env python2
-
+#!/usr/bin/env python
 import itertools
 import logging
 import random
@@ -17,9 +16,9 @@ from deap.algorithms import varOr
 from intervaltree import IntervalTree, Interval
 from numba import jit, int64, float64, boolean
 from numba import vectorize, int32
-from numpy import log, pi
+from numpy import log, pi, exp
 from scoop import futures, shared
-
+import lap
 
 logging.basicConfig(level=logging.DEBUG,
                     format='%(asctime)s %(name)-12s %(levelname)-8s %(message)s',
@@ -140,7 +139,7 @@ def inverse_edge_weights(g):
     :param g: the graph
     """
     for u, v in g.edges():
-        g.edge[u][v]['weight'] = 1.0 / g[u][v]['weight']
+        g.edge[u][v]['weight'] = 1.0 / (g[u][v]['weight'] + 1)
 
 
 def edgeiter_to_nodelist(edge_iter):
@@ -188,7 +187,7 @@ def dfs_weighted(g, source=None):
                 stack.pop()
 
 
-def decompose_graph(g):
+def decompose_graph(g, resolution=1.0):
     """
     Using the Louvain algorithm for community detection, as
     implemented in the community module, determine the partitioning
@@ -199,7 +198,7 @@ def decompose_graph(g):
     :return: the set of sub-graphs which form the best partitioning of g
     """
     decomposed = []
-    part = com.best_partition(g)
+    part = com.best_partition(g, resolution=resolution)
     part_labels = np.unique(part.values())
 
     # for each partition, create the sub-graph
@@ -212,6 +211,46 @@ def decompose_graph(g):
         decomposed.append(gi)
 
     return decomposed
+
+
+def inter_weight_matrix(g, sg, norm=True):
+    """
+    Calculate the weight of interconnecting edges between subgraphs identified from
+    Louvain decomposition.
+    
+    :param g: the original graph
+    :param sg: the list of subgraphs 
+    :param norm: normalize the counts by the number of shared edges
+    :return: two matrices, 'w'  the weights of shared edges, 'n' the counts of shared edges
+    """
+
+    nsub = len(sg)
+    w = np.zeros((nsub, nsub))
+    if norm:
+        n = np.zeros_like(w, dtype=np.int)
+
+    for i in xrange(nsub):
+
+        # for every node in subgraph i
+        for u in sg[i].nodes_iter():
+
+            for j in xrange(i+1, nsub):
+
+                # for every node in subgraph j
+                for v in sg[j].nodes_iter():
+
+                    # sum weight of edges connecting subgraphs i and j
+                    if g.has_edge(u, v):
+                        w[i, j] += g[u][v]['rawweight']
+                        if norm:
+                            n[i, j] += 1
+
+    if norm:
+        # only touch non-zero elements
+        ix = np.where(n > 0)
+        w[ix] /= n[ix]
+
+    return w
 
 
 class Grouping:
@@ -482,6 +521,8 @@ class ContactMap:
         self.seq_info = OrderedDict()
         self.seq_map = None
         self.grouping = None
+        self.raw_map = None
+        self.order = None
 
         with pysam.AlignmentFile(bam_file, 'rb') as bam:
 
@@ -518,18 +559,19 @@ class ContactMap:
             try:
                 # determine the set of active sequences
                 # where the first filtration step is by length
-                excluded_ref = 0
+                ref_count = {'missing': 0, 'no_sites': 0, 'too_short': 0}
                 offset = 0
                 logger.info('Reading sequences...')
                 for n, li in enumerate(bam.lengths):
 
                     # minimum length threshold
                     if li < ref_min_len:
+                        ref_count['too_short'] += 1
                         continue
 
                     seq_id = bam.references[n]
                     if seq_id not in seq_db:
-                        excluded_ref += 1
+                        ref_count['missing'] += 1
                         continue
 
                     seq = seq_db[seq_id].seq
@@ -539,6 +581,7 @@ class ContactMap:
 
                         # must have at least one site
                         if len(sites) < min_sites:
+                            ref_count['no_sites'] += 1
                             continue
 
                         # don't apply spacing analysis to single site sequences
@@ -547,6 +590,7 @@ class ContactMap:
                             sites.sort()  # pedantic check for order
                             medspc = np.median(np.diff(sites))
 
+                        # TODO some of these details could probably be removed. Are we going to use them again?
                         self.seq_info[n] = {'sites': sites,
                                             'invtree': IntervalTree(Interval(si, si + 1) for si in sites),
                                             'max_dist': self.spacing_factor * medspc,
@@ -564,17 +608,13 @@ class ContactMap:
                 seq_db.close()
 
             self.total_len = offset
-            logger.info('Excluded reference count {}'.format(excluded_ref))
 
-            logger.info('Initially: {0} sequences and {1} bp'.format(
-                len(self.seq_info), self.sum_active()))
+            logger.info('References excluded: {}'.format(ref_count))
+            logger.info('Initially: {} sequences and {} bp'.format(len(self.seq_info), self.sum_active()))
 
             logger.info('Determining binning...')
             self.grouping = Grouping(self.seq_info, self.bin_size, self.min_sites)
-            logger.info('After grouping: {0} sequences and {1} bp'.format(
-                len(self.seq_info), self.sum_active()))
-
-            self.raw_map = None
+            logger.info('After grouping: {0} sequences and {1} bp'.format(len(self.seq_info), self.sum_active()))
 
             logger.info('Counting reads in bam file...')
             self.total_reads = bam.count(until_eof=True)
@@ -587,9 +627,10 @@ class ContactMap:
             # memory use could be reduced if symmetry was exploited.
             self.seq_map = {i: {j: 0 for j in self.seq_info} for i in self.seq_info}
 
-            # initialise the ordercm.order.order
+            # initialise the order
             self.order = SeqOrder(self.seq_info)
 
+            # calculate the mapping
             self._bin_map(bam)
 
     def sum_active(self):
@@ -607,9 +648,9 @@ class ContactMap:
         logger.info('Initialising contact map of {0}x{0} fragment bins, '
                          'representing {1} bp over {2} sequences'.format(n_bins, self.sum_active(), self.num_active()))
 
-        _m = {}
+        _m = OrderedDict()
         for bi, seq_i in enumerate(self.grouping.map):
-            _m[seq_i] = {}
+            _m[seq_i] = OrderedDict()
             for bj, seq_j in enumerate(self.grouping.map):
                 _m[seq_i][seq_j] = np.zeros((self.grouping.bins[bi], self.grouping.bins[bj]), dtype=np.int32)
 
@@ -854,12 +895,12 @@ class ContactMap:
         # before reordering, just in case something is reflected over the diagonal
         # and ends up copying empty space
         dm = self.to_dense(norm)
-        full_map = np.tril(dm.transpose(), -1) + dm
+        dm += np.tril(dm.T, k=-1)
         pm = self._make_permutation_matrix()
         # two applications of P is required to fully reorder the matrix
         # -- both on rows and columns
         # finally, convert the result back into a triangular matrix.
-        return np.triu(np.dot(np.dot(pm, full_map), pm.T))
+        return np.triu(np.dot(np.dot(pm, dm), pm.T))
 
     def create_contig_graph(self, norm=True, scale=False, extern_ids=False):
         """
@@ -889,21 +930,34 @@ class ContactMap:
 
         max_w = 0
         for i in xrange(len(_order)):
+
+            # number of sites on contig i
             ni = len(self.grouping.map[_id[i]])
+
             for j in xrange(i + 1, len(_order)):
+
                 # as networkx chokes serialising numpy types, explicitly type cast
                 obs = float(np.sum(self.raw_map[_id[i]][_id[j]]))
                 if obs == 0:
                     continue
 
+                # normalized by the square of the number of sites between i and j
                 if norm:
-                    nsq = ni * len(self.grouping.map[_id[j]])
+                    # number of sites on contig j
+                    nj = len(self.grouping.map[_id[j]])
+                    nrm_w = obs
                     if obs != 0:
-                        obs /= nsq
+                        nrm_w /= ni * nj
+                    g.add_edge(_nn(i), _nn(j), weight=nrm_w, rawweight=obs)
 
-                g.add_edge(_nn(i), _nn(j), weight=obs)
-                if obs > max_w:
-                    max_w = obs
+                    if nrm_w > max_w:
+                        max_w = nrm_w
+
+                else:
+                    g.add_edge(_nn(i), _nn(j), weight=obs, rawweight=obs)
+
+                    if obs > max_w:
+                        max_w = obs
 
         if scale:
             for u, v in g.edges_iter():
@@ -913,40 +967,48 @@ class ContactMap:
         return g
 
     def get_hc_order(self):
-        from scipy.cluster.hierarchy import complete
-        from scipy.spatial.distance import squareform
+        import polo
+        from scipy.cluster.hierarchy import ward
         from scipy.cluster.hierarchy import dendrogram
+        from scipy.spatial.distance import pdist
         g = self.create_contig_graph()
-        inverse_edge_weights(g)
-        D = squareform(nx.adjacency_matrix(g).todense())
-        Z = complete(D)
-        return np.array(dendrogram(Z)['leaves'])
+        D = pdist(nx.adjacency_matrix(g).todense(), metric='cityblock')
+        Z = ward(D)
+        optimal_Z = polo.optimal_leaf_ordering(Z, D)
+        return np.array(dendrogram(optimal_Z)['leaves'])
 
     def get_adhoc_order(self):
         """
-        Attempt to determine an initial starting order of contigs based
-        only upon the cross terms (linking contacts) between each using
-        graphical techniques.
+        Attempt to determine an ordering based only upon cross-terms 
+        between contigs using graphical techniques.
     
-        Beginning with a graph of contigs, where edges are weighted by
-        contact weight, it is decomposed using Louvain modularity. Taking
-        inverse edge weights, the shortest path of the minimum spanning
-        tree of each subgraph is used to define an order. The subgraph
-        orderings are then concatenated together to define a full
+        1. Begin with a contig graph where edges are weighted by contact frequency. 
+        2. The graph is then partitioned into subgraphs using Louvain modularity. 
+        3. Using inverse edge weights, the shortest path of the minimum spanning
+        tree of each subgraph is used to define an order. 
+        4. The subgraph orderings are then concatenated together to define a full
         ordering of the sample.
-    
-        Those with no edges, are included by appear in an indeterminate
-        order.
+        5. TODO add optimal leaf ordering is possible.
+        6. Unconnected contigs are included by order of appearance.
     
         :return: order of contigs
         """
         g = self.create_contig_graph(norm=True, scale=True)
+        sg_list = decompose_graph(g)
 
-        decomposed_subgraphs = decompose_graph(g)
+        # using JV LAP to order subgraphs by interconnected weight
+        w = inter_weight_matrix(g, sg_list, norm=True)
 
+        # perform LAP, but first convert weight matrix to a "cost" matrix
+        ord_x, ord_y = lap.lapjv(1 / (w + 1), return_cost=False)
+
+        # reorder the subgraphs, just using row order
+        sg_list = np.array(sg_list)[ord_x]
+
+        # now find the order through each subgraph
         isolates = []
         new_order = []
-        for gi in decomposed_subgraphs:
+        for gi in sg_list:
             if gi.order() > 1:
                 inverse_edge_weights(gi)
                 mst = nx.minimum_spanning_tree(gi)
@@ -963,8 +1025,7 @@ class ContactMap:
         m = m.astype(np.float)
         m += 0.01
         fig = plt.figure()
-        img_h = 8
-        fig.set_size_inches(img_h, img_h)
+        fig.set_size_inches(8, 8)
         ax = plt.Axes(fig, [0., 0., 1., 1.])
         if with_indexes:
             indexes = self.get_ordered_bins()
@@ -973,7 +1034,7 @@ class ContactMap:
             ax.set_yticklabels([info['name'] for info in self.seq_info.values()])
             ax.set_xticklabels([info['name'] for info in self.seq_info.values()],
                                rotation=45, horizontalalignment='right')
-            ax.grid(color='black', linestyle='-', linewidth=1.5)
+            ax.grid(color='black', linestyle='-', linewidth=1)
         fig.add_axes(ax)
         ax.imshow(np.log(m), interpolation='none')
         plt.savefig(fname, dpi=180)
@@ -1008,8 +1069,8 @@ GEOM_SCALE = 3e-6
 def piecewise_3c(s):
     pr = 1./3.e6/10.
     if s < 1000e3:
-        # pr = 0.5 * (GEOM_SCALE * (1 - GEOM_SCALE)**s + 1/3e6)
-        pr = GEOM_SCALE * (1 - GEOM_SCALE)**s
+        pr = 0.5 * (exp(log(GEOM_SCALE) + s * log(1-GEOM_SCALE)) + 1/3e6)
+        #pr = GEOM_SCALE * (1 - GEOM_SCALE)**s
     return pr
 
 
@@ -1304,7 +1365,7 @@ if __name__ == '__main__':
             cm.save(out_name(args.outbase, 'cm.p'))
             logger.info('Contact map took: {}'.format(t.elapsed()))
 
-        cm.save_simple_map(out_name(args.outbase, 'simple.csv'))
+            cm.save_simple_map(out_name(args.outbase, 'simple.csv'))
 
         # logger.info('Saving graph...')
         # nx.write_graphml(cm.create_contig_graph(norm=True, scale=True, extern_ids=True), 'cm.graphml')
@@ -1323,12 +1384,13 @@ if __name__ == '__main__':
         # t.reset()
         o = cm.get_hc_order()
         cm.order.set_only_order(o)
-        print 'HC logL {}'.format(calc_likelihood(cm.order.order, cm)[0])
+        logger.info('HC logL {}'.format(calc_likelihood(cm.order.order, cm)[0]))
         m = cm.get_ordered_map()
+        cm.plot(out_name(args.outbase, 'hc.png'), norm=True)
         #print t.elapsed()
-        print 'Saving hc contact maps as csv...'
+        #print 'Saving hc contact maps as csv...'
         #t.reset()
-        mapio.write_map(m, out_name(args.outbase, 'hc'), args.format)
+        #mapio.write_map(m, out_name(args.outbase, 'hc'), args.format)
         #print t.elapsed()
 
         # adhoc order
