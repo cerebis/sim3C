@@ -1064,12 +1064,14 @@ def poisson_lpmf(ob, ex):
                 s += aij * log(aij/bij) + bij - aij + 0.5 * log(2.0 * pi * aij)
     return -s
 
-GEOM_SCALE = 3e-6
+GEOM_SCALE = 3.5e-6
+UNIF_VAL = 1.0e-6
+MIN_FIELD = 1.0e-8
 @vectorize([float64(float64)])
 def piecewise_3c(s):
-    pr = 1./3.e6/10.
-    if s < 1000e3:
-        pr = 0.5 * (exp(log(GEOM_SCALE) + s * log(1-GEOM_SCALE)) + 1/3e6)
+    pr = MIN_FIELD
+    if s < 600e3:
+        pr = 0.5 * (exp(log(GEOM_SCALE) + s * log(1-GEOM_SCALE)) + UNIF_VAL)
         #pr = GEOM_SCALE * (1 - GEOM_SCALE)**s
     return pr
 
