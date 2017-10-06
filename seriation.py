@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 from collections import deque
+from operator import lt, gt
 import numpy as np
 import lap
 
@@ -227,20 +228,7 @@ def create_weight(n, sigma, verbose=False, max_iter=1000, use_kr=True):
         w = kr_bistochastic(w, tol=1.0e-12, delta=0.0, verbose=verbose, max_iter=1000)
     else:
         w = sk_bistochastic(w, round_to=8, verbose=verbose, max_iter=1000)
-        # rs = np.empty(n, dtype=np.float)
-        # cs = np.empty(n, dtype=np.float)
-        # for i in xrange(max_iter):
-        #     np.sum(w, 1, dtype=np.float, out=rs)
-        #     w = (w.T / rs).T
-        #     np.sum(w, 0, dtype=np.float, out=cs)
-        #     w /= cs
-        #     # continue until convergence in both rows and columns
-        #     if np.all(np.round(rs, 8) == 1.0) and np.all(np.round(cs, 8) == 1.0):
-        #         break
-        # if i == 999:
-        #     print 'Weight matrix did to converge to doubly stochastic in 1000 iterations'
-        # if verbose:
-        #     print 'It took {} iterations to make W doubly stochastic'.format(i)
+
     return w
 
 
@@ -334,11 +322,11 @@ def seriate_spin_nh(x, sigma=None, max_step_iter=20, weight_func=create_weight, 
             raise RuntimeError('Maximisation not currently supported when using JV algorithm')
         energy_best = -np.inf
         arg_func = np.argmax
-        best_energy = max
+        best_energy = gt
     else:
         energy_best = np.inf
         arg_func = np.argmin
-        best_energy = min
+        best_energy = lt
 
     # set up the linear assignment solver.
     if use_jv:
@@ -399,7 +387,7 @@ def seriate_spin_nh(x, sigma=None, max_step_iter=20, weight_func=create_weight, 
             # plt.close()
 
         # adapt sigma
-        if small_change >= max_small or iter_step >= max_step_iter:
+        if small_change >= max_small or iter_step >= max_step_iter-1:
 
             if len(sigma) == 0:
                 if verbose:
@@ -408,6 +396,7 @@ def seriate_spin_nh(x, sigma=None, max_step_iter=20, weight_func=create_weight, 
 
             # next sigma
             s = sigma.popleft()
+
             if verbose:
                 print "\nReducing sigma to: {}".format(s)
 
