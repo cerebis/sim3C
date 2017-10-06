@@ -273,6 +273,7 @@ def linear_assignment_heuristic(m, **kwargs):
     :param kwargs: additional arguments. cost_func: eg np.argmax or np.argmin.
     :return: order of columns approx matched to rows.
     """
+
     return np.lexsort((np.random.permutation(len(m)), kwargs['cost_func'](m, axis=1)))
 
 
@@ -309,7 +310,7 @@ def seriate_spin_nh(x, sigma=None, max_step_iter=20, weight_func=create_weight, 
     # sigmas as a queue, we'll just pop them as we go
     sigma = deque(sigma)
 
-    d = x.copy()
+    d = np.asarray(x)
     d = d.astype(np.float)
     n = len(d)
 
