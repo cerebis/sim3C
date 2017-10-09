@@ -241,13 +241,13 @@ def linear_assignment_jv(m, **kwargs):
     to a smaller value.
 
     :param m: the matrix to solve LAP
-    :param kwargs: unused
+    :param kwargs: additional arguments for generic support
     :return: order of columns matched to rows.
     """
     return lap.lapjv(m, return_cost=False)[1]
 
 
-def linear_assignment_heuristic(m, **kwargs):
+def linear_assignment_heuristic(m, cost_func, random_state, **kwargs):
     """
     A heuristic (inexact) solution to the linear assignment problem -- as proposed by the authors
     of SPIN_NH (Tsafrir et al, 2005). The solution may not always find the minimum cost and
@@ -258,16 +258,17 @@ def linear_assignment_heuristic(m, **kwargs):
     tie-breaking made possible by secondary sequence (param 1) of random numbers.
 
     :param m: the matrix to solve LAP
-    :param kwargs: additional arguments. cost_func: eg np.argmax or np.argmin.
+    :param cost_func: eg np.argmax or np.argmin.
+    :param random_state: used to draw permutations
+    :param kwargs: additional arguments for generic support
     :return: order of columns approx matched to rows.
     """
-
-    return np.lexsort((np.random.permutation(len(m)), kwargs['cost_func'](m, axis=1)))
+    return np.lexsort((random_state.permutation(len(m)), cost_func(m, axis=1)))
 
 
 def seriate_spin_nh(x, sigma=None, max_step_iter=20, weight_func=create_weight, verbose=False, maximize=False,
                     sigma_steps=10, max_sigma=20., min_sigma=1., energy_tol=1e-6, sample_space='linear',
-                    use_jv=False):
+                    use_jv=False, seed=None):
     """
     Matrix sorting by SPIN_NH (Sorting points into neighborhoods) algorithm. (Tsafir et al, 2005)
 
@@ -285,6 +286,10 @@ def seriate_spin_nh(x, sigma=None, max_step_iter=20, weight_func=create_weight, 
     :param use_jv: during linear assignment, use more precise but computationally expensive O(n^3) Jonker-Volgenant
     :return: the lowest energy permutation matrix
     """
+    if not seed:
+        random_state = np.random.RandomState()
+    else:
+        random_state = np.random.RandomState(seed)
 
     max_small = 3
 
@@ -356,7 +361,7 @@ def seriate_spin_nh(x, sigma=None, max_step_iter=20, weight_func=create_weight, 
         # M = D x W
         np.matmul(d, w, m)
 
-        o = lap_order(m, cost_func=arg_func)
+        o = lap_order(m, cost_func=arg_func, random_state=random_state)
 
         # TODO p could just be cleared rather than instantiated each round
         p = np.zeros((n, n))
@@ -416,8 +421,8 @@ def seriate_spin_nh(x, sigma=None, max_step_iter=20, weight_func=create_weight, 
 
         else:
             np.matmul(p.T, w_orig, w)
+            iter_step += 1
 
-        iter_step += 1
         iter_all += 1
 
     if verbose:
@@ -473,8 +478,11 @@ if __name__ == '__main__':
     import argparse
     import matplotlib.pyplot as plt
     import mapio
+    import time
 
     parser = argparse.ArgumentParser()
+    parser.add_argument('-r', '--seed', metavar='INT', type=int, default=int(time.time()),
+                        help="Random seed for initialising number generator")
     parser.add_argument('--headers', action='store_true', default=False,
                         help='Input CSV file has matching row and column headers list sequence names')
     parser.add_argument('--delim', default=',', help='Matrix delimiter [,]')
@@ -549,7 +557,7 @@ if __name__ == '__main__':
 
     perm = seriate_spin_nh(target_map, verbose=args.verbose, maximize=args.maximize, sigma_steps=args.steps,
                            max_sigma=args.max_sigma, min_sigma=args.min_sigma, max_step_iter=args.sigma_iter,
-                           sample_space=args.sample_space, use_jv=args.use_jv, energy_tol=args.etol)
+                           sample_space=args.sample_space, use_jv=args.use_jv, energy_tol=args.etol, seed=args.seed)
 
     # extract indices order from permutation matrix
     order_ix = np.argwhere(perm == 1)[:, 1]
