@@ -392,6 +392,7 @@ def seriate_spin_nh(x, sigma=None, max_step_iter=20, weight_func=create_weight, 
             # plt.title('{:.3f} {} {:.2f}'.format(s, i+1, energy_new))
             # plt.savefig('anim/{:05d}.png'.format(n_anim))
             # plt.close()
+            noimp = 0
         else:
             noimp += 1
 
@@ -436,6 +437,22 @@ def seriate_spin_nh(x, sigma=None, max_step_iter=20, weight_func=create_weight, 
     return p_best
 
 
+def remove_empty(m, names):
+    """
+    Remove empty entries
+    :param m: matrix to analyze
+    :return: 3-tuple -- filtered matrix, filtered names, number of empty entries found
+    """
+    # first remove zero count sequences
+    ix = m.sum(axis=0) > 0
+    non_empty = (m[ix])[:, ix]
+    names = names[ix]
+    n_empty = len(ix) - np.sum(ix)
+    if n_empty > 0:
+        print 'After zero-count removal {}x{}'.format(*non_empty.shape)
+    return non_empty, names, n_empty
+
+
 def weak_to_end(m, names, threshold):
     """
     Move columns with weak interaction to end of matrix. Weak column are defined as
@@ -451,32 +468,24 @@ def weak_to_end(m, names, threshold):
     :param m: matrix to permute
     :param names: sequence names corresponding to matrix m
     :param threshold: relative threshold above which
-    :return: 4-tuple -- filtered matrix, filtered names, number of weak entries, number of zero-count entries
+    :return: 3-tuple -- filtered matrix, filtered names, number of weak entries found
     """
 
-    # first remove zero count sequences
-    ix = m.sum(axis=0) > 0
-    non_empty = (m[ix])[:, ix]
-    names = names[ix]
-    n_empty = len(ix) - np.sum(ix)
-    if n_empty > 0:
-        print 'After zero-count removal {}x{}'.format(*non_empty.shape)
-
     # now find weak sequences and remove
-    diags = np.diagonal((non_empty+1) / non_empty.sum(axis=0))
+
+    diags = np.diagonal((m+1) / m.sum(axis=0))
     wk_ix = np.where(diags > threshold)[0]
     n_wk = len(wk_ix)
 
     if n_wk > 0:
         o = np.concatenate((np.where(diags <= threshold)[0], wk_ix))
-        p = np.zeros_like(non_empty)
+        p = np.zeros_like(m)
         for i in xrange(len(p)):
             p[i, o[i]] = 1.
-
-        m = np.dot(np.dot(p, non_empty), p.T)
+        m = np.dot(np.dot(p, m), p.T)
         names = names[o]
 
-    return m, names, n_wk, n_empty
+    return m, names, n_wk
 
 
 if __name__ == '__main__':
@@ -535,8 +544,11 @@ if __name__ == '__main__':
         print 'Making symmetric'
         cmap = make_symmetric(cmap)
 
+    # remove empty entries
+    cmap, seq_names, _ = remove_empty(cmap)
+
     if args.exclude_weak:
-        cm_sort, seq_names, n_wk, n_empty = weak_to_end(cmap, seq_names, args.exclude_weak)
+        cm_sort, seq_names, n_wk = weak_to_end(cmap, seq_names, args.exclude_weak)
         if n_wk > 0:
             cmap = cm_sort[:-n_wk, :-n_wk]
             seq_names = seq_names[:-n_wk]
