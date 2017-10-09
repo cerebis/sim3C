@@ -292,6 +292,7 @@ def seriate_spin_nh(x, sigma=None, max_step_iter=20, weight_func=create_weight, 
         random_state = np.random.RandomState(seed)
 
     max_small = 3
+    max_noimp = 5
 
     # when not sigma supplied, sample between min and max.
     if not sigma:
@@ -349,6 +350,7 @@ def seriate_spin_nh(x, sigma=None, max_step_iter=20, weight_func=create_weight, 
     # if we get too many small changes in a row, we stop.
     # Here "small" is defined by energy tolerance.
     small_change = 0
+    noimp = 0
 
     iter_all = 0
     iter_step = 0
@@ -390,9 +392,11 @@ def seriate_spin_nh(x, sigma=None, max_step_iter=20, weight_func=create_weight, 
             # plt.title('{:.3f} {} {:.2f}'.format(s, i+1, energy_new))
             # plt.savefig('anim/{:05d}.png'.format(n_anim))
             # plt.close()
+        else:
+            noimp += 1
 
         # adapt sigma
-        if small_change >= max_small or iter_step >= max_step_iter-1:
+        if small_change >= max_small or noimp >= max_noimp or iter_step >= max_step_iter-1:
 
             if len(sigma) == 0:
                 if verbose:
@@ -417,6 +421,7 @@ def seriate_spin_nh(x, sigma=None, max_step_iter=20, weight_func=create_weight, 
                 print "best energy is now: {} \n".format(energy_best)
 
             small_change = 0
+            noimp = 0
             iter_step = 0
 
         else:
