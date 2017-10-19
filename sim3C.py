@@ -41,14 +41,21 @@ class NoCutSitesException(Sim3CException):
     """Occurs when a target template contains no cutsites for a specified restriction enzyme"""
     def __init__(self, seq_name, enz_name):
         super(NoCutSitesException, self).__init__(
-            'sequence [{0}] had no cutsites for enzyme [{1}]'.format(seq_name, enz_name))
+            'sequence [{}] had no cutsites for enzyme [{}]'.format(seq_name, enz_name))
+
+
+class FastaException(Sim3CException):
+    """Occurs when Bio.SeqIO read calls throw an exception"""
+    def __init__(self, file_name):
+        super(FastaException, self).__init__(
+            'Failed to read from sequence file [{}]. Is it FASTA formatted?'.format(file_name))
 
 
 class OutOfBoundsException(Sim3CException):
     """Raised when coordinates lie out of range of replicon"""
     def __init__(self, pos, maxpos):
         super(OutOfBoundsException, self).__init__(
-            "exceeded maximum template length {0} > {1}".format(pos, maxpos))
+            "exceeded maximum template length {} > {}".format(pos, maxpos))
 
 
 class EmptyRegistryException(Sim3CException):
@@ -758,7 +765,11 @@ class Community:
         self.cell_registry = OrderedDict()
 
         # reference fasta will be accessed by index.
-        seq_index = SeqIO.index(seq_file, 'fasta', alphabet=Alphabet.generic_dna)
+        seq_index = None
+        try:
+            seq_index = SeqIO.index(seq_file, 'fasta', alphabet=Alphabet.generic_dna)
+        except:
+            raise FastaException(seq_file)
 
         # initialise the registries using the community profile
         for ri in profile.values():
@@ -1433,6 +1444,8 @@ if __name__ == '__main__':
     #
     parser = argparse.ArgumentParser(description='Simulate HiC read pairs')
 
+    parser.add_argument('--debug', default=False, action='store_true', help='Print debug trace on exception')
+
     parser.add_argument('-C', '--compress', choices=['gzip', 'bzip2'], default=None,
                         help='Compress output files')
 
@@ -1530,12 +1543,16 @@ if __name__ == '__main__':
                 print 'Please delete or move away: {0}'.format(profile_path)
                 sys.exit(1)
 
+            seq_index = None
             seq_names = None
-            seq_index = SeqIO.index(args.genome_seq, 'fasta')
             try:
+                seq_index = SeqIO.index(args.genome_seq, 'fasta')
                 seq_names = list(seq_index)
+            except Exception as e:
+                raise FastaException(args.genome_seq)
             finally:
-                seq_index.close()
+                if seq_index:
+                    seq_index.close()
 
             profile = abundance.generate_profile(args.seed, seq_names, mode=args.dist,
                                                  lognorm_mu=args.lognorm_mu, lognorm_sigma=args.lognorm_sigma)
@@ -1576,4 +1593,10 @@ if __name__ == '__main__':
             strategy.run(out_stream)
 
     except Exception as ex:
-        print 'Error: {0}'.format(ex)
+            if args.debug:
+                import traceback
+                type, value, tb = sys.exc_info()
+                traceback.print_exc()
+            print 'Error: {0}'.format(ex)
+
+
