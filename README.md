@@ -105,11 +105,19 @@ Both a random seed and a output profile name can be specified at runtime. These 
 
 ### Useful options
 
+#### Ambiguous IUPAC symbols
+
+```--convert```
+
+At present, Art.py is not able to model errors when reference sequenes contain ambiguous symbols other than N (i.e. MRWSYKVHDB). In these cases, if users do not wish to prepare sequences themselves, the `--convert` option will convert all such symbols to N in memory, prior to simulation. Therefore, emitted simulated reads will contain N in these locations.
+
 #### Faster simulation
 
 ```--simple-reads```
 
 Although Sim3C can simulate read-errors, by use of art_illumina[1] machine profiles, there is currently a significant performance hit. If users are interested in faster simulations, possibly to explore a wider space more quickly before a more thorough validation, simple reads without error are possible.
+
+Reference sequences can contain ambiguous symbols (i.e. MRWSYKVHDB) when using the simple read mode.
 
 #### Compress output
 
