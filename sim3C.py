@@ -739,12 +739,12 @@ class Community:
     of simulation parameters are exposed.
     """
 
-    def __init__(self, seq_file, profile, enzyme, random_state, anti_rate=0.2, spurious_rate=0.02,
+    def __init__(self, seq_index, profile, enzyme, random_state, anti_rate=0.2, spurious_rate=0.02,
                  trans_rate=0.1, create_cids=True, linear=False):
         """
         Initialise a community.
 
-        :param seq_file: the multi-fasta sequences for all replicons in the community
+        :param seq_index: an open sequence index of type _IndexedSeqFileDict as returned from Bio.SeqIO.index
         :param profile: the accompanying abundance profile of all replicons in the community
         :param enzyme: the enzyme used to digest DNA in the 3C/HiC library preparation
         :param anti_rate: the rate of anti-diagonal interactions
@@ -764,21 +764,12 @@ class Community:
         self.repl_registry = OrderedDict()
         self.cell_registry = OrderedDict()
 
-        # reference fasta will be accessed by index.
-        seq_index = None
-        try:
-            seq_index = SeqIO.index(seq_file, 'fasta', alphabet=Alphabet.generic_dna)
-        except:
-            raise FastaException(seq_file)
-
         # initialise the registries using the community profile
         for ri in profile.values():
             # register the cell
             cell = self._register_cell(Cell(ri.cell, ri.abundance, self.random_state, trans_rate))
-            try:
-                rseq = seq_index[ri.name]
-            except Exception:
-                raise Sim3CException('Error getting sequence {0} from fasta file'.format(ri.name))
+            # fetch the sequence from file
+            rseq = seq_index[ri.name].upper()
             # community-wide replicon registry
             self._register_replicon(Replicon(ri.name, cell, ri.copy_number, rseq, enzyme, anti_rate,
                                              random_state, create_cids, linear))
@@ -1149,7 +1140,7 @@ class SequencingStrategy:
                  anti_rate=0.25, spurious_rate=0.02, trans_rate=0.1,
                  efficiency=0.02,
                  ins_rate=9.e-5, del_rate=1.1e-4,
-                 create_cids=True, simple_reads=True, linear=False):
+                 create_cids=True, simple_reads=True, linear=False, convert_symbols=False):
         """
         Initialise a SequencingStrategy.
 
@@ -1175,6 +1166,7 @@ class SequencingStrategy:
         :param create_cids: simulate 3D structure, chromosomal interacting domains (CID)
         :param simple_reads: True: sequencing reads do not simulate error (faster), False: full simulation of sequencing
         :param linear: treat replicons as linear
+        :param convert_symbols: if true, unsupported (by Art) symbols in the input sequences are converted to N
         """
         self.seed = seed
         self.prof_filename = prof_filename
@@ -1194,10 +1186,23 @@ class SequencingStrategy:
         self.enzyme = None if not enz_name else get_enzyme_instance(enz_name)
         self.profile = abn.read_profile(prof_filename, True)
 
+        # reference sequences will be accessed via an SeqIO index. Optionally
+        # overriding getter for validation and base filtering
+        try:
+            seq_index = SeqIO.index(seq_filename, 'fasta', alphabet=Alphabet.generic_dna)
+            if convert_symbols:
+                # remove IUPAC ambiguity symbols
+                seq_index = Art.ambiguous_base_filter(seq_index)
+            elif not simple_reads:
+                # getter will now validate but not change sequence symbols
+                seq_index = Art.validator(seq_index)
+        except (ValueError, TypeError):
+            raise FastaException(seq_filename)
+
         # initialise the community for the reference data
-        self.community = Community(seq_filename, self.profile, self.enzyme, self.random_state, anti_rate=anti_rate,
+        self.community = Community(seq_index, self.profile, self.enzyme, self.random_state, anti_rate=anti_rate,
                                    spurious_rate=spurious_rate, trans_rate=trans_rate,
-                                   create_cids=create_cids, linear=linear)
+                                   create_cids=create_cids, linear=linear,)
 
         # preparate the read simulator for output
         self.read_generator = ReadGenerator(method, self.enzyme, seed, self.random_state,
@@ -1446,6 +1451,9 @@ if __name__ == '__main__':
 
     parser.add_argument('--debug', default=False, action='store_true', help='Print debug trace on exception')
 
+    parser.add_argument('--convert', dest='convert_symbols', default=False, action='store_true',
+                        help='Convert unsupported symbols in sequence to N (required by Art)')
+
     parser.add_argument('-C', '--compress', choices=['gzip', 'bzip2'], default=None,
                         help='Compress output files')
 
@@ -1539,7 +1547,7 @@ if __name__ == '__main__':
 
             profile_path = os.path.join(os.path.dirname(args.output_file), args.profile_name)
             if os.path.exists(profile_path):
-                print 'A previous procedural abundance proebugfile already exists'
+                print 'A previous procedural abundance profile already exists'
                 print 'Please delete or move away: {0}'.format(profile_path)
                 sys.exit(1)
 
@@ -1578,7 +1586,7 @@ if __name__ == '__main__':
                     'anti_rate', 'spurious_rate', 'trans_rate',
                     'efficiency',
                     'ins_rate', 'del_rate',
-                    'create_cids', 'simple_reads', 'linear']
+                    'create_cids', 'simple_reads', 'linear', 'convert_symbols']
 
         # extract these parameters from the parsed arguments
         kw_args = {k: v for k, v in vars(args).items() if k in kw_names}

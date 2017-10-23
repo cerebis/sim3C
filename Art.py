@@ -18,12 +18,14 @@ You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """
 import string
+import types
 import os
 from itertools import imap
 
 import numpy as np
 import scipy.stats as st
 from Bio.Alphabet import IUPAC
+from Bio.File import _IndexedSeqFileDict
 from Bio.Seq import Seq
 from Bio.SeqRecord import SeqRecord
 
@@ -35,11 +37,28 @@ Authors: Weichun Huang 2008-2016
 License: GPL v3
 """
 
+
+class ArtException(Exception):
+    """Module base exception class"""
+    def __init__(self, message):
+        super(ArtException, self).__init__(message)
+
+
+class IllegalSymbolException(ArtException):
+    """Throw this when unsupported symbols/characters are used"""
+    def __init__(self, symb):
+        super(IllegalSymbolException, self).__init__(
+            'Encountered symbol [{}] in sequence. '
+            'Ambiguous IUPAC symbols are not supported.'.format(symb))
+
+
 def _clear_list(l):
     del l[:]
 
+
 # path of this (Art.py) source file. It is expected that profiles are co-located with Art.
 MODULE_PATH = os.path.dirname(os.path.abspath(__file__))
+
 
 # A catalog of empirical profiles for Illumina machine types.
 ILLUMINA_PROFILES = {
@@ -81,6 +100,7 @@ ILLUMINA_PROFILES = {
                         'Illumina_profiles/NextSeq500v2L75R2.txt')
 }
 
+
 def get_profile(name):
     """
     Return the absolute path to a requested Illumina profile.
@@ -119,6 +139,66 @@ def parse_error(quals, seq_read):
             seq_read[i] = random_base(seq_read[i])
 
 
+# IUPAC ambiguous symbols are converted to N, preserving case.
+AMBIGUOUS_CONVERSION_TABLE = string.maketrans('mrwsykvhdbMRWSYKVHDB',
+                                              'nnnnnnnnnnNNNNNNNNNN')
+
+
+def convert_seq(seq):
+    """
+    Check a sequence string for valid character symbols, convert illegal symbols to N.
+    :param seq: an input Bio.Seq object.
+    :return: a copy of the input, potentially with conversions.
+    """
+    assert isinstance(seq, Seq), 'Error: supplied sequence must be instance of Bio.Seq.Seq'
+    return Seq(string.translate(str(seq), AMBIGUOUS_CONVERSION_TABLE), seq.alphabet)
+
+
+def ambiguous_base_filter(seq_index):
+    """
+    Art only supports the standard code (ACGT + N) and will throw an exception when encountering
+    IUPAC ambiguity codes (Eg. MRSWYK/BDHV).
+    Method patch of sequence indexed returned by methods such as Bio.SeqIO.index.
+    :param seq_index: instance of _IndexedSeqFileDict
+    :return: patched instance of _IndexedSeqFileDict
+    """
+    assert isinstance(seq_index, _IndexedSeqFileDict), 'Filter supports _IndexedSeqFileDict only'
+    old_get = seq_index.__getitem__
+
+    def filtering_get(self, k):
+        rseq = old_get(k)
+        # replace the Bio.Seq record within the returned RichSequence
+        rseq.seq = convert_seq(rseq.seq)
+        return rseq
+    seq_index.__getitem__ = types.MethodType(filtering_get, seq_index)
+    return seq_index
+
+
+def validate_seq(input_seq):
+    """
+    Validate an given sequence. An exception is raised if the sequence
+    contains illegal characters.
+    :param input_seq: the input sequencce as a string
+    """
+    for ch in input_seq:
+        if ch not in 'ACGTNacgtn':
+            # if we're not converting, its an exception
+            raise IllegalSymbolException(ch)
+
+
+def validator(seq_index):
+    assert isinstance(seq_index, _IndexedSeqFileDict), 'Validator supports _IndexedSeqFileDict only'
+    old_get = seq_index.__getitem__
+
+    def check_get(self, k):
+        rseq = old_get(k)
+        # replace the Bio.Seq record within the returned RichSequence
+        validate_seq(rseq)
+        return rseq
+    seq_index.__getitem__ = types.MethodType(check_get, seq_index)
+    return seq_index
+
+
 class EmpDist:
 
     FIRST = True
@@ -141,6 +221,7 @@ class EmpDist:
     # create a map of all combinations of single-symbol knockouts
     # used in random not-symb-si substitutions
     KO_SUBS_LOOKUP = dict([(si, list(PRIMARY_SYMB - set(si))) for si in PRIMARY_SYMB])
+
     # alternatively, the list of all symbols for uniform random selection
     ALL_SUBS = list(PRIMARY_SYMB)
 
@@ -547,11 +628,9 @@ class SeqRead:
 
 
 class Art:
-
     RANDOM_STATE = np.random.RandomState()
     RANDINT = RANDOM_STATE.randint
     UNIFORM = RANDOM_STATE.uniform
-    CHOICE = RANDOM_STATE.choice
 
     # translation table, non-standard bases become N
     COMPLEMENT_TABLE = string.maketrans('acgtumrwsykvhdbnACGTUMRWSYKVHDBN',
@@ -569,7 +648,6 @@ class Art:
             Art.RANDOM_STATE = np.random.RandomState(seed)
             Art.RANDINT = Art.RANDOM_STATE.randint
             Art.UNIFORM = Art.RANDOM_STATE.uniform
-            Art.CHOICE = Art.RANDOM_STATE.choice
 
         # convert immutable string to list
         if ref_seq:
@@ -606,7 +684,7 @@ class Art:
         :param input_seq: input sequence to make mutable
         :return: list of ch
         """
-        assert isinstance(input_seq, str), 'Error: supplied sequences must be plain strings.'
+        assert isinstance(input_seq, str), 'Error: supplied sequence must be plain string.'
         return list(input_seq.upper())
 
     @staticmethod
@@ -777,7 +855,6 @@ if __name__ == '__main__':
     from Bio import SeqIO
     import argparse
     import math
-    import numpy as np
 
     parser = argparse.ArgumentParser(description='Generate Illumina reads')
     parser.add_argument('-S', '--seed', type=int, default=None, help='Random seed')
