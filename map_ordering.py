@@ -379,13 +379,24 @@ class SeqOrder:
         _ori = np.zeros(len(self.names), dtype=np.int)
         self.order = np.vstack((_ord, _ori)).T
 
+    @staticmethod
+    def make_ord_and_ori(_ord):
+        """
+        Create an order/orientation matrix from a simple order list. Here, it is assumed that
+        all objects are in their initial orientation.
+
+        :param _ord: a list (or other container) of object identifiers.
+        :return: an order and orientation matrix.
+        """
+        return np.vstack((np.asarray(_ord), np.zeros(len(_ord), dtype=np.int))).T
+
     def set_only_order(self, _ord):
         """
         Set only the order, assuming orientation is ignored
         :param _ord: 1d ordering
         """
         assert len(_ord) == len(self.order), 'new order was a different length'
-        self.order[:, 0] = _ord
+        self.order[:, 0] = np.asarray(_ord)
 
     def set_ord_and_ori(self, _ord):
         """
@@ -489,14 +500,6 @@ def intervening(_ord, _lengths, a, b):
 
     return np.sum(_lengths[_ord[ix1 + 1:ix2, 0]])
 
-
-@jit(float64(float64[:, :]))
-def _calc_map_weight(raw_map):
-    w = 0
-    for i in raw_map:
-        for j in raw_map[i]:
-            w += np.sum(raw_map[i][j])
-    map_weight = w
 
 class ContactMap:
 
@@ -642,6 +645,12 @@ class ContactMap:
     def num_active(self):
         return len(self.seq_info)
 
+    def site_counts(self):
+        """
+        :return: np.array of sites per sequence
+        """
+        return np.fromiter((len(seq['sites']) for seq in self.seq_info.values()), dtype=np.int)
+
     def _init_map(self):
         n_bins = self.grouping.total_bins()
 
@@ -662,6 +671,9 @@ class ContactMap:
             for j in self.raw_map[i]:
                 w += np.sum(self.raw_map[i][j])
         self.map_weight = w
+
+    def is_empty(self):
+        return self.map_weight == 0
 
     def _bin_map(self, bam):
         import tqdm
@@ -827,6 +839,33 @@ class ContactMap:
                     self.seq_info[i]['name'],
                     ','.join(str(self.seq_map[i][j]) for j in sorted_ids)))
 
+    def prob_matrix(self, pmin=None):
+        """
+        Create a matrix whose columns represent the relative frequency of interaction between
+        the ith (row) sequence and the jth (column) sequence. Here i=j are self-self interactions
+        which are removed.
+        An optional minimum probability value can be assigned so that all states to be accessible
+        for any other state, even when no observations were seen.
+        :param pmin: add this probability to all elements (this should be small)
+        :return:
+        """
+        # build the matrix in order of ids
+        # TODO should be driven by order!!!
+        _ids = sorted(self.seq_map.keys())
+        m = np.fromiter((self.seq_map[i][j] for i in _ids for j in _ids), dtype=np.float)
+        m = m.reshape((len(_ids),len(_ids)))
+        # make symmetric
+        ix = np.tril_indices_from(m, k=-1)
+        m[ix] = m.T[ix]
+        # remove the dominant self-self interactions
+        np.fill_diagonal(m, 0)
+        # make all objects reachable for any other.
+        if pmin:
+            m += pmin
+        # normalise column sums
+        m /= m.sum(axis=0)
+        return m
+
     def to_dense(self, norm=False):
         """
         Create a dense matrix from the internal representation (dict of dict of submatrices)
@@ -975,7 +1014,7 @@ class ContactMap:
         D = pdist(nx.adjacency_matrix(g).todense(), metric='cityblock')
         Z = ward(D)
         optimal_Z = polo.optimal_leaf_ordering(Z, D)
-        return np.array(dendrogram(optimal_Z)['leaves'])
+        return np.array(dendrogram(optimal_Z, no_plot=True)['leaves'])
 
     def get_adhoc_order(self):
         """
@@ -1059,20 +1098,75 @@ def poisson_lpmf(ob, ex):
             aij = ob[i, j]
             bij = ex[i, j]
             if aij == 0:
-                s += -bij
-            else:
-                s += aij * log(aij/bij) + bij - aij + 0.5 * log(2.0 * pi * aij)
+                # s += bij
+                continue
+            # else:
+            s += aij * log(aij/bij) + bij - aij + 0.5 * log(2.0 * pi * aij)
     return -s
+
 
 GEOM_SCALE = 3.5e-6
 UNIF_VAL = 1.0e-6
-MIN_FIELD = 1.0e-8
+MIN_FIELD = 2e-8
+
+import scipy.stats as st
+
+# Burton yeast fit for Pareto only
+# P_ALPHA = 0.08284772820147572
+# P_XMIN = 0.1
+# P_NUMERATOR = P_ALPHA * P_XMIN**P_ALPHA
+# P_CONST = P_NUMERATOR / P_XMIN**(P_ALPHA+1)
+
+
+from math import pi, sqrt
+SQ2PI = 1/sqrt(2*pi)
+LAM1 = 0.009953055547766598
+LAM2 = 1 - LAM1
+
+WALPHA = 0.572752543286537
+WKAPPA = 1/19872.99186783614
+
+# WALPHA = 0.5579619434843464
+# WALPHA2 = 3.2156918843895177
+# WKAPPA = 1/408.27594378320094
+# WKAPPA2 = 1/16290.321327116852
+
+# NMU = 342.3292549269435
+# NSIGMA = 114.5643676016569
+# NSCALE = 1/NSIGMA
+
+# PVMU = 1.1688281003614451
+# PVSIGMA = 372.80194135443907
+# PVSCALE = 1/PVSIGMA
+# PVKAPPA = 16254.371890082095
+# LAM1 = 0.9956276669128407
+# LAM2 = 1 - LAM1
+
+
 @vectorize([float64(float64)])
 def piecewise_3c(s):
     pr = MIN_FIELD
-    if s < 600e3:
-        pr = 0.5 * (exp(log(GEOM_SCALE) + s * log(1-GEOM_SCALE)) + UNIF_VAL)
-        #pr = GEOM_SCALE * (1 - GEOM_SCALE)**s
+    # if s > 342+2*114 or s < 300e3:
+    if s < 300e3:
+        # pr = 0.5 * (exp(log(GEOM_SCALE) + s * log(1-GEOM_SCALE)) + UNIF_VAL)
+        # pr = GEOM_SCALE * (1 - GEOM_SCALE)**s
+        # pr = P_CONST if s < P_XMIN else P_NUMERATOR / s**(P_ALPHA+1)
+
+        # weibull + normal
+        # pr = LAM2 * (WALPHA * WKAPPA * (s * WKAPPA) ** (WALPHA - 1) * exp(-(s * WKAPPA) ** WALPHA)) + \
+        #      LAM1 * (1/(SQ2PI * NSIGMA) * exp(-0.5*((s - NMU) * NSCALE)**2))
+
+        # weibull
+        pr = WALPHA * WKAPPA * (s * WKAPPA) ** (WALPHA - 1) * exp(-(s * WKAPPA) ** WALPHA)
+
+        # double weibull
+        # pr = LAM1 * (WALPHA * WKAPPA * (s * WKAPPA) ** (WALPHA - 1) * exp(-(s * WKAPPA) ** WALPHA)) + \
+        #      LAM2 * (WALPHA2 * WKAPPA2 * (s * WKAPPA2) ** (WALPHA2 - 1) * exp(-(s * WKAPPA2) ** WALPHA2))
+
+        # pseudo-voigt
+        # pr = LAM2 * (1/(pi*PVKAPPA)*(1/( 1 + ((s-PVMU)/PVKAPPA)**2 ) )) + \
+        #      LAM1 * (1/(SQ2PI * PVSIGMA) * exp(-0.5*((s - PVMU) * PVSCALE)**2))
+
     return pr
 
 
@@ -1081,7 +1175,31 @@ def scoop_calc_likelihood(an_order):
     return calc_likelihood(an_order, cm)
 
 
-def calc_likelihood(an_order, cm):
+def pair_likelihood(i, j, an_order, cm):
+
+    ids = cm.order.names
+    centers = cm.grouping.centers
+    lengths = cm.order.lengths
+
+    centers_i = centers[ids[i]]
+    centers_j = centers[ids[j]]
+    L = intervening(an_order, lengths, i, j)
+    if before(an_order, i, j):
+        s_i = lengths[i] - centers_i[an_order[i, 1]]
+        s_j = centers_j[an_order[j, 1]]
+    else:
+        s_i = centers_i[an_order[i, 1]]
+        s_j = lengths[j] - centers_j[an_order[j, 1]]
+
+    # separations between contigs in this ordering
+    d_ij = L + s_i[:, np.newaxis] + s_j
+    q_ij = piecewise_3c(d_ij)
+    n_ij = cm.raw_map[ids[i]][ids[j]]
+
+    return poisson_lpmf(n_ij, cm.map_weight * q_ij)
+
+
+def calc_likelihood(an_order, cm, Nd=None):
     """
     Calculate the logLikelihood of a given sequence configuration. The model is adapted from
     GRAAL. Counts are Poisson, with lambda parameter dependent on expected observed contact
@@ -1092,7 +1210,8 @@ def calc_likelihood(an_order, cm):
     :return:
     """
 
-    Nd = cm.map_weight
+    if not Nd:
+        Nd = cm.map_weight
 
     sumL = 0.0
 
@@ -1117,14 +1236,33 @@ def calc_likelihood(an_order, cm):
         # between sequences. If i comes before j, then distances
         # to j will be measured from the end of i -- and visa versa
         if before(an_order, i, j):
+            # print '{} before {}'.format(i, j)
+            """
+            these are redundant operations and when taken over many
+            iterations, will add _alot_ of time. We should pre-calc
+            all four possibilities.
+            Fwd Before, Fwd After, Rev Before, Rev After.
+            
+            Currently Fwd/Rev dict
+            centers = {True: [], False: []}
+            
+            Becomes
+            seps = {(True,True): [], (True,False): ... (False,False): []}
+            
+            is_before = before(o, i, j)
+            s_i = seps[(o[i, 1], is_before)]
+            s_j = seps[(o[j, 1], not is_before)]
+            """
+
             s_i = lengths[i] - centers_i[an_order[i, 1]]
             s_j = centers_j[an_order[j, 1]]
         else:
+            # print '{} after  {}'.format(i, j)
             s_i = centers_i[an_order[i, 1]]
             s_j = lengths[j] - centers_j[an_order[j, 1]]
 
         # separations between contigs in this ordering
-        d_ij = np.abs(L + s_i[:, np.newaxis] - s_j)
+        d_ij = L + s_i[:, np.newaxis] + s_j
 
         q_ij = piecewise_3c(d_ij)
 
@@ -1132,6 +1270,82 @@ def calc_likelihood(an_order, cm):
         sumL += poisson_lpmf(n_ij, Nd * q_ij)
 
     return float(sumL),
+
+
+def swap(i1, i2, x):
+    """
+    Swap in-place the positions i1 and i2 within the individual x.
+    :param i1: position 1
+    :param i2: position 2
+    :param x: the individual (order)
+    """
+    t0, t1 = x[i1, :]
+    x[i1, :] = x[i2, :]
+    x[i2, :] = t0, t1
+
+def nonuniform_mutation_2(individual, cm, pmat, psnp):
+
+    assert len(individual) > 4, 'in this test method, individuals must be longer than 4 elements'
+
+    # number of potential mutation events
+    n_mut = np.random.binomial(len(individual), psnp)
+    if n_mut == 0:
+        n_mut = 1
+
+    pool = set(range(len(individual)))
+
+    for n in xrange(n_mut):
+
+        # uniformly draw four positions from order
+        i1, i2, j1, j2 = random.sample(pool, 4)
+
+        # reduce pool to avoid repeated movements
+        pool -= {i1, i2, j1, j2}
+        # i1, i2, j1, j2 = np.random.choice(individual[:, 0], size=4, replace=False)
+
+        candidate = individual.copy()
+        swap(i1, i2, candidate)
+        swap(j1, j2, candidate)
+
+        # calculate the likelihoods, treating the draws as 2 pairs (before/after)
+        log_p1 = pair_likelihood(i1, j1, individual, cm)
+        log_p2 = pair_likelihood(i2, j2, candidate, cm)
+
+        # if the new position is more likely, accept it.
+        if log_p1 < log_p2:
+            individual[:] = candidate[:]
+
+    return individual,
+
+
+def nonuniform_mutation(individual, pmatrix, pflip):
+
+    n = len(individual)
+    x = individual
+
+    # flip orientations
+    for i1 in xrange(n):
+        if random.random() < pflip:
+            # flip orientation
+            x[i1, 1] = not x[i1, 1]
+
+    i1 = np.random.choice(individual[:, 0])
+    i2 = np.random.choice(individual[:, 0], p=pmatrix[:, i1])
+
+    if random.random() < 0.5:
+        # swap two elements
+        # seems we need to use a temp for this array structure
+        t0, t1 = x[i1, :]
+        x[i1, :] = x[i2, :]
+        x[i2, :] = t0, t1
+
+    else:
+        # move an element
+        if i1 > i2:
+            i1, i2 = i2, i1
+        x[i1:i2+1, :] = np.roll(x[i1:i2+1, :], -1, axis=0)
+
+    return x,
 
 
 def mutate(individual, psnv, pflip, plarge, inv_size, inv_pb=0.5):
@@ -1174,27 +1388,33 @@ def mutate(individual, psnv, pflip, plarge, inv_size, inv_pb=0.5):
         # point mutations instead
         xset = set(range(n))
 
-        if n > 2:
-            for i1 in xrange(n):
-                if rnd() < psnv:
-                    i2 = sample(xset - {i1}, 1)[0]
-                    if rnd() < 0.5:
-                        # swap two elements
-                        # seems we need to use a temp for this array structure
-                        t0, t1 = x[i1, :]
-                        x[i1, :] = x[i2, :]
-                        x[i2, :] = t0, t1
-                    else:
-                        # move an element
-                        if i1 > i2:
-                            i1, i2 = i2, i1
-                        x[i1:i2+1, :] = np.roll(x[i1:i2+1, :], -1, axis=0)
+        if rnd() < 0.5:
+            if n > 2:
+                # mutation can occur at any/all position(s)
+                for i1 in xrange(n):
+                    # mutate?
+                    if rnd() < psnv:
+                        # pick from any position except where we are.
+                        i2 = sample(xset - {i1}, 1)[0]
 
-        # flip orientations
-        for i1 in xrange(n):
-            if rnd() < pflip:
-                # flip orientation
-                x[i1, 1] = not x[i1, 1]
+                        if rnd() < 0.5:
+                            # swap two elements
+                            # seems we need to use a temp for this array structure
+                            t0, t1 = x[i1, :]
+                            x[i1, :] = x[i2, :]
+                            x[i2, :] = t0, t1
+
+                        else:
+                            # move an element
+                            if i1 > i2:
+                                i1, i2 = i2, i1
+                            x[i1:i2+1, :] = np.roll(x[i1:i2+1, :], -1, axis=0)
+        else:
+            # flip orientations
+            for i1 in xrange(n):
+                if rnd() < pflip:
+                    # flip orientation
+                    x[i1, 1] = not x[i1, 1]
 
     return x,
 
@@ -1262,7 +1482,7 @@ def ea_mu_plus_lambda(population, toolbox, genlog, mu, lambda_, cxpb, mutpb, nge
     # Begin the generational process
     for gen in range(1, ngen + 1):
 
-        # Vary the population
+        # Vary the populationselNSGA2
         offspring = varOr(population, toolbox, lambda_, cxpb, mutpb)
 
         # Evaluate the individuals with an invalid fitness
@@ -1363,6 +1583,11 @@ if __name__ == '__main__':
                             strong=args.strong,
                             linear=not args.circular)
 
+            if cm.is_empty():
+                import sys
+                logger.info('Stopping as the map is empty')
+                sys.exit(1)
+
             logger.info('Saving contact map instance...')
             cm.save(out_name(args.outbase, 'cm.p'))
             logger.info('Contact map took: {}'.format(t.elapsed()))
@@ -1384,8 +1609,8 @@ if __name__ == '__main__':
         print 'Ordering by HC...'
         # # hc order
         # t.reset()
-        o = cm.get_hc_order()
-        cm.order.set_only_order(o)
+        hc_o = cm.get_hc_order()
+        cm.order.set_only_order(hc_o)
         logger.info('HC logL {}'.format(calc_likelihood(cm.order.order, cm)[0]))
         m = cm.get_ordered_map()
         cm.plot(out_name(args.outbase, 'hc.png'), norm=True)
@@ -1398,8 +1623,8 @@ if __name__ == '__main__':
         # adhoc order
         logger.info('Beginning adhoc ordering...')
         #t.start()
-        o = cm.get_adhoc_order()
-        cm.order.set_only_order(o)
+        ah_o = cm.get_adhoc_order()
+        cm.order.set_only_order(ah_o)
         logL = calc_likelihood(cm.order.order, cm)
         logger.info('Adhoc logL {}'.format(logL[0]))
         m = cm.get_ordered_map()
@@ -1435,14 +1660,22 @@ if __name__ == '__main__':
             ori = np.zeros(len(ord), dtype=np.int)
             return np.vstack((ord, ori)).T
 
+        def initPopWithGuesses(container, func, guesses, n):
+            pop = tools.initRepeat(container, func, n-len(guesses))
+            # inject hc and adhoc solutions
+            for gi in guesses:
+                pop.append(creator.Individual(SeqOrder.make_ord_and_ori(gi)))
+            return pop
+
         toolbox.register('indices', create_ordering, active)
         toolbox.register('individual', tools.initIterate, creator.Individual, toolbox.indices)
-        toolbox.register('population', tools.initRepeat, list, toolbox.individual)
+        toolbox.register('population', initPopWithGuesses, list, toolbox.individual, []) #[hc_o, ah_o])
 
         toolbox.register('evaluate', scoop_calc_likelihood)
         toolbox.register("mate", crossover)
 
-        toolbox.register("mutate", mutate, psnv=0.05, pflip=0.05, plarge=0.2, inv_size=10)
+        toolbox.register("mutate", mutate, psnv=0.05, pflip=0.05, plarge=0.1, inv_size=10)
+        #toolbox.register("mutate", nonuniform_mutation_2, cm=cm, pmat=cm.prob_matrix(), psnp=0.05)
         toolbox.register("select", tools.selNSGA2)
 
         toolbox.decorate("mate", history.decorator)
@@ -1465,7 +1698,7 @@ if __name__ == '__main__':
 
             t.start()
             pop, logbook = ea_mu_plus_lambda(population, toolbox, genlog, mu=MU, lambda_=LAMBDA,
-                                             cxpb=0.5, mutpb=0.3, ngen=NGEN,
+                                             cxpb=0.3, mutpb=0.5, ngen=NGEN,
                                              stats=stats, halloffame=hof)
             logger.info('EA took: {}'.format(t.elapsed()))
 
@@ -1483,7 +1716,6 @@ if __name__ == '__main__':
             cm.plot(out_name(args.outbase, 'es.png'), norm=True)
 
         except:
-
             type, value, tb = sys.exc_info()
             traceback.print_exc()
             pdb.post_mortem(tb)
