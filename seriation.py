@@ -545,7 +545,7 @@ if __name__ == '__main__':
         cmap = make_symmetric(cmap)
 
     # remove empty entries
-    cmap, seq_names, _ = remove_empty(cmap)
+    cmap, seq_names, _ = remove_empty(cmap, seq_names)
 
     if args.exclude_weak:
         cm_sort, seq_names, n_wk = weak_to_end(cmap, seq_names, args.exclude_weak)
