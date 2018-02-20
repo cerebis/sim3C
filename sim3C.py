@@ -39,16 +39,16 @@ class Sim3CException(Exception):
 
 class NoCutSitesException(Sim3CException):
     """Occurs when a target template contains no cutsites for a specified restriction enzyme"""
-    def __init__(self, seq_name, enz_name):
+    def __init__(self, enz_name):
         super(NoCutSitesException, self).__init__(
-            'sequence [{0}] had no cutsites for enzyme [{1}]'.format(seq_name, enz_name))
+            'sequence contains no cutsites for enzyme [{}]'.format(enz_name))
 
 
 class OutOfBoundsException(Sim3CException):
     """Raised when coordinates lie out of range of replicon"""
     def __init__(self, pos, maxpos):
         super(OutOfBoundsException, self).__init__(
-            "exceeded maximum template length {0} > {1}".format(pos, maxpos))
+            "exceeded maximum template length {} > {}".format(pos, maxpos))
 
 
 class EmptyRegistryException(Sim3CException):
@@ -126,7 +126,7 @@ class CutSites:
         self.sites = np.array(enzyme.search(template_seq, linear)) - 1
         self.size = self.sites.shape[0]
         if self.size == 0:
-            raise NoCutSitesException(template_seq.id, str(enzyme))
+            raise NoCutSitesException(str(enzyme))
 
         # method setup
         if linear:
@@ -337,16 +337,16 @@ class Replicon:
         self.name = name
         self.copy_number = cn
         self.seq = seq
+        self.length = len(self.seq)
         self.anti_rate = anti_rate
 
         # cut-site related properties. These are pre-calculated as a simple
         # means of avoiding performance penalties with repeated calls.
         if not enzyme:
-            self.sites = AllSites(len(seq.seq), self.random_state)
+            self.sites = AllSites(self.length, self.random_state)
         else:
             self.sites = CutSites(enzyme, seq.seq, self.random_state, linear=linear)
 
-        self.length = len(self.seq)
         self.num_sites = self.sites.size
         self.site_density = self.num_sites / float(self.length)
 
@@ -838,9 +838,12 @@ class Community:
                 except Exception:
                     raise Sim3CException('Error getting sequence {0} from fasta file'.format(ri.name))
 
-                # community-wide replicon registry
-                self._register_replicon(Replicon(ri.name, cell, ri.copy_number, rseq, enzyme, ri.anti_rate,
-                                                 random_state, ri.create_cids, ri.linear, ri.centromere))
+                try:
+                    # community-wide replicon registry
+                    self._register_replicon(Replicon(ri.name, cell, ri.copy_number, rseq, enzyme, ri.anti_rate,
+                                                     random_state, ri.create_cids, ri.linear, ri.centromere))
+                except NoCutSitesException as e:
+                    print 'Skipping [{}] in cell [{}]: {}'.format(ri.name, ci.name, e.message)
 
         # now we're finished reading replicons, initialise the probs for each cell
         for cell in self.cell_registry.values():
@@ -1496,7 +1499,7 @@ if __name__ == '__main__':
     import time
     import os
     import traceback
-    import pdb
+    #import pdb
 
 
     #
@@ -1660,4 +1663,4 @@ if __name__ == '__main__':
         print 'Error: {0}'.format(ex)
         _, value, tb = sys.exc_info()
         traceback.print_exc()
-        pdb.post_mortem(tb)
+        #pdb.post_mortem(tb)
