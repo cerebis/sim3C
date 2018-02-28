@@ -8,12 +8,12 @@ from collections import OrderedDict
 import community as com
 import networkx as nx
 import numpy as np
+import scipy.sparse as sparse
 import pysam
 from Bio import SeqIO
 from Bio.Restriction import Restriction
 from deap import creator, base, tools
 from deap.algorithms import varOr
-from intervaltree import IntervalTree, Interval
 from numba import jit, int64, float64, boolean
 from numba import vectorize, int32
 from numpy import log, pi, exp
@@ -501,6 +501,183 @@ def intervening(_ord, _lengths, a, b):
     return np.sum(_lengths[_ord[ix1 + 1:ix2, 0]])
 
 
+class SimpleMap:
+
+    def __init__(self, bam_file, ins_mean, ins_sd, min_mapq, ref_min_len=0,
+                 subsample=None, random_seed=None, strong=None):
+
+        self.strong = strong
+        self.map_weight = None
+        self.ins_mean = ins_mean
+        self.ins_sd = ins_sd
+        self.min_mapq = min_mapq
+        self.subsample = subsample
+        self.random_state = np.random.RandomState(random_seed)
+        self.strong = strong
+        self.total_length = 0
+        self.seq_info = []
+        self.seq_map = None
+        self.idx_map = {}
+
+        with pysam.AlignmentFile(bam_file, 'rb') as bam:
+
+            self.total_seq = len(bam.references)
+
+            # test that BAM file is the corret sort order
+            if 'SO' not in bam.header['HD'] or bam.header['HD']['SO'] != 'queryname':
+                raise IOError('BAM file must be sorted by read name')
+
+            # determine the set of active sequences
+            # where the first filtration step is by length
+            ref_count = {'missing': 0, 'no_sites': 0, 'too_short': 0}
+            offset = 0
+            logger.info('Reading sequences...')
+
+            n = 0
+            # use a combined iterator as it scales better for large N
+            for ix, seq_id, seq_len in itertools.izip(xrange(len(bam.references)), bam.references, bam.lengths):
+
+                # minimum length threshold
+                if seq_len < ref_min_len:
+                    ref_count['too_short'] += 1
+                    continue
+
+                self.seq_info.append({'length': seq_len, 'offset': offset, 'name': seq_id})
+                self.idx_map[ix] = n
+                offset += seq_len
+                n += 1
+
+            self.total_len = offset
+
+            logger.info('References excluded: {}'.format(ref_count))
+            logger.info('Initially: {} sequences and {} bp'.format(len(self.seq_info), self.sum_active()))
+
+            logger.info('Counting reads in bam file...')
+            self.total_reads = bam.count(until_eof=True)
+
+            logger.info('BAM file contains: {0} references over {1} bp, {2} alignments'.format(
+                self.total_seq, self.total_len, self.total_reads))
+
+            # sparse linked list matrix
+            N = len(self.seq_info)
+            self.seq_map = sparse.lil_matrix((N, N), dtype=np.int)
+
+            # calculate the mapping
+            self._bin_map(bam)
+
+    def _bin_map(self, bam):
+        import tqdm
+
+        def _simple_match(r):
+            return not r.is_unmapped and r.mapq >= _mapq
+
+        def _strong_match(r):
+            return strong_match(r, self.strong, True, _mapq)
+
+        # set-up match call
+        _matcher = _strong_match if self.strong else _simple_match
+
+        with tqdm.tqdm(total=self.total_reads) as pbar:
+
+            # maximum separation being 3 std from mean
+            _wgs_max = self.ins_mean + 2.0 * self.ins_sd
+
+            # used when subsampling
+            uniform = self.random_state.uniform
+            sub_thres = self.subsample
+
+            _mapq = self.min_mapq
+            _active_ids = set(self.idx_map)
+
+            counts = OrderedDict({
+                'unpaired': 0,
+                'improper': 0,
+                'accepted': 0,
+                'assumed_wgs': 0,
+                'ref_excluded': 0,
+                'skipped': 0,
+                'poor_match': 0})
+
+            _id = self.idx_map
+            bam.reset()
+            bam_iter = bam.fetch(until_eof=True)
+            while True:
+
+                try:
+                    r1 = bam_iter.next()
+                    pbar.update()
+                    while True:
+                        # read records until we get a pair
+                        r2 = bam_iter.next()
+                        pbar.update()
+                        if r1.query_name == r2.query_name:
+                            break
+                        else:
+                            counts['unpaired'] += 1
+                        r1 = r2
+                except StopIteration:
+                    break
+
+                if r1.reference_id not in _active_ids or r2.reference_id not in _active_ids:
+                    counts['ref_excluded'] += 1
+                    continue
+
+                if sub_thres and sub_thres < uniform():
+                    counts['skipped'] += 1
+                    continue
+
+                if not _matcher(r1) or not _matcher(r2):
+                    counts['poor_match'] += 1
+                    continue
+
+                if r1.is_read2:
+                    r1, r2 = r2, r1
+
+                assume_wgs = False
+                if r1.is_proper_pair:
+
+                    fwd, rev = (r2, r1) if r1.is_reverse else (r1, r2)
+                    ins_len = rev.pos + rev.alen - fwd.pos
+
+                    if fwd.pos <= rev.pos and ins_len < _wgs_max:
+                        # assume this read-pair is a WGS read-pair, not HiC
+                        counts['assumed_wgs'] += 1
+                        continue
+
+                else:
+                    counts['improper'] += 1
+
+                counts['accepted'] += 1
+
+                s1, s2 = r1.reference_id, r2.reference_id
+                # print s1, s2, _id[s1], _id[s2]
+                self.seq_map[_id[s1], _id[s2]] += 1
+
+        self.seq_map = self.seq_map.tocsr()
+
+        self.map_weight = counts['accepted']
+
+        logger.info('Pair accounting: {}'.format(counts))
+        logger.info('Total raw map weight {0}'.format(self.map_weight))
+
+    def sum_active(self):
+        sum_len = 0
+        for info in self.seq_info:
+            sum_len += info['length']
+        return sum_len
+
+    def num_active(self):
+        return len(self.seq_info)
+
+    def save_map(self, fname):
+        """
+        Save the simple sequence(contig) contact map to h5
+        :param fname: destination file name
+        """
+        mapio.write_map(self.seq_map, fname, fmt='h5', names=[d['name'] for d in self.seq_info])
+
+
+# TODO ContactMap should inherit SimpleMap
 class ContactMap:
 
     def __init__(self, bam_file, enz_name, seq_file, bin_size, ins_mean, ins_sd, min_mapq, ref_min_len=0,
@@ -520,7 +697,6 @@ class ContactMap:
         self.spacing_factor = spacing_factor
         self.linear = linear
         self.min_sites = min_sites
-        self.total_length = 0
         self.seq_info = OrderedDict()
         self.seq_map = None
         self.grouping = None
@@ -551,10 +727,9 @@ class ContactMap:
 
             # ':memory:'
             idxfile = '{}.db'.format(seq_file)
-            if os.path.exists(idxfile):
-                logging.warning('Removed preexisting target path "{}" for sequence database'.format(idxfile))
-                os.unlink(idxfile)
-
+            # if os.path.exists(idxfile):
+            #     logging.warning('Removed preexisting target path "{}" for sequence database'.format(idxfile))
+            #     os.unlink(idxfile)
             if os.path.exists(idxfile):
                 logging.warn('Found existing fasta index')
             seq_db = SeqIO.index_db(idxfile, seq_file, 'fasta')
@@ -593,16 +768,17 @@ class ContactMap:
                             sites.sort()  # pedantic check for order
                             medspc = np.median(np.diff(sites))
 
+                        max_dist = self.spacing_factor * medspc if self.spacing_factor else None
+
                         # TODO some of these details could probably be removed. Are we going to use them again?
                         self.seq_info[n] = {'sites': sites,
-                                            'invtree': IntervalTree(Interval(si, si + 1) for si in sites),
-                                            'max_dist': self.spacing_factor * medspc,
+                                            'max_dist': max_dist,
                                             'offset': offset,
                                             'name': seq_id,
                                             'length': li}
 
-                        logger.debug('Found {0} cut-sites for {1} med_spc: {2:.1f} max_dist: {3:.1f}'.format(
-                            len(sites), seq_id, medspc, self.spacing_factor * medspc))
+                        logger.debug('Found {0} cut-sites for {1} med_spc: {2:.1f} max_dist: {3}'.format(
+                            len(sites), seq_id, medspc, max_dist))
                     else:
                         self.seq_info[n] = {'offset': self.total_len}
 
@@ -698,7 +874,7 @@ class ContactMap:
             return False
 
         # set-up the test for site proximity
-        if self.unrestricted:
+        if self.unrestricted or self.spacing_factor is None:
             # all positions can participate, therefore restrictions are ignored.
             # TODO this would make more sense to be handled at arg parsing, since user should
             # be informed, rather tha silently ignoring.
@@ -781,14 +957,16 @@ class ContactMap:
 
                 if not assume_wgs:
 
-                    if not self.unrestricted:
+                    if not self.unrestricted and self.spacing_factor is not None:
 
                         r1_dist = upstream_dist(r1, _seq_info[r1.reference_id]['sites'], r1.reference_length, self.linear)
+
                         if not r1_dist or is_toofar(r1_dist, _hic_max, _seq_info[r1.reference_id]['max_dist']):
                             counts['site_toofar'] += 1
                             continue
 
                         r2_dist = upstream_dist(r2, _seq_info[r2.reference_id]['sites'], r2.reference_length, self.linear)
+
                         if not r2_dist or is_toofar(r2_dist, _hic_max, _seq_info[r2.reference_id]['max_dist']):
                             counts['site_toofar'] += 1
                             continue
@@ -823,21 +1001,34 @@ class ContactMap:
         logger.info('Pair accounting: {}'.format(counts))
         logger.info('Total raw map weight {0}'.format(self.map_weight))
 
-    def save_simple_map(self, fname):
+    def save_simple_map(self, fname, norm=False):
         """
         Save the simple sequence(contig) contact map.
         The leading column and row are sequence names.
-        :param fname: destination file name  
+        :param fname: destination file name
+        :param norm: normalise by sequence length
         """
         with open(fname, 'w') as out_h:
-            # lets just order the ids for consistency
-            sorted_ids = sorted(self.seq_info)
-            # begin with a header row, first element refers to similar row ids
-            out_h.write('id,{}\n'.format(','.join(self.seq_info[i]['name'] for i in sorted_ids)))
+            # some local succinct references
+            sinf = self.seq_info
+            smap = self.seq_map
+
+            # establish an order for the ids
+            sorted_ids = sorted(sinf)
+
+            # header row, first element refers to similar row ids
+            out_h.write('id,{}\n'.format(','.join(sinf[i]['name'] for i in sorted_ids)))
+
             for i in sorted_ids:
-                out_h.write('{},{}\n'.format(
-                    self.seq_info[i]['name'],
-                    ','.join(str(self.seq_map[i][j]) for j in sorted_ids)))
+                # naive correction based on lengths of participating sequences
+                if norm:
+                    row = [smap[i][j] / float(sinf[i]['length'] * sinf[j]['length']) for j in sorted_ids]
+                # unadjusted
+                else:
+                    row = [smap[i][j] for j in sorted_ids]
+
+                # each row also contains an index column
+                out_h.write('{},{}\n'.format(sinf[i]['name'], ','.join(str(v) for v in row)))
 
     def prob_matrix(self, pmin=None):
         """
@@ -1042,7 +1233,7 @@ class ContactMap:
         ord_x, ord_y = lap.lapjv(1 / (w + 1), return_cost=False)
 
         # reorder the subgraphs, just using row order
-        sg_list = np.array(sg_list)[ord_x]
+        sg_list = [sg_list[i] for i in ord_x]
 
         # now find the order through each subgraph
         isolates = []
@@ -1105,67 +1296,45 @@ def poisson_lpmf(ob, ex):
     return -s
 
 
+# original, as Sim3C
 GEOM_SCALE = 3.5e-6
 UNIF_VAL = 1.0e-6
 MIN_FIELD = 2e-8
 
-import scipy.stats as st
-
-# Burton yeast fit for Pareto only
-# P_ALPHA = 0.08284772820147572
-# P_XMIN = 0.1
-# P_NUMERATOR = P_ALPHA * P_XMIN**P_ALPHA
-# P_CONST = P_NUMERATOR / P_XMIN**(P_ALPHA+1)
-
-
 from math import pi, sqrt
 SQ2PI = 1/sqrt(2*pi)
-LAM1 = 0.009953055547766598
-LAM2 = 1 - LAM1
 
-WALPHA = 0.572752543286537
-WKAPPA = 1/19872.99186783614
+# Pareto Type 2
+# this appears to be the best
+P2ALPHA = 0.122123774414444
+P2LAMBDA = 13.675170758388262
+P2MU = 13.973247315647466
 
-# WALPHA = 0.5579619434843464
-# WALPHA2 = 3.2156918843895177
-# WKAPPA = 1/408.27594378320094
-# WKAPPA2 = 1/16290.321327116852
-
-# NMU = 342.3292549269435
-# NSIGMA = 114.5643676016569
-# NSCALE = 1/NSIGMA
-
-# PVMU = 1.1688281003614451
-# PVSIGMA = 372.80194135443907
-# PVSCALE = 1/PVSIGMA
-# PVKAPPA = 16254.371890082095
-# LAM1 = 0.9956276669128407
-# LAM2 = 1 - LAM1
+# Normal + Pareto type 2
+# BETA1 = 0.01204676532429394
+# BETA2 = 1 - BETA1
+# NP2MU1 = 11.102509478856978
+# NP2SIGMA = 18.984454424508588
+# NP2SCALE = 1 / NP2SIGMA
+# NP2MU2 = 12.521607305191363
+# NP2LAMBDA = 118.78120379579359
+# NP2ALPHA = 0.531423183737644
 
 
 @vectorize([float64(float64)])
 def piecewise_3c(s):
     pr = MIN_FIELD
-    # if s > 342+2*114 or s < 300e3:
     if s < 300e3:
         # pr = 0.5 * (exp(log(GEOM_SCALE) + s * log(1-GEOM_SCALE)) + UNIF_VAL)
         # pr = GEOM_SCALE * (1 - GEOM_SCALE)**s
         # pr = P_CONST if s < P_XMIN else P_NUMERATOR / s**(P_ALPHA+1)
 
-        # weibull + normal
-        # pr = LAM2 * (WALPHA * WKAPPA * (s * WKAPPA) ** (WALPHA - 1) * exp(-(s * WKAPPA) ** WALPHA)) + \
-        #      LAM1 * (1/(SQ2PI * NSIGMA) * exp(-0.5*((s - NMU) * NSCALE)**2))
+        # norm + pareto2
+        # pr = BETA1 * (1/(SQ2PI * NP2SIGMA) * exp(-0.5*((s - NP2MU1) * NP2SCALE)**2)) + \
+        #      BETA2 * (NP2ALPHA / NP2LAMBDA * (1 + (s - NP2MU2)/NP2LAMBDA)**(- NP2ALPHA - 1))
 
-        # weibull
-        pr = WALPHA * WKAPPA * (s * WKAPPA) ** (WALPHA - 1) * exp(-(s * WKAPPA) ** WALPHA)
-
-        # double weibull
-        # pr = LAM1 * (WALPHA * WKAPPA * (s * WKAPPA) ** (WALPHA - 1) * exp(-(s * WKAPPA) ** WALPHA)) + \
-        #      LAM2 * (WALPHA2 * WKAPPA2 * (s * WKAPPA2) ** (WALPHA2 - 1) * exp(-(s * WKAPPA2) ** WALPHA2))
-
-        # pseudo-voigt
-        # pr = LAM2 * (1/(pi*PVKAPPA)*(1/( 1 + ((s-PVMU)/PVKAPPA)**2 ) )) + \
-        #      LAM1 * (1/(SQ2PI * PVSIGMA) * exp(-0.5*((s - PVMU) * PVSCALE)**2))
+        # Pareto2
+        pr = P2ALPHA / P2LAMBDA * (1 + (s - P2MU)/P2LAMBDA)**(- P2ALPHA - 1)
 
     return pr
 
@@ -1419,6 +1588,43 @@ def mutate(individual, psnv, pflip, plarge, inv_size, inv_pb=0.5):
     return x,
 
 
+def mutate_2opt(individual, psnv, pflip):
+
+    n = len(individual)
+    x = individual
+
+    rnd = random.random
+    sample = random.sample
+
+    indices = range(n)
+
+    if rnd() < 0.1:
+        shift = np.random.geometric(0.1)
+        if rnd() < 0.5:
+            shift = -shift
+        np.roll(x, shift, axis=0)
+
+    else:
+        # mutation can occur at any/all position(s)
+        for i1 in xrange(n):
+            if rnd() < psnv:
+                if rnd() < 0.75:
+                    ri, rj = sample(indices, 2)
+                    x[:, :] = local_search.two_opt_move(x, ri, rj)
+                    # this would invert orientation but we need to do this for all moves
+                    # not just 2-opt
+                    # x[ri:rj+1, 1] = np.logical_not(x[ri:rj+1, 1])
+                else:
+                    x[:, :] = local_search.double_bridge_move(x)
+
+    # flip orientations
+    for i1 in xrange(n):
+        if rnd() < pflip:
+            x[i1, 1] = not x[i1, 1]
+
+    return x,
+
+
 def crossover(ind1, ind2):
 
     # a random segment
@@ -1514,6 +1720,8 @@ def numpy_similar(a, b):
 creator.create('FitnessML', base.Fitness, weights=(1.0,))
 creator.create('Individual', np.ndarray, fitness=creator.FitnessML)
 
+import local_search
+
 if __name__ == '__main__':
     import traceback, sys, pdb
     import argparse
@@ -1537,9 +1745,13 @@ if __name__ == '__main__':
         return '{}_{}'.format(base, suffix)
 
     parser = argparse.ArgumentParser(description='Create a 3C fragment map from a BAM file')
+
     parser.add_argument('-v', '--verbose', default=False, action='store_true', help='Verbose output')
     parser.add_argument('-f', '--format', choices=['csv', 'h5'], default='csv',
                         help='Input contact map format')
+    parser.add_argument('--two-opt', default=0, type=int, help='Finishing two-opt passes (very slow) [None]')
+    parser.add_argument('--simple-only', default=False, action='store_true',
+                        help='Create only a simple (whole contig) map')
     parser.add_argument('--circular', default=False, action='store_true', help='Treat all references as circular')
     parser.add_argument('--strong', type=int, default=None,
                         help='Using strong matching constraint (minimum matches in alignments).')
@@ -1550,8 +1762,8 @@ if __name__ == '__main__':
     parser.add_argument('--min-sites', type=int, required=True, help='Minimum acceptable number of sites in a bin')
     parser.add_argument('--min-mapq', type=int, default=0, help='Minimum acceptable mapping quality [0]')
     parser.add_argument('--min-reflen', type=int, default=0, help='Minimum acceptable reference length [0]')
-    parser.add_argument('--spc-factor', type=float, default=3.0,
-                        help='Maximum sigma factor separation from read to nearest site [3]')
+    parser.add_argument('--spc-factor', type=float, default=None,
+                        help='Maximum sigma factor separation from read to nearest site [None]')
     parser.add_argument('--pickle', help='Picked contact map')
     parser.add_argument('--ngen', default=0, type=int, help='Number of ES generations')
     parser.add_argument('--lambda', dest='lamb', default=50, type=int, help='Number of offspring')
@@ -1562,160 +1774,183 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
 
-    try:
-        t = Timer()
+    if args.simple_only:
+        cm = SimpleMap(args.bam, args.insert_mean, args.insert_sd, args.min_mapq, args.min_reflen, args.strong)
+        cm.save_map(out_name(args.outbase, 'simple'))
 
-        if args.pickle:
-            import pickle
-            with open(args.pickle, 'rb') as input_h:
-                cm = pickle.load(input_h)
-        else:
-            t.start()
-            cm = ContactMap(args.bam,
-                            args.enzyme,
-                            args.fasta,
-                            args.bin_size,
-                            args.insert_mean, args.insert_sd,
-                            args.min_mapq,
-                            spacing_factor=args.spc_factor,
-                            min_sites=args.min_sites,
-                            ref_min_len=args.min_reflen,
-                            strong=args.strong,
-                            linear=not args.circular)
-
-            if cm.is_empty():
-                import sys
-                logger.info('Stopping as the map is empty')
-                sys.exit(1)
-
-            logger.info('Saving contact map instance...')
-            cm.save(out_name(args.outbase, 'cm.p'))
-            logger.info('Contact map took: {}'.format(t.elapsed()))
-
-            cm.save_simple_map(out_name(args.outbase, 'simple.csv'))
-
-        # logger.info('Saving graph...')
-        # nx.write_graphml(cm.create_contig_graph(norm=True, scale=True, extern_ids=True), 'cm.graphml')
-
-        logger.info('Plotting starting image...')
-        cm.plot(out_name(args.outbase, 'start.png'), norm=True)
-
-        logger.info('Saving raw contact map...')
-        mapio.write_map(cm.to_dense(), out_name(args.outbase, 'raw'), args.format)
-
-        logL = calc_likelihood(cm.order.order, cm)
-        logger.info('Initial logL {}'.format(logL[0]))
-
-        print 'Ordering by HC...'
-        # # hc order
-        # t.reset()
-        hc_o = cm.get_hc_order()
-        cm.order.set_only_order(hc_o)
-        logger.info('HC logL {}'.format(calc_likelihood(cm.order.order, cm)[0]))
-        m = cm.get_ordered_map()
-        cm.plot(out_name(args.outbase, 'hc.png'), norm=True)
-        #print t.elapsed()
-        #print 'Saving hc contact maps as csv...'
-        #t.reset()
-        #mapio.write_map(m, out_name(args.outbase, 'hc'), args.format)
-        #print t.elapsed()
-
-        # adhoc order
-        logger.info('Beginning adhoc ordering...')
-        #t.start()
-        ah_o = cm.get_adhoc_order()
-        cm.order.set_only_order(ah_o)
-        logL = calc_likelihood(cm.order.order, cm)
-        logger.info('Adhoc logL {}'.format(logL[0]))
-        m = cm.get_ordered_map()
-        logger.debug(t.elapsed())
-        logger.info('Saving adhoc contact maps as csv...')
-        np.savetxt(out_name(args.outbase, 'adhoc.csv'), m, fmt='%d', delimiter=',')
-        mapio.write_map(m, out_name(args.outbase, 'adhoc'), args.format)
-        logger.info('Plotting adhoc image...')
-        cm.plot(out_name(args.outbase, 'adhoc.png'), norm=True)
-        #logger.info('Adhoc took: {}'.format(t.elapsed()))
-
-        with open(out_name(args.outbase, 'adhoc-order.csv'), 'w') as out_h:
-            ord_str = str([(-1)**d * o for o, d in cm.order.order])
-            out_h.write('{}\n'.format(ord_str))
-
-    except:
-        type, value, tb = sys.exc_info()
-        traceback.print_exc()
-        pdb.post_mortem(tb)
-
-    if args.ngen > 0:
-
-        logger.info('Beginning EA ordering...')
-
-        shared.setConst(cm=cm)
-
-        history = tools.History()
-        toolbox = base.Toolbox()
-        active = list(cm.order.order[:, 0])
-
-        def create_ordering(names):
-            ord = random.sample(names, len(names))
-            ori = np.zeros(len(ord), dtype=np.int)
-            return np.vstack((ord, ori)).T
-
-        def initPopWithGuesses(container, func, guesses, n):
-            pop = tools.initRepeat(container, func, n-len(guesses))
-            # inject hc and adhoc solutions
-            for gi in guesses:
-                pop.append(creator.Individual(SeqOrder.make_ord_and_ori(gi)))
-            return pop
-
-        toolbox.register('indices', create_ordering, active)
-        toolbox.register('individual', tools.initIterate, creator.Individual, toolbox.indices)
-        toolbox.register('population', initPopWithGuesses, list, toolbox.individual, []) #[hc_o, ah_o])
-
-        toolbox.register('evaluate', scoop_calc_likelihood)
-        toolbox.register("mate", crossover)
-
-        toolbox.register("mutate", mutate, psnv=0.05, pflip=0.05, plarge=0.1, inv_size=10)
-        #toolbox.register("mutate", nonuniform_mutation_2, cm=cm, pmat=cm.prob_matrix(), psnp=0.05)
-        toolbox.register("select", tools.selNSGA2)
-
-        toolbox.decorate("mate", history.decorator)
-        toolbox.decorate("mutate", history.decorator)
-
-        toolbox.register('map', futures.map)
-
+    else:
         try:
-            MU, LAMBDA, NGEN = args.mu, args.lamb, args.ngen
+            t = Timer()
 
-            population = toolbox.population(n=MU)
-            hof = tools.ParetoFront(similar=numpy_similar)
-            stats = tools.Statistics(lambda ind: ind.fitness.values)
-            stats.register("avg", np.mean, axis=0)
-            stats.register("std", np.std, axis=0)
-            stats.register("min", np.min, axis=0)
-            stats.register("max", np.max, axis=0)
+            if args.pickle:
+                import pickle
+                with open(args.pickle, 'rb') as input_h:
+                    cm = pickle.load(input_h)
+            else:
+                t.start()
+                cm = ContactMap(args.bam,
+                                args.enzyme,
+                                args.fasta,
+                                args.bin_size,
+                                args.insert_mean, args.insert_sd,
+                                args.min_mapq,
+                                spacing_factor=args.spc_factor,
+                                min_sites=args.min_sites,
+                                ref_min_len=args.min_reflen,
+                                strong=args.strong,
+                                linear=not args.circular)
 
-            genlog = []
+                if cm.is_empty():
+                    import sys
+                    logger.info('Stopping as the map is empty')
+                    sys.exit(1)
 
-            t.start()
-            pop, logbook = ea_mu_plus_lambda(population, toolbox, genlog, mu=MU, lambda_=LAMBDA,
-                                             cxpb=0.3, mutpb=0.5, ngen=NGEN,
-                                             stats=stats, halloffame=hof)
-            logger.info('EA took: {}'.format(t.elapsed()))
+                logger.info('Saving contact map instance...')
+                cm.save(out_name(args.outbase, 'cm.p'))
+                logger.info('Contact map took: {}'.format(t.elapsed()))
 
-            with open(out_name(args.outbase, 'gen_best.csv'), 'w') as out_h:
-                for n, order_i in enumerate(genlog):
-                    ord_str = str([(-1)**d * o for o, d in order_i])
-                    out_h.write('{0}: {1}\n'.format(n, ord_str))
+                #cm.save_simple_map(out_name(args.outbase, 'simple.csv'))
 
-            cm.order.set_ord_and_ori(np.array(hof[0]))
+            # logger.info('Saving graph...')
+            # nx.write_graphml(cm.create_contig_graph(norm=True, scale=True, extern_ids=True), 'cm.graphml')
+
+            logger.info('Plotting starting image...')
+            cm.plot(out_name(args.outbase, 'start.png'), norm=True)
+
+            logger.info('Saving raw contact map...')
+            mapio.write_map(cm.to_dense(), out_name(args.outbase, 'raw'), args.format)
+
+            logL = calc_likelihood(cm.order.order, cm)
+            logger.info('Initial logL {}'.format(logL[0]))
+
+            print 'Ordering by HC...'
+            # # hc order
+            # t.reset()
+            hc_o = cm.get_hc_order()
+            cm.order.set_only_order(hc_o)
+            logger.info('HC logL {}'.format(calc_likelihood(cm.order.order, cm)[0]))
             m = cm.get_ordered_map()
+            cm.plot(out_name(args.outbase, 'hc.png'), norm=True)
+            #print t.elapsed()
+            #print 'Saving hc contact maps as csv...'
+            #t.reset()
+            #mapio.write_map(m, out_name(args.outbase, 'hc'), args.format)
+            #print t.elapsed()
 
-            logger.info('Saving es contact maps as csv...')
-            mapio.write_map(m, out_name(args.outbase, 'es'), args.format)
-            logger.info('Plotting final EA image...')
-            cm.plot(out_name(args.outbase, 'es.png'), norm=True)
+            # adhoc order
+            logger.info('Beginning adhoc ordering...')
+            #t.start()
+            ah_o = cm.get_adhoc_order()
+            cm.order.set_only_order(ah_o)
+            logL = calc_likelihood(cm.order.order, cm)
+            logger.info('Adhoc logL {}'.format(logL[0]))
+            m = cm.get_ordered_map()
+            logger.debug(t.elapsed())
+            logger.info('Saving adhoc contact maps as csv...')
+            np.savetxt(out_name(args.outbase, 'adhoc.csv'), m, fmt='%d', delimiter=',')
+            mapio.write_map(m, out_name(args.outbase, 'adhoc'), args.format)
+            logger.info('Plotting adhoc image...')
+            cm.plot(out_name(args.outbase, 'adhoc.png'), norm=True)
+            #logger.info('Adhoc took: {}'.format(t.elapsed()))
+
+            with open(out_name(args.outbase, 'adhoc-order.csv'), 'w') as out_h:
+                ord_str = str([(-1)**d * o for o, d in cm.order.order])
+                out_h.write('{}\n'.format(ord_str))
 
         except:
             type, value, tb = sys.exc_info()
             traceback.print_exc()
             pdb.post_mortem(tb)
+
+        if args.ngen > 0:
+
+            logger.info('Beginning EA ordering...')
+
+            shared.setConst(cm=cm)
+
+            history = tools.History()
+            toolbox = base.Toolbox()
+            active = list(cm.order.order[:, 0])
+
+            def create_ordering(names):
+                ord = random.sample(names, len(names))
+                ori = np.zeros(len(ord), dtype=np.int)
+                return np.vstack((ord, ori)).T
+
+            def initPopWithGuesses(container, func, guesses, n):
+                pop = tools.initRepeat(container, func, n-len(guesses))
+                # inject hc and adhoc solutions
+                for gi in guesses:
+                    pop.append(creator.Individual(SeqOrder.make_ord_and_ori(gi)))
+                return pop
+
+            toolbox.register('indices', create_ordering, active)
+            toolbox.register('individual', tools.initIterate, creator.Individual, toolbox.indices)
+            toolbox.register('population', initPopWithGuesses, list, toolbox.individual, [hc_o, ah_o])
+
+            toolbox.register('evaluate', scoop_calc_likelihood)
+            toolbox.register("mate", local_search.uopx_crossover)
+
+            toolbox.register("mutate", mutate_2opt, psnv=0.01, pflip=0.05)
+            # toolbox.register("mutate", mutate, psnv=0.05, pflip=0.05, plarge=0.1, inv_size=10)
+            # toolbox.register("mutate", nonuniform_mutation_2, cm=cm, pmat=cm.prob_matrix(), psnp=0.05)
+            toolbox.register("select", tools.selNSGA2)
+
+            toolbox.decorate("mate", history.decorator)
+            toolbox.decorate("mutate", history.decorator)
+
+            toolbox.register('map', futures.map)
+
+            try:
+                MU, LAMBDA, NGEN = args.mu, args.lamb, args.ngen
+
+                population = toolbox.population(n=MU)
+                hof = tools.ParetoFront(similar=numpy_similar)
+                stats = tools.Statistics(lambda ind: ind.fitness.values)
+                stats.register("avg", np.mean, axis=0)
+                stats.register("std", np.std, axis=0)
+                stats.register("min", np.min, axis=0)
+                stats.register("max", np.max, axis=0)
+
+                genlog = []
+
+                t.start()
+                pop, logbook = ea_mu_plus_lambda(population, toolbox, genlog, mu=MU, lambda_=LAMBDA,
+                                                 cxpb=0.3, mutpb=0.7, ngen=NGEN,
+                                                 stats=stats, halloffame=hof)
+                logger.info('EA took: {}'.format(t.elapsed()))
+
+                with open(out_name(args.outbase, 'gen_best.csv'), 'w') as out_h:
+                    for n, order_i in enumerate(genlog):
+                        ord_str = str([(-1)**d * o for o, d in order_i])
+                        out_h.write('{0}: {1}\n'.format(n, ord_str))
+
+                cm.order.set_ord_and_ori(np.array(hof[0]))
+                m = cm.get_ordered_map()
+
+                logger.info('Saving es contact maps as csv...')
+                mapio.write_map(m, out_name(args.outbase, 'es'), args.format)
+                logger.info('Plotting final EA image...')
+                cm.plot(out_name(args.outbase, 'es.png'), norm=True)
+
+                if args.two_opt > 0:
+                    temp_sched = np.logspace(np.log(10), np.log(0.5), base=np.e, num=args.two_opt)
+                    an_order = cm.order.order
+                    np.random.shuffle(an_order)
+                    for i in xrange(args.two_opt):
+                        print '2-opt pass {} at temp {}'.format(i+1, temp_sched[i])
+                        an_order = local_search.two_opt(an_order, scoop_calc_likelihood, temp_sched[i])
+
+                    cm.order.set_ord_and_ori(an_order)
+                    m = cm.get_ordered_map()
+                    logger.info('Saving 2-opt map as csv...')
+                    mapio.write_map(m, out_name(args.outbase, '2opt'), args.format)
+                    logger.info('Plotting final 2opt image...')
+                    cm.plot(out_name(args.outbase, '2opt.png'), norm=True)
+                    print str([(-1)**d * o for o, d in an_order])
+
+
+            except:
+                type, value, tb = sys.exc_info()
+                traceback.print_exc()
+                pdb.post_mortem(tb)
