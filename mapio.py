@@ -1,7 +1,67 @@
 import numpy as np
+import scipy.sparse
 import pandas
 import h5py
+import h5sparse
 import io_utils
+
+
+def save_h5map(fname, cmap, names=None):
+    """
+    Save a mixed H5 file with sparse matrix contact map and an optional list of names
+    :param fname: output file name
+    :param cmap: contact map in CSR, CSC or BSR format
+    :param names: optional names in corresponding order to matrix elements
+    """
+    with h5py.File(fname, 'w') as saved:
+
+        if cmap.format not in ('csc', 'csr', 'bsr'):
+            raise NotImplementedError('Saving of sparse matrix of format {} not implemented .'.format(cmap.format))
+
+        g = saved.create_group('map')
+        g.create_dataset('indices', data=cmap.indices, compression='gzip', shuffle=True)
+        g.create_dataset('indptr', data=cmap.indptr, compression='gzip', shuffle=True)
+        g.create_dataset('format', data=cmap.format.encode('ascii'))
+        g.create_dataset('shape', data=cmap.shape)
+        g.create_dataset('data', data=cmap.data, compression='gzip', shuffle=True)
+
+        if names is not None:
+            assert len(names) == cmap.shape[0]
+            saved.create_dataset('names', data=names)
+
+
+def load_h5map(fname, has_names=True):
+    """
+    Load a mixed H5 file containing a sparse matrix and optional list of names.
+    :param fname: input file name
+    :param has_names: True - load the associated per-element names
+    :return: cmap sparse matrix, list of names or None
+    """
+    with h5py.File(fname, 'r') as loaded:
+        try:
+            matrix_format = loaded['map/format'][()]
+        except KeyError:
+            raise ValueError('The file {} does not appear to contain a sparse matrix.'.format(fname))
+
+        try:
+            cls = getattr(scipy.sparse, '{}_matrix'.format(matrix_format))
+        except AttributeError:
+            raise ValueError('Unknown matrix format "{}"'.format(matrix_format))
+
+        if matrix_format not in ('csc', 'csr', 'bsr'):
+            raise NotImplementedError('Loading of sparse matrix of format {} not implemented.'.format(matrix_format))
+
+        cmap = cls((loaded['map/data'][:],
+                    loaded['map/indices'][:],
+                    loaded['map/indptr'][:]),
+                   shape=loaded['map/shape'][:])
+
+        if has_names:
+            names = loaded['names'][:]
+        else:
+            names = None
+
+        return cmap, names
 
 
 def write_map(data, fname, fmt, names=None):
@@ -23,11 +83,11 @@ def write_map(data, fname, fmt, names=None):
     """
 
     # try to convert sparse matrices to a dense form before writing
-    if not isinstance(data, np.ndarray):
-        try:
-            data = data.todense()
-        except AttributeError:
-            raise RuntimeError('Supplied data object does not appear to be a sparse matrix, nor a numpy array')
+    # if not isinstance(data, np.ndarray):
+    #     try:
+    #         data = data.todense()
+    #     except AttributeError:
+    #         raise RuntimeError('Supplied data object does not appear to be a sparse matrix, nor a numpy array')
 
     if fmt == 'csv':
         # append a suffix is not found.
@@ -43,17 +103,15 @@ def write_map(data, fname, fmt, names=None):
     elif fmt == 'h5':
         if not fname.endswith('h5'):
             fname = '{}.h5'.format(fname)
-        with h5py.File(fname, 'w') as hndl:
-            hndl.create_dataset('map', data=data, compression='gzip')
-            # add names as as separate entry
-            if names is not None:
-                hndl.create_dataset('names', data=names, compression='gzip')
+        if not isinstance(data, scipy.sparse.csr.csr_matrix):
+            data = scipy.sparse.csr_matrix(data)
+        save_h5map(fname, data, names)
 
     else:
         raise RuntimeError('Unimplemented format [{}]'.format(fmt))
 
 
-def read_map(fname, fmt, delim=',', names=False):
+def read_map(fname, fmt, delim=',', has_names=False, make_dense=False):
     """
     Read a contact map from file. The map is returned as a 2D
     numpy array. File formats are 'CSV' or a simple HDF5 with
@@ -62,7 +120,7 @@ def read_map(fname, fmt, delim=',', names=False):
     :param fname: input file name
     :param fmt: file format 'csv' or 'h5'
     :param delim: optional delimiter for csv
-    :param names: for CSV, the first row and column specify names.
+    :param has_names: for CSV, the first row and column specify names.
     :return: 
     """
     data = None
@@ -71,24 +129,28 @@ def read_map(fname, fmt, delim=',', names=False):
     if fmt == 'csv':
         with io_utils.open_input(fname) as csv_input:
             try:
-                if names:
+                if has_names:
                     df = pandas.read_csv(csv_input, delimiter=delim, index_col=0, header=0)
-                    data = df.as_matrix().astype(np.float)
                     if (df.index != df.columns).all():
                         raise IOError('row and column names do not agree')
                     cols = np.asarray(df.columns.tolist())
                 else:
-                    df = pandas.read_csv(csv_input, delimiter=delim, dtype=np.float, header=None)
-                    data = df.as_matrix()
+                    df = pandas.read_csv(csv_input, delimiter=delim, header=None)
+
             except ValueError as er:
                 print 'Invalid data. Expected numeric values. Perhaps wrong delimiter used'
                 raise er
 
+            # always return floats
+            data = df.as_matrix().astype(np.float)
+            # pandas produces fortran arrays, we assume c-style
+            data = np.ascontiguousarray(data)
+
     elif fmt == 'h5':
-        with h5py.File(fname, 'r') as hndl:
-            data = hndl['map'][:]
-            if names:
-                cols = np.asarray(hndl['names'][:])
+        data, cols = load_h5map(fname, has_names)
+        if make_dense:
+            data = np.ascontiguousarray(data.todense())
+
     else:
         raise RuntimeError('Unimplemented format [{}]'.format(fmt))
 
