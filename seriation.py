@@ -4,7 +4,6 @@ from operator import lt, gt
 import numpy as np
 import lap
 
-
 def sk_bistochastic(m, round_to=8, verbose=False, max_iter=1000):
     """
     Normalise a matrix to be bistochastic using Sinkorn-Knopp algorithm.
@@ -354,6 +353,7 @@ def seriate_spin_nh(x, sigma=None, max_step_iter=20, weight_func=create_weight, 
 
     iter_all = 0
     iter_step = 0
+    p = np.zeros((n, n))
     while True:
 
         if verbose:
@@ -365,8 +365,7 @@ def seriate_spin_nh(x, sigma=None, max_step_iter=20, weight_func=create_weight, 
 
         o = lap_order(m, cost_func=arg_func, random_state=random_state)
 
-        # TODO p could just be cleared rather than instantiated each round
-        p = np.zeros((n, n))
+        p.fill(0)
         for _j in xrange(n):
             p[_j, o[_j]] = 1.
 
@@ -445,7 +444,7 @@ def remove_empty(m, names):
     """
     # first remove zero count sequences
     ix = m.sum(axis=0) > 0
-    non_empty = (m[ix])[:, ix]
+    non_empty = np.ascontiguousarray((m[ix])[:, ix])
     names = names[ix]
     n_empty = len(ix) - np.sum(ix)
     if n_empty > 0:
@@ -500,7 +499,7 @@ if __name__ == '__main__':
     parser.add_argument('--headers', action='store_true', default=False,
                         help='Input CSV file has matching row and column headers list sequence names')
     parser.add_argument('--delim', default=',', help='Matrix delimiter [,]')
-    parser.add_argument('-v', '--verbose', default=False, action='store_true', help='Verbose output')
+    parser.add_argument('-q', '--quiet', default=False, action='store_true', help='Mute progress statements')
     parser.add_argument('--exclude-weak', metavar='THRES', default=None, type=float,
                         help='Exclude weak near-singletons during seriation [keep all]')
     parser.add_argument('--reduce', default=None, type=int,
@@ -532,7 +531,7 @@ if __name__ == '__main__':
         raise RuntimeError('Sigma maximum must be greater than minimum')
 
     # read in contact map
-    cmap, seq_names = mapio.read_map(args.map, args.format, delim=args.delim, names=args.headers)
+    cmap, seq_names = mapio.read_map(args.map, args.format, delim=args.delim, has_names=args.headers, make_dense=True)
 
     # set aside seq name information if supplied in input
     if not args.headers:
@@ -572,9 +571,12 @@ if __name__ == '__main__':
                 raise RuntimeError('Additive smoothing requires non-negative smoothing factor.')
             target_map = additive_recip(target_map.astype(np.float), args.smoothing)
 
-    perm = seriate_spin_nh(target_map, verbose=args.verbose, maximize=args.maximize, sigma_steps=args.steps,
+    perm = seriate_spin_nh(target_map, verbose=not args.quiet, maximize=args.maximize, sigma_steps=args.steps,
                            max_sigma=args.max_sigma, min_sigma=args.min_sigma, max_step_iter=args.sigma_iter,
                            sample_space=args.sample_space, use_jv=args.use_jv, energy_tol=args.etol, seed=args.seed)
+
+    # no longer needed and we might go OOM.
+    del target_map
 
     # extract indices order from permutation matrix
     order_ix = np.argwhere(perm == 1)[:, 1]
@@ -591,4 +593,4 @@ if __name__ == '__main__':
     fig = plt.figure()
     fig.set_size_inches(10, 10)
     plt.imshow(np.log10(cmap+1), cmap=args.cmap_name, interpolation=None)
-    plt.savefig('{}.png'.format(args.output), dpi=360)
+    plt.savefig('{}.pdf'.format(args.output), dpi=360)
