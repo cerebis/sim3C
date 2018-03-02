@@ -1,5 +1,6 @@
 import numpy as np
 import networkx as nx
+import scipy.sparse as sparse
 import community
 import polo
 import lap
@@ -208,18 +209,27 @@ def inverse_edge_weights(g, alpha=1.0):
         g.edge[u][v]['weight'] = 1.0 / (g[u][v]['weight'] + alpha)
 
 
-def lkh_order(m, base_name, precision=1):
+def lkh_order(m, base_name, precision=1, lkh_exe=None, runs=None, seed=None):
     """
-    Employ LKH TSP solver to find the best order through a distance matrix. The method assumes LKH is
-    on the path. A CalledProcessError is raised if execution fails.
+    Employ LKH TSP solver to find the best order through a distance matrix. By default, it is assumed that
+    LKH is on the path. A CalledProcessError is raised if execution fails. The input to LKH is an explicit
+    definition of the full connected distance matrix, therefore sparse matrices will be converted to dense
+    representations. For large problems, this can be memory demanding.
 
     :param m: the distance matrix
     :param base_name: base name of LKH control files
     :param precision: LKH is limited to integer distances, apply this multiplier to distances prior to truncation.
+    :param lkh_exe: Path to binary, otherwise assumed on the path
     :return: 0-based order as a numpy array
     """
+    if sparse.isspmatrix(m):
+        m = m.toarray()
+
+    m = m.astype(np.float)
+
     # distance will be inversely proportional to counts
     # first, all elements are non-zero
+    np.fill_diagonal(m, 0)
     m += 0.1
     # scale elements [0,1]
     m = m / m.max()
@@ -228,15 +238,19 @@ def lkh_order(m, base_name, precision=1):
     # rescale, making sure the shortest distance is > 1
     # the reason for this is to protect the shortest distance elements
     # from going to zero when the matrix is converted to integers (requirement of LKH)
-    m *= 1.1 / m.min()
+    m *= 1.01 / m.min()
+
+    print m.min(), m.max()
 
     # remove self-self paths
     # TODO this should perhaps come before the above.
     np.fill_diagonal(m, 0)
 
     try:
-        write_lkh(base_name, m*precision, len(m))
-        subprocess.check_call(['LKH', '{}.par'.format(base_name)])
+        write_lkh(base_name, m*precision, len(m), max_trials=2*len(m), runs=runs, seed=seed)
+        if not lkh_exe:
+            lkh_exe = 'LKH'
+        subprocess.check_call([lkh_exe, '{}.par'.format(base_name)])
         tour = read_lkh('{}.tour'.format(base_name))
     except subprocess.CalledProcessError as e:
         print 'Execution of LHK failed'
@@ -276,6 +290,13 @@ def write_lkh(base_name, m, dim, max_trials=None, runs=None, trace=0, seed=None)
     data_file = '{}.dat'.format(base_name)
     with open(control_file, 'w') as out_h:
         out_h.write('SPECIAL\n')
+        # SPECIAL is a meta setting for the following
+        # out_h.write('GAIN23 = NO\n')
+        # out_h.write('KICKS = 1\n')
+        # out_h.write('KICK_TYPE = 4\n')
+        # out_h.write('MAX_SWAPS = 0\n')
+        # out_h.write('MOVE_TYPE = 5 SPECIAL\n')
+        # out_h.write('POPULATION_SIZE = 10\n')
         out_h.write('PROBLEM_FILE = {}\n'.format(data_file))
         if max_trials:
             out_h.write('MAX_TRIALS = {}\n'.format(max_trials))
