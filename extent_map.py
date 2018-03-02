@@ -12,6 +12,7 @@ import networkx as nx
 import ordering
 import matplotlib.pyplot as plt
 import cPickle
+import seaborn
 
 logging.basicConfig(level=logging.DEBUG,
                     format='%(asctime)s %(name)-12s %(levelname)-8s %(message)s',
@@ -434,7 +435,7 @@ class ContactMap:
             # As sequences from the map file may have been excluded above,
             # we use a dict of dicts to represent the potentially sparse sequence map.
             # memory use could be reduced if symmetry was exploited.
-            self.seq_map = sparse.lil_matrix((self.total_seq, self.total_seq))
+            self.seq_map = sparse.lil_matrix((self.total_seq, self.total_seq), dtype=np.int32)
 
             # initialise the order
             self.order = SeqOrder(self.seq_info)
@@ -464,38 +465,46 @@ class ContactMap:
         """
         return self.raw_map.toarray()
 
-    def symm_map(self):
+    def _reorder_seq(self, _map):
         """
-        :return: Return a dense symmetric map
+        Reorder a simple sequence map using the supplied map
+        :param _map: the map to reorder
+        :return: ordered map
         """
-        m = self.to_dense()
-        m += np.tril(m.T, k=-1)
-        return m
+        assert sparse.isspmatrix(_map), 'reordering expects a sparse matrix type'
+        _order = self.order.order[:, 0]
+        n = _map.shape[0]
+        p = sparse.lil_matrix((n, n))
+        for i in xrange(len(_order)):
+            p[i, _order[i]] = 1.
+        p = p.tocsr()
+        return p.dot(_map.tocsr()).dot(p.T)
 
-    def simple_map(self, norm=False, permute=False):
+    def _norm_seq(self):
         """
-        Create a simple per-sequence map, optionally normalise, make symmetric and permute with
-        the current ordering. Implicitly converted to symmetric
+        Normalise a simple sequence map in place by the geometric mean of interacting contig pairs lengths.
+        :param _map: the map to normalise
+        """
+        _len = self.order.lengths
+        _map = self.seq_map.astype(np.float)
+        for i, ri in enumerate(_map.rows):
+            _map.data[i] /= np.fromiter(((1e-6 * _len[i] * _len[j])**0.5 for j in ri), dtype=np.float)
+        return _map
+
+    def get_seq_map(self, norm=False, permute=False):
+        """
+        Return the simple per-sequence map, optionally normalised and permuted.
         :param norm: normalise intensities wrt to lengths
-        :param permute: rather than input order, permute to the current order.
-        :return: dense numpy matrix
+        :param permute: permute to the current order.
+        :return: sparse matrix
         """
-        m = self.seq_map.toarray()
-
-        # make symmetric
-        m += np.tril(m.T, k=-1)
-
         if norm:
-            # apply a length based normalisation
-            w = (1e-6 * self.order.lengths * self.order.lengths[:, np.newaxis])**0.5
-            m /= w
+            m = self._norm_seq()
+        else:
+            m = self.seq_map.copy()
 
         if permute:
-            p = np.zeros_like(m)
-            o = self.order.order[:, 0]
-            for i in xrange(len(o)):
-                p[i, o[i]] = 1.
-            m = np.dot(np.dot(p, m), p.T)
+            m = self._reorder_seq(m)
 
         return m
 
@@ -519,6 +528,10 @@ class ContactMap:
             _min_sep = self.min_sep
             _mapq = self.min_mapq
             _idx = self.order.refid_to_index
+
+            _grouping_map = self.grouping.map
+            _seq_map = self.seq_map
+            _raw_map = self.raw_map
 
             counts = OrderedDict({
                 'accepted': 0,
@@ -579,16 +592,20 @@ class ContactMap:
                     r1pos, r2pos = r2pos, r1pos
 
                 # sequence-to-sequence map
-                self.seq_map[ix1, ix2] += 1
+                _seq_map[ix1, ix2] += 1
 
-                b1 = find_nearest_jit(self.grouping.map[ix1], r1pos)
-                b2 = find_nearest_jit(self.grouping.map[ix2], r2pos)
+                b1 = find_nearest_jit(_grouping_map[ix1], r1pos)
+                b2 = find_nearest_jit(_grouping_map[ix2], r2pos)
 
                 # maintain half-matrix
                 if b1 > b2:
                     b1, b2 = b2, b1
 
-                self.raw_map[b1, b2] += 1
+                _raw_map[b1, b2] += 1
+
+        # default to always making matrices symmetric
+        ContactMap._symm_map(_raw_map)
+        ContactMap._symm_map(_seq_map)
 
         logger.info('Pair accounting: {}'.format(counts))
         logger.info('Total raw map weight {}'.format(self.map_weight()))
@@ -602,81 +619,189 @@ class ContactMap:
         with open(fname, 'rb') as in_h:
             return cPickle.load(in_h)
 
-    def plot(self, fname, with_indexes=False, simple=False):
+    @staticmethod
+    def _symm_map(_map):
+        """
+        In place conversion of a half-diagonal representation to fully symmetric.
+        Handles both sparse and numpy matrices, assuming the sparse subtype
+        supports assignment. It is assumed to be upper half diagonal.
+        :param _map:
+        """
+        if sparse.isspmatrix(_map):
+            _map += sparse.tril(_map.T, k=-1)
+        else:
+            _map += np.tril(_map, k=-1)
+
+    def plot(self, fname=None, simple=False, norm=False, permute=False, pattern_only=False, with_names=False,
+             dpi=180, width=25, height=22, zero_diag=False, alpha=0.01, robust=False):
+        """
+        Plot the contact map. This can either be as a sparse pattern (requiring much less memory but without visual
+        cues about intensity), simple sequence or full binned map and normalized or permuted.
+        :param fname: output file name
+        :param simple: if true, sequence only map plotted
+        :param norm: normalize intensities by geometric mean of lengths
+        :param permute: reorder map to current order
+        :param pattern_only: plot only a sparse pattern (much lower memory requirements)
+        :param with_names: add sequence  names to axes. For large maps, this will be hard to read
+        :param dpi: adjust DPI of output
+        :param width: plot width in inches
+        :param height: plot height in inches
+        :param zero_diag: set bright self-interactions to zero
+        :param alpha: log intensities are log (x + alpha)
+        :param robust: use seaborn robust dynamic range feature
+        """
+
+        fig, ax = plt.subplots(1, 1)
+        fig.set_figwidth(width)
+        fig.set_figheight(height)
 
         if simple:
-            m = self.simple_map()
+            m = self.get_seq_map(norm=norm, permute=permute)
         else:
-            m = self.get_ordered_map()
-            m = m.astype(np.float)
+            m = self.get_raw_map(norm=norm, permute=permute)
 
-        m += 0.01
-        fig = plt.figure()
-        fig.set_size_inches(8, 8)
-        ax = plt.Axes(fig, [0., 0., 1., 1.])
-        # if with_indexes:
-        #
-        #     _bins = self.grouping.bins[self.order.order[:, 0]]
-        #     ax.set_xticks(_bins.cumsum()-0.5)
-        #     ax.set_yticks(_bins.cumsum()-0.5)
-        #     _lab = [self.seq_info[i]['name'] for i in self.order.order[:, 0]]
-        #     ax.set_yticklabels(_lab)
-        #     ax.set_xticklabels(_lab, rotation=45, horizontalalignment='right')
-        #     ax.grid(color='black', linestyle='-', linewidth=1)
-        fig.add_axes(ax)
-        ax.imshow(np.log(m), interpolation='none')
-        plt.savefig(fname, dpi=180)
+        if pattern_only:
+            if zero_diag:
+                m.setdiag(0)
+            ax.spy(m.tocsr(), markersize=5 if simple else 1)
 
-    def _determine_block_shifts(self):
+        else:
+            # seaborn heatmaps take a little extra work
+
+            _lab = [self.seq_info[i]['name'] for i in self.order.order[:, 0]]
+
+            m = m.toarray()
+            if zero_diag:
+                np.fill_diagonal(m, 0)
+            m = np.log(m + alpha)
+
+            if with_names:
+                seaborn.heatmap(m, robust=robust, square=True, xticklabels=_lab, yticklabels=_lab,
+                                linewidths=0, ax=ax, cbar=False)
+            else:
+                seaborn.heatmap(m, robust=robust, square=True, xticklabels=False, yticklabels=False,
+                                linewidths=0, ax=ax, cbar=False)
+
+        if with_names:
+            if simple:
+                ax.set_xticks(xrange(1, self.total_seq+1))
+                ax.set_yticks(xrange(1, self.total_seq+1))
+            else:
+                _cbins = np.cumsum(self.grouping.bins[self.order.order[:, 0]])
+                ax.set_xticks(_cbins - 0.5)
+                ax.set_yticks(_cbins - 0.5)
+
+                ax.grid(color='grey', linestyle='-.', linewidth=1)
+
+        if fname:
+            plt.savefig(fname, dpi=dpi)
+
+    def _norm_raw(self):
         """
-        For the present ordering, calculate the block (whole-group) shifts necessary
-        to permute the contact matrix to match the order.
-        :return: list of tuples (start, stop, shift)
+        Normalise a raw map in place by the geometric mean of interacting contig pairs lengths.
+        :param _map: map to normalise
+        :return:
+        """
+        _map = self.raw_map.astype(np.float64)
+        _len = self.order.lengths
+        _cbins = np.cumsum(self.grouping.bins)
+        for row_i, col_dat in enumerate(_map.rows):
+            i = np.searchsorted(_cbins, row_i, side='right')
+            wi = np.fromiter(((1e-6 * _len[i] * _len[j])**0.5
+                              for j in np.searchsorted(_cbins, col_dat, side='right')), dtype=np.float)
+            _map.data[row_i] /= wi
+        return _map
+
+    def _reorder_raw(self, _map):
+        """
+        Reorder the raw map using current order.
+        :return: sparse permutation matrix (lil)
         """
         _order = self.order.order[:, 0]
         _bins = self.grouping.bins
+        n = _map.shape[0]
+
+        # create a permutation matrix
+        p = sparse.lil_matrix((n, n))
         _shuf_bins = _bins[_order]
+        for i, oi in enumerate(_order):
+            j_off = _bins[:oi].sum()
+            i_off = _shuf_bins[:i].sum()
+            for k in xrange(_bins[oi]):
+                p[i_off+k, j_off+k] = 1
 
-        shifts = []
-        # iterate through current order, determine necessary block shifts
-        curr_bin = 0
-        for shuff_i, org_i in enumerate(_order):
-            intervening_bins = _bins[:org_i]
-            shft = -(curr_bin - np.sum(intervening_bins))
-            shifts.append((curr_bin, curr_bin + _bins[org_i], shft))
-            curr_bin += _shuf_bins[shuff_i]
-        return shifts
+        # permute the raw_map
+        p = p.tocsr()
+        return p.dot(_map.tocsr()).dot(p.T)
 
-    def _make_permutation_matrix(self):
+    def get_raw_map(self, norm=False, permute=False):
         """
-        Create the permutation matrix required to reorder the contact matrix to
-        match the present ordering.
-        :return: permutation matrix
+        Return the binned map, optionally normalised and permuted.
+        :param norm: normalise intensities wrt to lengths
+        :param permute: permute to the current order.
+        :return: sparse matrix
         """
-        # as a permutation matrix, the identity matrix causes no change
-        perm_mat = np.identity(self.grouping.total_bins)
-        block_shifts = self._determine_block_shifts()
-        for si in block_shifts:
-            if si[2] == 0:
-                # ignore blocks which are zero shift.
-                # as we started with identity, these are
-                # already defined.
-                continue
-            # roll along columns, those rows matching each block with
-            # a shift.
-            pi = np.roll(perm_mat, si[2], 1)[si[0]:si[1], :]
-            # put the result back into P, overwriting previous identity diagonal
-            perm_mat[si[0]:si[1], :] = pi
-        return perm_mat
+        if norm:
+            m = self._norm_raw()
+        else:
+            m = self.raw_map.copy()
 
-    def get_ordered_map(self):
-        """
-        Reorder the contact matrix to reflect the present order.
-        :return: reordered contact matrix
-        """
-        m = self.symm_map()
-        p = self._make_permutation_matrix()
-        return np.dot(np.dot(p, m), p.T)
+        if permute:
+            m = self._reorder_raw(m)
+
+        return m
+
+
+    # def _determine_block_shifts(self):
+    #     """
+    #     For the present ordering, calculate the block (whole-group) shifts necessary
+    #     to permute the contact matrix to match the order.
+    #     :return: list of tuples (start, stop, shift)
+    #     """
+    #     _order = self.order.order[:, 0]
+    #     _bins = self.grouping.bins
+    #     _shuf_bins = _bins[_order]
+    #
+    #     shifts = []
+    #     # iterate through current order, determine necessary block shifts
+    #     curr_bin = 0
+    #     for shuff_i, org_i in enumerate(_order):
+    #         intervening_bins = _bins[:org_i]
+    #         shft = -(curr_bin - np.sum(intervening_bins))
+    #         shifts.append((curr_bin, curr_bin + _bins[org_i], shft))
+    #         curr_bin += _shuf_bins[shuff_i]
+    #     return shifts
+    #
+    # def _make_permutation_matrix_old(self):
+    #     """
+    #     Create the permutation matrix required to reorder the contact matrix to
+    #     match the present ordering.
+    #     :return: permutation matrix
+    #     """
+    #     # as a permutation matrix, the identity matrix causes no change
+    #     perm_mat = np.identity(self.grouping.total_bins)
+    #     block_shifts = self._determine_block_shifts()
+    #     for si in block_shifts:
+    #         if si[2] == 0:
+    #             # ignore blocks which are zero shift.
+    #             # as we started with identity, these are
+    #             # already defined.
+    #             continue
+    #         # roll along columns, those rows matching each block with
+    #         # a shift.
+    #         pi = np.roll(perm_mat, si[2], 1)[si[0]:si[1], :]
+    #         # put the result back into P, overwriting previous identity diagonal
+    #         perm_mat[si[0]:si[1], :] = pi
+    #     return perm_mat
+
+    # def get_ordered_map(self):
+    #     """
+    #     Reorder the contact matrix to reflect the present order.
+    #     :return: reordered contact matrix
+    #     """
+    #     m = self.symm_map()
+    #     p = self._make_permutation_matrix()
+    #     return p.dot(m).dot(p.T) #np.dot(np.dot(p, m), p.T)
 
     def create_contig_graph(self, norm=True, scale=False, extern_ids=False):
         """
@@ -790,36 +915,36 @@ if __name__ == '__main__':
         logger.info('Saving contact map instance...')
         cm.save(out_name(args.outbase, 'cm.p'))
 
-    logger.info('Saving raw contact map...')
-    mapio.write_map(cm.to_dense(), out_name(args.outbase, 'raw'), args.format)
-
-    logger.info('Plotting sequence image...')
-    cm.plot(out_name(args.outbase, 'simple.png'), simple=True)
-
-    logger.info('Plotting starting binned image...')
-    cm.plot(out_name(args.outbase, 'start.png'))
-
-    logL = calc_likelihood(cm.order.order, cm)
-    logger.info('Initial logL {}'.format(logL[0]))
-
-    logger.info('Beginning HC ordering...')
-    hc_o = ordering.hc_order(cm.create_contig_graph())
-    cm.order.set_only_order(hc_o)
-    logger.info('HC logL {}'.format(calc_likelihood(cm.order.order, cm)[0]))
-    logger.info('Permuting map...')
-    m = cm.get_ordered_map()
-    logger.info('Plotting HC image...')
-    cm.plot(out_name(args.outbase, 'hc.png'))
-
-    logger.info('Beginning adhoc ordering...')
-    ah_o = ordering.adhoc_order(cm.create_contig_graph(scale=True))
-    cm.order.set_only_order(ah_o)
-    logL = calc_likelihood(cm.order.order, cm)
-    logger.info('Adhoc logL {}'.format(logL[0]))
-    logger.info('Permuting map...')
-    m = cm.get_ordered_map()
-    logger.info('Plotting adhoc image...')
-    cm.plot(out_name(args.outbase, 'adhoc.png'))
+    # logger.info('Saving raw contact map...')
+    # mapio.write_map(cm.to_dense(), out_name(args.outbase, 'raw'), args.format)
+    #
+    # logger.info('Plotting sequence image...')
+    # cm.plot(out_name(args.outbase, 'simple.png'), simple=True)
+    #
+    # logger.info('Plotting starting binned image...')
+    # cm.plot(out_name(args.outbase, 'start.png'))
+    #
+    # logL = calc_likelihood(cm.order.order, cm)
+    # logger.info('Initial logL {}'.format(logL[0]))
+    #
+    # logger.info('Beginning HC ordering...')
+    # hc_o = ordering.hc_order(cm.create_contig_graph())
+    # cm.order.set_only_order(hc_o)
+    # logger.info('HC logL {}'.format(calc_likelihood(cm.order.order, cm)[0]))
+    # logger.info('Permuting map...')
+    # m = cm.get_ordered_map()
+    # logger.info('Plotting HC image...')
+    # cm.plot(out_name(args.outbase, 'hc.png'))
+    #
+    # logger.info('Beginning adhoc ordering...')
+    # ah_o = ordering.adhoc_order(cm.create_contig_graph(scale=True))
+    # cm.order.set_only_order(ah_o)
+    # logL = calc_likelihood(cm.order.order, cm)
+    # logger.info('Adhoc logL {}'.format(logL[0]))
+    # logger.info('Permuting map...')
+    # m = cm.get_ordered_map()
+    # logger.info('Plotting adhoc image...')
+    # cm.plot(out_name(args.outbase, 'adhoc.png'))
 
     logger.info('Beginning LHK ordering...')
     lkh_o = ordering.lkh_order(cm.simple_map(norm=True), args.outbase, precision=10)
