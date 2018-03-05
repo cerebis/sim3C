@@ -358,7 +358,8 @@ def find_nearest_jit(group_sites, x):
 
 class ContactMap:
 
-    def __init__(self, bam_file, seq_file, bin_size, min_sep, min_mapq, min_len=0, random_seed=None, strong=None):
+    def __init__(self, bam_file, seq_file, bin_size, min_sep, min_mapq, min_len=0, random_seed=None, strong=None,
+                 tip_size=None):
 
         self.strong = strong
         self.bin_size = bin_size
@@ -372,6 +373,7 @@ class ContactMap:
         self.grouping = None
         self.raw_map = None
         self.order = None
+        self.tip_size = tip_size
 
         with pysam.AlignmentFile(bam_file, 'rb') as bam:
 
@@ -480,18 +482,31 @@ class ContactMap:
         p = p.tocsr()
         return p.dot(_map.tocsr()).dot(p.T)
 
-    def _norm_seq(self):
+    def _norm_seq(self, mean_type='geometric'):
         """
         Normalise a simple sequence map in place by the geometric mean of interacting contig pairs lengths.
         :param _map: the map to normalise
+        :param mean_type: choice of mean (harmonic, geometric, arithmetic)
         """
+
+        def g_mean(x, y): return (x*y)**0.5
+
+        def h_mean(x, y): return 2*x*y/(x+y)
+
+        def a_mean(x, y): return 0.5*(x+y)
+
+        if mean_type == 'geometric': _mean_func = g_mean
+        elif mean_type == 'harmonic': _mean_func = h_mean
+        elif mean_type == 'arithmetic': _mean_func = a_mean
+        else: raise RuntimeError('unsupported mean type [{}]'.format(mean_type))
+
         _len = self.order.lengths
         _map = self.seq_map.astype(np.float)
         for i, ri in enumerate(_map.rows):
-            _map.data[i] /= np.fromiter(((1e-6 * _len[i] * _len[j])**0.5 for j in ri), dtype=np.float)
+            _map.data[i] /= np.fromiter((1e-3 * _mean_func(_len[i],  _len[j]) for j in ri), dtype=np.float)
         return _map
 
-    def get_seq_map(self, norm=False, permute=False):
+    def get_seq_map(self, norm=False, permute=False, mean_type='arithmetic'):
         """
         Return the simple per-sequence map, optionally normalised and permuted.
         :param norm: normalise intensities wrt to lengths
@@ -499,7 +514,7 @@ class ContactMap:
         :return: sparse matrix
         """
         if norm:
-            m = self._norm_seq()
+            m = self._norm_seq(mean_type=mean_type)
         else:
             m = self.seq_map.copy()
 
@@ -520,21 +535,45 @@ class ContactMap:
         # set-up match call
         _matcher = _strong_match if self.strong else _simple_match
 
+        def _on_tip_basic(r1, r2):
+            """
+            Test if a read has landed within the "tip" region of a reference sequence. Neith the read nor
+            its mates orientation is considered.
+            :param r1: read1 to check
+            :param r2: read2 to check
+            :return: true if within defined tip region.
+            """
+            is_r1 = r1.pos < _tip_size or _len[r1.reference_id] - r1.pos - r1.alen < _tip_size
+            is_r2 = r2.pos < _tip_size or _len[r2.reference_id] - r2.pos - r2.alen < _tip_size
+            return is_r1 and is_r2
+
+        def _always_true(r1, r2):
+            return True
+
+        _on_tip = _always_true if self.tip_size is None else _on_tip_basic
+
         # initialise a map matrix for fine-binning and seq-binning
         self.raw_map = self._init_map()
 
         with tqdm.tqdm(total=self.total_reads) as pbar:
 
+            # locals for read filtering
             _min_sep = self.min_sep
             _mapq = self.min_mapq
             _idx = self.order.refid_to_index
 
+            # locals for tip checking
+            _len = bam.lengths
+            _tip_size = self.tip_size
+
+            # locals for binning
             _grouping_map = self.grouping.map
             _seq_map = self.seq_map
             _raw_map = self.raw_map
 
             counts = OrderedDict({
                 'accepted': 0,
+                'not_tip': 0,
                 'too_close': 0,
                 'ref_excluded': 0,
                 'skipped': 0,
@@ -578,8 +617,6 @@ class ContactMap:
                         counts['too_close'] += 1
                         continue
 
-                counts['accepted'] += 1
-
                 r1pos = r1.pos if not r1.is_reverse else r1.pos + r1.alen
                 r2pos = r2.pos if not r2.is_reverse else r2.pos + r2.alen
 
@@ -591,9 +628,6 @@ class ContactMap:
                     ix1, ix2 = ix2, ix1
                     r1pos, r2pos = r2pos, r1pos
 
-                # sequence-to-sequence map
-                _seq_map[ix1, ix2] += 1
-
                 b1 = find_nearest_jit(_grouping_map[ix1], r1pos)
                 b2 = find_nearest_jit(_grouping_map[ix2], r2pos)
 
@@ -601,7 +635,19 @@ class ContactMap:
                 if b1 > b2:
                     b1, b2 = b2, b1
 
+                # tally all mapped reads for binned map, not just those considered in tips
                 _raw_map[b1, b2] += 1
+
+                # for seq-map, we may reject reads outside of a defined tip region
+                if not _on_tip(r1, r2):
+                    counts['not_tip'] += 1
+                    continue
+
+                counts['accepted'] += 1
+
+                # sequence-to-sequence map
+                _seq_map[ix1, ix2] += 1
+
 
         # default to always making matrices symmetric
         ContactMap._symm_map(_raw_map)
@@ -751,58 +797,6 @@ class ContactMap:
 
         return m
 
-
-    # def _determine_block_shifts(self):
-    #     """
-    #     For the present ordering, calculate the block (whole-group) shifts necessary
-    #     to permute the contact matrix to match the order.
-    #     :return: list of tuples (start, stop, shift)
-    #     """
-    #     _order = self.order.order[:, 0]
-    #     _bins = self.grouping.bins
-    #     _shuf_bins = _bins[_order]
-    #
-    #     shifts = []
-    #     # iterate through current order, determine necessary block shifts
-    #     curr_bin = 0
-    #     for shuff_i, org_i in enumerate(_order):
-    #         intervening_bins = _bins[:org_i]
-    #         shft = -(curr_bin - np.sum(intervening_bins))
-    #         shifts.append((curr_bin, curr_bin + _bins[org_i], shft))
-    #         curr_bin += _shuf_bins[shuff_i]
-    #     return shifts
-    #
-    # def _make_permutation_matrix_old(self):
-    #     """
-    #     Create the permutation matrix required to reorder the contact matrix to
-    #     match the present ordering.
-    #     :return: permutation matrix
-    #     """
-    #     # as a permutation matrix, the identity matrix causes no change
-    #     perm_mat = np.identity(self.grouping.total_bins)
-    #     block_shifts = self._determine_block_shifts()
-    #     for si in block_shifts:
-    #         if si[2] == 0:
-    #             # ignore blocks which are zero shift.
-    #             # as we started with identity, these are
-    #             # already defined.
-    #             continue
-    #         # roll along columns, those rows matching each block with
-    #         # a shift.
-    #         pi = np.roll(perm_mat, si[2], 1)[si[0]:si[1], :]
-    #         # put the result back into P, overwriting previous identity diagonal
-    #         perm_mat[si[0]:si[1], :] = pi
-    #     return perm_mat
-
-    # def get_ordered_map(self):
-    #     """
-    #     Reorder the contact matrix to reflect the present order.
-    #     :return: reordered contact matrix
-    #     """
-    #     m = self.symm_map()
-    #     p = self._make_permutation_matrix()
-    #     return p.dot(m).dot(p.T) #np.dot(np.dot(p, m), p.T)
-
     def create_contig_graph(self, norm=True, scale=False, extern_ids=False):
         """
         Create a graph where contigs are nodes and edges linking
@@ -882,6 +876,8 @@ if __name__ == '__main__':
     parser.add_argument('-v', '--verbose', default=False, action='store_true', help='Verbose output')
     parser.add_argument('-f', '--format', choices=['csv', 'h5'], default='csv',
                         help='Input contact map format')
+    parser.add_argument('--tip-size', type=int, default=None,
+                        help='Accept only pairs which map within reference tips (size in bp).')
     parser.add_argument('--strong', type=int, default=None,
                         help='Using strong matching constraint (minimum matches in alignments).')
     parser.add_argument('--bin-size', type=int, required=True, help='Size of bins in bp')
@@ -905,7 +901,8 @@ if __name__ == '__main__':
                         args.min_sep,
                         args.min_mapq,
                         min_len=args.min_reflen,
-                        strong=args.strong)
+                        strong=args.strong,
+                        tip_size=args.tip_size)
 
         if cm.is_empty():
             import sys
@@ -947,11 +944,10 @@ if __name__ == '__main__':
     # cm.plot(out_name(args.outbase, 'adhoc.png'))
 
     logger.info('Beginning LHK ordering...')
-    lkh_o = ordering.lkh_order(cm.simple_map(norm=True), args.outbase, precision=10)
+    lkh_o = ordering.lkh_order(cm.get_seq_map(norm=True), args.outbase, precision=1, runs=100)
     cm.order.set_only_order(lkh_o)
     logL = calc_likelihood(cm.order.order, cm)
     logger.info('LKH logL {}'.format(logL[0]))
-    logger.info('Permuting map...')
-    m = cm.get_ordered_map()
     logger.info('Plotting LKH image...')
-    cm.plot(out_name(args.outbase, 'lkh.png'))
+    cm.plot(out_name(args.outbase, 'full_lkh.png'), permute=True, norm=True, with_names=False)
+    cm.plot(out_name(args.outbase, 'seq_lkh.png'), simple=True, permute=True, norm=True, with_names=False)
