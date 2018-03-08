@@ -112,8 +112,12 @@ def calc_likelihood(an_order, cm):
         c_ik = centers[i]
         c_jl = centers[j]
 
+        # orientation of sequences
+        s_i = an_order[i, 1]
+        s_j = an_order[j, 1]
+
         # all separations between bins, including the potential intervening distance L
-        d_ij = L + 0.5*(li + lj) + c_jl - c_ik.T
+        d_ij = L + 0.5*(li + lj) + s_i * c_jl - s_j * c_ik.T
 
         # conversion to expected counts
         q_ij = total_obs * piecewise_3c(d_ij)
@@ -229,9 +233,12 @@ class ExtentGrouping:
 
 class SeqOrder:
 
+    FORWARD = 1
+    REVERSE = -1
+
     def __init__(self, seq_info):
         """
-        Initial order is determined by the order of supplied sequence information dictionary. Sequenes
+        Initial order is determined by the order of supplied sequence information dictionary. Sequences
         are given new surrogate ids of consecutive integers. Member functions expect surrogate ids
         not original names.
 
@@ -240,20 +247,32 @@ class SeqOrder:
         self.index_to_refid = [si['refid'] for si in seq_info]
         self.refid_to_index = {si['refid']: n for n, si in enumerate(seq_info)}
         self.lengths = np.array([si['length'] for si in seq_info])
-        _ord = np.arange(len(seq_info))
-        _ori = np.zeros(len(seq_info), dtype=np.int)
-        self.order = np.vstack((_ord, _ori)).T
+        self.order = SeqOrder.make_ord_and_ori(np.arange(len(seq_info)))
+
+    @staticmethod
+    def _initial_orientation(_ord):
+        """
+        Explicit initialisation with orientation as forward for clarity
+        :param _ord: the order used as a guide for orientation array
+        :return: orientation array, initially all forward facing
+        """
+        _ori = np.empty_like(_ord)
+        _ori.fill(SeqOrder.FORWARD)
+        return _ori
 
     @staticmethod
     def make_ord_and_ori(_ord):
         """
-        Create an order/orientation matrix from a simple order list. Here, it is assumed that
-        all objects are in their initial orientation.
+        Create an order/orientation matrix from a simple order list. Orientation is
+        relative in the initial direction of mapped reference sequences and begin as
+        "forward" i.e. "1".
 
         :param _ord: a list (or other container) of object identifiers.
         :return: an order and orientation matrix.
         """
-        return np.vstack((np.asarray(_ord), np.zeros(len(_ord), dtype=np.int))).T
+        _ord = np.asarray(_ord, dtype=np.int)
+        _ori = SeqOrder._initial_orientation(_ord)
+        return np.vstack((_ord, _ori)).T
 
     def set_only_order(self, _ord):
         """
@@ -261,7 +280,7 @@ class SeqOrder:
         :param _ord: 1d ordering
         """
         assert len(_ord) == len(self.order), 'new order was a different length'
-        self.order[:, 0] = np.asarray(_ord)
+        self.order = SeqOrder.make_ord_and_ori(_ord)
 
     def set_ord_and_ori(self, _ord):
         """
@@ -269,8 +288,25 @@ class SeqOrder:
         :param _ord: 2d ordering and orientation (N x 2)
         """
         assert isinstance(_ord, np.ndarray), 'ord/ori was not a numpy array'
+        assert _ord.shape[1] == 2, 'order and orientation matrix must be (N,2)'
+        assert np.issubdtype(_ord.dtype, np.integer), 'elements are not integers'
         assert _ord.shape == self.order.shape, 'new ord/ori has different dimensions'
         self.order = _ord
+
+    def get(self, ival):
+        ix = self.order[:, 0] == ival
+        assert np.any(ix), 'Specified value [{}] not found in order matrix'.format(ival)
+        return self.order[ix][0]
+
+    def flip(self, ival):
+        """
+        Flip the orientation of the sequence with internal index value "ix".
+        I.e Flip the position where the following is true: order[:, 0] == ix
+        :param ival: the index value (not array position)
+        """
+        ix = self.order[:, 0] == ival
+        assert np.any(ix), 'Specified value [{}] not found in order matrix'.format(ival)
+        self.order[ix, 1] *= -1
 
     def get_length(self, i):
         """
@@ -676,7 +712,7 @@ class ContactMap:
         if sparse.isspmatrix(_map):
             _map += sparse.tril(_map.T, k=-1)
         else:
-            _map += np.tril(_map, k=-1)
+            _map += np.tril(_map.T, k=-1)
 
     def plot(self, fname=None, simple=False, norm=False, permute=False, pattern_only=False, with_names=False,
              dpi=180, width=25, height=22, zero_diag=False, alpha=0.01, robust=False):
