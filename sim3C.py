@@ -83,10 +83,12 @@ def get_enzyme_instance_ipython(enz_name):
     :param enz_name: the case-sensitive name of the enzyme
     :return: RestrictionType the enzyme instance
     """
-    r_type_names = [rt for tid, (rt, rn) in typedict.iteritems() if enz_name in rn][0]
-    r_clz = tuple(getattr(Restriction, rt) for rt in r_type_names)
-    return Restriction.AbstractCut(enz_name, r_clz, rest_dict[enz_name])
-
+    try:
+        r_type_names = [rt for tid, (rt, rn) in typedict.iteritems() if enz_name in rn][0]
+        r_clz = tuple(getattr(Restriction, rt) for rt in r_type_names)
+        return Restriction.AbstractCut(enz_name, r_clz, rest_dict[enz_name])
+    except IndexError:
+        raise Sim3CException('unknown enzyme [{}]'.format(enz_name))
 
 def get_enzyme_instance(enz_name):
     """

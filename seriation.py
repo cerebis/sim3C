@@ -10,7 +10,7 @@ def sk_bistochastic(m, round_to=8, verbose=False, max_iter=1000):
 
     Note: normalisation is done in place.
 
-    This implementation has an awkward means of determinining convergence, where
+    This implementation has an awkward means of determining convergence, where
     each matrix element is rounded to a specified precision and compared to unity.
     That is, at convergence each element should actually be equal to 1.
 
@@ -54,18 +54,21 @@ def kr_bistochastic(m, tol=1e-6, x0=None, delta=0.1, Delta=3, verbose=False, max
     :param verbose: print debug info
     :param max_iter: maximum number of iterations before abandoning.
     """
+
+    assert np.allclose(m, m.T, tol), 'Input matrix must by symmetric for KR normalisation'
+
     n = len(m)
     e = np.ones(n)
 
     if not x0:
-        x0 = e
+        x0 = e.copy()
 
     g = 0.9
     etamax = 0.1
     eta = etamax
     stop_tol = tol * 0.5
 
-    x = x0
+    x = x0.copy()
     rt = tol ** 2
     v = x * np.dot(m, x)
 
@@ -77,11 +80,13 @@ def kr_bistochastic(m, tol=1e-6, x0=None, delta=0.1, Delta=3, verbose=False, max
     n_iter = 0
     i = 0
 
+    y = np.empty_like(e)
     while rout > rt and n_iter < max_iter:
 
         i += 1
         k = 0
-        y = e
+        y[:] = e
+
         inner_tol = np.maximum(rout * eta ** 2, rt)
 
         while rho_km1 > inner_tol:
@@ -122,7 +127,10 @@ def kr_bistochastic(m, tol=1e-6, x0=None, delta=0.1, Delta=3, verbose=False, max
             Z = rk * v
             rho_km1 = np.dot(rk.T, Z)
 
-        x = x * y
+            if np.any(np.isnan(x)):
+                raise RuntimeError('scale vector has developed invalid values (NANs)!')
+
+        x *= y
         v = x * np.dot(m, x)
         rk = 1 - v
         rho_km1 = np.dot(rk.T, rk)
@@ -136,7 +144,7 @@ def kr_bistochastic(m, tol=1e-6, x0=None, delta=0.1, Delta=3, verbose=False, max
         eta = g * rat
 
         if g * eta_o ** 2 > 0.1:
-            eta = np.maximum(eta, g * eta_o ** 2)
+            eta = max(eta, g * eta_o ** 2)
         eta = max(min(eta, etamax), stop_tol / res_norm)
 
     if verbose:
