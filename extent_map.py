@@ -267,8 +267,10 @@ class SeqOrder:
     FORWARD = 1
     REVERSE = -1
 
-    ACCEPTED = 1
-    EXCLUDED = 0
+    ACCEPTED = True
+    EXCLUDED = False
+
+    STRUCT_TYPE = np.dtype([('pos', np.int32), ('ori', np.int8), ('mask', np.bool), ('length', np.int32)])
 
     def __init__(self, seq_info):
         """
@@ -284,147 +286,167 @@ class SeqOrder:
 
         :param seq_info: sequence information dictionary
         """
-        _ord = np.asarray(np.arange(len(seq_info)), dtype=np.int)
-        _ori = np.empty_like(_ord)
-        _ori.fill(SeqOrder.FORWARD)
-        _mask = np.empty_like(_ord)
-        _mask.fill(SeqOrder.ACCEPTED)
-        _lengths = np.array([seq.length for seq in seq_info])
-        self.order = np.vstack((_ord, _ori, _mask, _lengths))
+        _ord = np.arange(len(seq_info), dtype=np.int32)
+        self.order = np.array(
+            [(_ord[i], SeqOrder.FORWARD, SeqOrder.ACCEPTED, seq_info[i].length) for i in xrange(len(_ord))],
+            dtype=SeqOrder.STRUCT_TYPE)
 
-    # @staticmethod
-    # def _make_ord_and_ori(_ord, _mask=None):
-    #     """
-    #     Create an order/orientation matrix from a simple order list. Orientation is
-    #     relative in the initial direction of mapped reference sequences and begin as
-    #     "forward" i.e. "1".
-    #
-    #     :param _ord: a list (or other container) of object identifiers.
-    #     :param _mask: set masking state also, in the same order as _ord
-    #     :return: an order and orientation matrix.
-    #     """
-    #     _ord = np.asarray(_ord, dtype=np.int)
-    #     # initial orientations are all considered forward
-    #     _ori = np.empty_like(_ord)
-    #     _ori.fill(SeqOrder.FORWARD)
-    #     # add the supplied mask or assume all accepted
-    #     if not _mask:
-    #         _mask = np.empty_like(_ord)
-    #         _mask.fill(SeqOrder.ACCEPTED)
-    #     return np.vstack((_ord, _ori, _mask)).T
+        self._update_positions()
+
+    def _update_positions(self):
+        """
+        An optimisation, whenever the positional state changes, this method must be called to
+        maintain the current state in a separate array. This avoids unncessary redetermination of positions
+        when calling .intervening() and .before() methods.
+        """
+        self.positions = np.argsort(self.order['pos'])
+
+    def remap_gapless(self, gapless_indices):
+        """
+        Recover potentially sparse indices from a dense (gapless) index range. This can happen for
+        algorithms which were supplied only filtered data.
+        :param gapless_indices: dense index range, without gaps from masking
+        :return: remappped indices with gaps
+        """
+        return self.positions[gapless_indices]
+
+    def accepted_indices(self):
+        """
+        :return: indices (surrogate ids) of accepted sequences.
+        """
+        return set(np.where(self.order['mask'])[0])
+
+    def excluded_indices(self):
+        """
+        :return: indices (surrogate ids) of excluded sequences.
+        """
+        return set(np.where(~self.order['mask'])[0])
+
+    def set_mask_only(self, _mask):
+        """
+        Set the mask state of all sequences, where indices in the mask map to
+        sequence surrogate ids.
+        :param _mask: mask array or list, boolean or 0/1 valued
+        """
+        _mask = np.asarray(_mask, dtype=np.bool)
+        assert len(_mask) == len(self.order), 'supplied mask must be the same length as existing order'
+        assert np.all((_mask == SeqOrder.ACCEPTED) | (_mask == SeqOrder.EXCLUDED)), \
+            'new mask must be {} or {}'.format(SeqOrder.ACCEPTED, SeqOrder.EXCLUDED)
+
+        # assign mask
+        self.order['mask'] = _mask
+        # reorder, with masked sequences coming last, otherwise by position
+        sorted_indices = np.lexsort([self.order['pos'], ~self.order['mask']])
+        for n, i in enumerate(sorted_indices):
+            self.order[i]['pos'] = n
+
+        self._update_positions()
 
     def set_only_order(self, _ord, implicit_excl=False):
         """
-        Set only the order, while ignoring orientation.
+        Set only the order, while ignoring orientation. An ordering is defined
+        as a 1D vectorize whose values are the positions and whose indices are
+        the sequence surrogate ids. NOTE: This definition can be the opposite of what
+        is returned by some ordering methods, and np.argsort(_v) should inverse
+        the relation.
 
-        If the order includes only active sequences, setting extend=True
-        the method will attempt to append excluded sequences to the end,
-        in ascending surrogate id order. The supplied order must mention
-        only and all accepted sequences in this case.
+        If the order includes only active sequences, setting implicit_excl=True
+        the method will implicitly assume unmentioned ids are those currently
+        masked. An exception is raised if a masked sequence is included in the order.
 
         :param _ord: 1d ordering
         :param implicit_excl: implicitly extend the order to include unmentioned excluded sequences.
         """
+
         if len(_ord) < len(self.order):
             # some sanity checks
             assert implicit_excl, 'Use implicit_excl=True for automatic handling ' \
                                   'of orders only mentioning accepted sequences'
-            assert len(_ord) == len(self.accepted()), 'new order must mention all ' \
-                                                      'currently accepted sequences'
-            assert len(set(_ord) & set(self.excluded())) == 0, 'new order and excluded must not ' \
-                                                               'overlap when using implicit assignment'
-            assert len(set(_ord) ^ set(self.accepted())) == 0, 'incomplete new order supplied, missing accepted ids'
-
-            # prepare excluded in ascending id order
-            _excl = self.order[self.order[:, 2] == SeqOrder.EXCLUDED, :]
-            _excl = _excl[np.argsort(_excl[:, 0])]
-            # append to the supplied order and assign
-            _ord = self._make_ord_and_ori(_ord)
-            self.order = np.vstack((_ord, _excl))
+            assert len(_ord) == self.count_accepted(), 'new order must mention all ' \
+                                                       'currently accepted sequences'
+            assert len(set(_ord) & self.excluded_indices()) == 0, 'new order and excluded must not ' \
+                                                                  'overlap when using implicit assignment'
+            assert len(set(_ord) ^ set(self.accepted_indices())) == 0, 'incomplete new order supplied,' \
+                                                                       'missing accepted ids'
+            # assign the new orders
+            self.order['pos'][_ord] = np.arange(len(_ord), dtype=np.int32)
         else:
             # just a simple complete order update
             assert len(_ord) == len(self.order), 'new order was a different length'
-            self.order = SeqOrder._make_ord_and_ori(_ord)
+            assert len(set(_ord) ^ set(self.accepted_indices())) == 0, 'incomplete new order supplied,' \
+                                                                       'missing accepted ids'
+            self.order['pos'][_ord] = np.arange(len(_ord), dtype=np.int32)
 
-    def set_mask_only(self, _mask):
-        """
-        Set the mask state, where the supplied mask must be Nx2, the first column are the
-        sequence surrogate indexes, the second column the mask state.
-        :param _mask: the Nx2 mask for the current set of sequences
-        """
-        assert _mask.shape[1] == 2 and _mask.shape[0] == self.order.shape[0], 'new mask was a different shape'
-        assert np.all((_mask[:, 1] == SeqOrder.ACCEPTED) | (_mask[:, 1] == SeqOrder.EXCLUDED)), \
-            'new mask must be {} or {}'.format(SeqOrder.ACCEPTED, SeqOrder.EXCLUDED)
-        for mi in _mask:
-            self.order[mi[0], 2] = mi[1]
-
-    def set_ord_and_ori(self, _ord):
-        """
-        Set the complete state _ord is a (N x 3) array of surrogate id, orientation (FORWARD, REVERSE)
-        and mask state (ACCEPTED, EXCLUDED).
-        :param _ord: (N x 3) ordering, orientation and mask state array
-        """
-        assert isinstance(_ord, np.ndarray), 'ord/ori was not a numpy array'
-        assert _ord.shape[1] == 3, 'order and orientation matrix must be (N,3)'
-        assert np.issubdtype(_ord.dtype, np.integer), 'elements are not integers'
-        assert _ord.shape == self.order.shape, 'new order state has different dimensions'
-        self.order = _ord
-
-    def initial_order(self):
-        """
-        :return: the initial order (ascending surrogate id)
-        """
-        _o = self.order.copy()
-        return _o[np.argsort(_o[:, 0]), :]
+        self._update_positions()
 
     def mask_vector(self):
         """
         :return: the current mask vector
         """
-        return self.order[:, 2].astype(np.bool)
-
-    def _find(self, _id):
-        """
-        Find the current array index of the sequence by its surrogate id
-        :param _id: surrogate id of sequence
-        :return: array index within SeqOrder state
-        """
-        ix = np.where(self.order[:, 0] == _id)[0]
-        assert ix.shape[0] == 1, 'Specified id [{}] not found'.format(_id)
-        return ix
+        return self.order['mask']
 
     def mask(self, _id):
         """
-        Mask a sequence by is surrogate id
+        Mask an individual sequence by its surrogate id
         :param _id: the surrogate id of sequence
         """
-        self.order[self._find(_id), 2] = SeqOrder.EXCLUDED
+        # set up a full mask, reflecting the request
+        _mask = np.ones(len(self.order), dtype=np.bool)
+        _mask[_id] = False
+
+        # remask the set
+        self.set_mask_only(_mask)
+
+    def count_accepted(self):
+        """
+        :return: the current number of accepted (unmasked) sequences
+        """
+        return self.order['mask'].sum()
+
+    def count_excluded(self):
+        """
+        :return: the current number of excluded (masked) sequences
+        """
+        return len(self.order) - self.count_accepted()
 
     def accepted(self):
         """
         :return: the list surrogate ids for currently accepted sequences
         """
-        return self.order[self.order[:, 2] == SeqOrder.ACCEPTED, 0]
+        return np.where(self.order['mask'])[0]
 
     def excluded(self):
         """
         :return: the list surrogate ids for currently excluded sequences
         """
-        return self.order[self.order[:, 2] == SeqOrder.EXCLUDED, 0]
+        return np.where(~self.order['mask'])[0]
 
     def flip(self, _id):
         """
         Flip the orientation of the sequence
         :param _id: the surrogate id of sequence
         """
-        self.order[self._find(_id), 1] *= -1
+        self.order[_id]['ori'] *= -1
+
+    def lengths(self, masked_only=False):
+        if masked_only:
+            return self.order['length'][self.order['mask']]
+        else:
+            return self.order['length']
 
     def get_length(self, _id):
         """
         :param _id: the surrogate id of sequence
         :return: sequence length
         """
-        return self.lengths[_id]
+        return self.order[_id]['length']
+
+    def shuffle(self):
+        """
+        Randomize order
+        """
+        np.random.shuffle(self.order['pos'])
+        self._update_positions()
 
     def before(self, a, b):
         """
@@ -434,11 +456,7 @@ class SeqOrder:
         :return: True if a comes before b
         """
         assert a != b, 'Surrogate ids must be different'
-
-        _o = self.order[:, 0]
-        ia = np.argwhere(_o == a)
-        ib = np.argwhere(_o == b)
-        return ia < ib
+        return self.order['pos'][a] < self.order['pos'][b]
 
     def intervening(self, a, b):
         """
@@ -451,17 +469,12 @@ class SeqOrder:
         """
         assert a != b, 'Surrogate ids must be different'
 
-        _o = self.order[:, 0]
-        ix1, ix2 = np.where((_o == a) | (_o == b))[0]
-        if ix1 > ix2:
-            ix1, ix2 = ix2, ix1
-        return np.sum(self.lengths[_o[ix1 + 1:ix2]])
-
-    def shuffle(self):
-        """
-        Randomize order
-        """
-        np.random.shuffle(self.order)
+        pa = self.order['pos'][a]
+        pb = self.order['pos'][b]
+        if pa > pb:
+            pa, pb = pb, pa
+        inter_ix = self.positions[pa+1:pb]
+        return np.sum(self.order['length'][inter_ix])
 
 
 @jit(int64(int64[:, :], int64[:], int64, int64), nopython=True)
@@ -731,12 +744,11 @@ class ContactMap:
         lkh_o = ordering.lkh_order(self.get_processed_map(), 'lkh_run', lkh_exe='../lkh/LKH-3.0/LKH', precision=1,
                                    seed=12345, runs=2, pop_size=50, dist_func=dist_func, special=False, verbose=True)
 
-        # lkh does not preserve the surrogate, but returns consecutive array indices
-        # therefore we restore the ids now before returning
-        lkh_o = self.order.accepted()[lkh_o]
+        # lkh ordering references the supplied matrix indices, not the surrogate ids.
+        # we must map this consecutive set to the contact map indices.
+        lkh_o = self.order.remap_gapless(lkh_o)
         if verbose:
             print lkh_o
-
         return lkh_o
 
     def _reorder_seq(self, _map):
@@ -757,15 +769,15 @@ class ContactMap:
     def _norm_seq(self, _map, mean_type='geometric'):
         """
         Normalise a simple sequence map in place by the geometric mean of interacting contig pairs lengths.
+        The map is assumed to be in starting order.
+
         :param _map: the target map to apply normalisation
         :param mean_type: choice of mean (harmonic, geometric, arithmetic)
         :return: normalized map
         """
 
         _mean_func = mean_selector(mean_type)
-
-        _len = self.order.lengths[self.order.mask_vector()]
-
+        _len = self.order.lengths(masked_only=True).astype(np.float)
         _map = _map.tolil().astype(np.float)
         for i in xrange(_map.shape[0]):
             _map[i, :] /= np.fromiter((1e-3 * _mean_func(_len[i],  _len[j])
@@ -781,7 +793,7 @@ class ContactMap:
         """
 
         # boolean array masking sequences shorter than limit
-        ix1 = self.order.lengths >= min_len
+        ix1 = self.order.lengths() >= min_len
         if verbose:
             print '\tmin_len removed', self.total_seq - ix1.sum()
 
@@ -797,8 +809,7 @@ class ContactMap:
         #print ' degens', ix1.sum()
 
         # combine the masks and pass to instance of SeqOrder
-        indexed_mask = np.vstack((np.arange(self.total_seq, dtype=np.int), ix1 & ix2)).T
-        self.order.set_mask_only(indexed_mask)
+        self.order.set_mask_only(ix1 & ix2)
         if verbose:
             print '\tAcceptance union', len(self.order.accepted())
 
@@ -822,7 +833,7 @@ class ContactMap:
         self.set_filter_mask(min_len, min_sig, verbose)
 
         # if there are sequences to mask, remove them from the map
-        if len(self.order.accepted()) < self.total_seq:
+        if self.order.count_accepted() < self.total_seq:
             m = simple_sparse.compress(m.tocoo(), self.order.mask_vector())
             if verbose:
                 print '\tfilter reduced', m.shape
