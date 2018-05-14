@@ -100,7 +100,7 @@ def calc_likelihood(an_order, cm):
     borders = cm.grouping.borders
     centers = cm.grouping.centers
     lengths = cm.order.lengths
-    raw_map = cm.raw_map
+    extent_map = cm.extent_map
 
     total_obs = cm.map_weight()
 
@@ -135,7 +135,7 @@ def calc_likelihood(an_order, cm):
 
         # observed counts
         # for now this is converted to dense array as we need zeros
-        n_ij = raw_map[i1:i2, j1:j2].toarray()
+        n_ij = extent_map[i1:i2, j1:j2].toarray()
 
         # log likelihood
         log_l += poisson_lpmf3(n_ij, q_ij)
@@ -271,6 +271,7 @@ class SeqOrder:
     EXCLUDED = False
 
     STRUCT_TYPE = np.dtype([('pos', np.int32), ('ori', np.int8), ('mask', np.bool), ('length', np.int32)])
+    INDEX_TYPE = np.dtype([('index', np.int16), ('ori', np.int8)])
 
     def __init__(self, seq_info):
         """
@@ -304,21 +305,23 @@ class SeqOrder:
 
     def remap_gapless(self, gapless_indices):
         """
-        Recover potentially sparse indices from a dense (gapless) index range. This can happen for
+        Recover potentially sparse indices from a dense (gapless) index table. This can happen for
         algorithms which were supplied only filtered data.
-        :param gapless_indices: dense index range, without gaps from masking
+        :param gapless_indices: dense index table (index, ori), without gaps from masking
         :return: remappped indices with gaps
         """
         shift = []
         n = 0
-        for oi in np.sort(gapless_indices):
+        for oi in np.sort(gapless_indices['index']):
             while not self.order[oi + n]['mask']:
                 n += 1
             shift.append(n)
+
         remapped = []
-        for n, oi in enumerate(gapless_indices):
-            remapped.append(oi + shift[oi])
-        return np.array(remapped)
+        for oi in gapless_indices:
+            remapped.append((oi['index'] + shift[oi['index']], oi['ori']))
+
+        return np.array(remapped, dtype=SeqOrder.INDEX_TYPE)
 
     def all_positions(self, copy=True):
         """
@@ -332,6 +335,15 @@ class SeqOrder:
         else:
             _p = self._positions
         return _p
+
+    @staticmethod
+    def double_order(_ord):
+        """
+        For doublet maps, the stored order must be re-expanded to reference the larger (2x) map.
+        :param _ord:
+        :return: expanded order
+        """
+        return np.array([[2*oi, 2*oi+1] for oi in _ord]).ravel()
 
     def gapless_positions(self):
         """
@@ -390,12 +402,13 @@ class SeqOrder:
                                   'of orders only mentioning accepted sequences'
             assert len(_ord) == self.count_accepted(), 'new order must mention all ' \
                                                        'currently accepted sequences'
-            assert len(set(_ord) & set(self.excluded())) == 0, 'new order and excluded must not ' \
+            assert len(set(_ord['index']) & set(self.excluded())) == 0, 'new order and excluded must not ' \
                                                                   'overlap when using implicit assignment'
-            assert len(set(_ord) ^ set(self.accepted())) == 0, 'incomplete new order supplied,' \
+            assert len(set(_ord['index']) ^ set(self.accepted())) == 0, 'incomplete new order supplied,' \
                                                                        'missing accepted ids'
             # assign the new orders
-            self.order['pos'][_ord] = np.arange(len(_ord), dtype=np.int32)
+            self.order['pos'][_ord['index']] = np.arange(len(_ord), dtype=np.int32)
+            self.order['ori'][_ord['index']] = _ord['ori']
         else:
             # just a simple complete order update
             assert len(_ord) == len(self.order), 'new order was a different length'
@@ -454,8 +467,8 @@ class SeqOrder:
         """
         self.order[_id]['ori'] *= -1
 
-    def lengths(self, masked_only=False):
-        if masked_only:
+    def lengths(self, exclude_masked=False):
+        if exclude_masked:
             return self.order['length'][self.order['mask']]
         else:
             return self.order['length']
@@ -622,7 +635,7 @@ class ContactMap:
         self.seq_info = []
         self.seq_map = None
         self.grouping = None
-        self.raw_map = None
+        self.extent_map = None
         self.order = None
         self.tip_size = tip_size
         self.precount = precount
@@ -716,189 +729,13 @@ class ContactMap:
             # accumulate
             self._bin_map(bam)
 
-    @staticmethod
-    def get_fields():
-        """
-        :return: the list of fields used in seq_info dict.
-        """
-        return SeqInfo._fields
-
-    def make_reverse_index(self, field_name):
-        """
-        Make a reverse look-up (dict) from the chosen field in seq_info to the internal index value
-        of the given sequence. Non-unique fields will raise an exception.
-        :param field_name: the seq_info field to use as the reverse.
-        :return: internal array index of the sequence
-        """
-        rev_idx = {}
-        for n, seq in enumerate(self.seq_info):
-            fv = getattr(seq, field_name)
-            if fv in rev_idx:
-                raise RuntimeError('field contains non-unique entries, a 1-1 mapping cannot be made')
-            rev_idx[fv] = n
-        return rev_idx
-
-    def map_weight(self):
-        return self.seq_map.sum()
-
-    def is_empty(self):
-        return self.map_weight() == 0
-
-    def find_order(self, min_len, min_sig, norm=True, bisto=True, mean_type='geometric', inverse_method='inverse',
-                   verbose=False):
-        """
-        Using LKH TSP solver, find the best ordering of the sequence map in terms of proximity ligation counts.
-        Here, it is assumed that sequence proximity can be inferred from number of observed trans read-pairs, where
-        an inverse relationship exists.
-        :param min_len: the minimum sequence length to include
-        :param min_sig: the minimum off-diagonal signal (trans read-pair count)
-        :param norm: apply length normalisation before analysis
-        :param bisto: make the matrix bistochastic before analysis
-        :param mean_type: for length normalization, the chosen mean used between sequences
-        :param inverse_method: the chosen inverse method for converting count (similarity) to distance
-        :param verbose: debug output
-        :return: the surrogate ids in optimal order
-        """
-
-        # prepare the input sequence map for analysis
-        self.prepare_seq_map(min_len, min_sig, norm=norm, bisto=bisto, mean_type=mean_type, verbose=verbose)
-
-        # we'll supply a partially initialized distance function
-        dist_func = partial(ordering.similarity_to_distance, method='inverse', alpha=1.2, beta=1, verbose=verbose)
-
-        lkh_o = ordering.lkh_order(self.get_processed_map(), 'lkh_run', lkh_exe='../lkh/LKH-3.0/LKH', precision=1,
-                                   seed=12345, runs=2, pop_size=50, dist_func=dist_func, special=False, verbose=True)
-
-        print lkh_o
-
-        # lkh ordering references the supplied matrix indices, not the surrogate ids.
-        # we must map this consecutive set to the contact map indices.
-        lkh_o = self.order.remap_gapless(lkh_o)
-        if verbose:
-            print lkh_o
-
-        return lkh_o
-
-    def _reorder_seq(self, _map):
-        """
-        Reorder a simple sequence map using the supplied map
-        :param _map: the map to reorder
-        :return: ordered map
-        """
-        assert sp.isspmatrix(_map), 'reordering expects a sparse matrix type'
-        _order = self.order.gapless_positions()
-        assert _map.shape[0] == _order.shape[0], 'supplied map and unmasked order are different sizes'
-        p = sp.lil_matrix(_map.shape)
-        for i in xrange(len(_order)):
-            p[i, _order[i]] = 1.
-        p = p.tocsr()
-        return p.dot(_map.tocsr()).dot(p.T)
-
-    def _norm_seq(self, _map, mean_type='geometric'):
-        """
-        Normalise a simple sequence map in place by the geometric mean of interacting contig pairs lengths.
-        The map is assumed to be in starting order.
-
-        :param _map: the target map to apply normalisation
-        :param mean_type: choice of mean (harmonic, geometric, arithmetic)
-        :return: normalized map
-        """
-
-        _mean_func = mean_selector(mean_type)
-        _len = self.order.lengths(masked_only=True).astype(np.float)
-        _map = _map.tolil().astype(np.float)
-        for i in xrange(_map.shape[0]):
-            _map[i, :] /= np.fromiter((1e-3 * _mean_func(_len[i],  _len[j])
-                                       for j in xrange(_map.shape[0])), dtype=np.float)
-        return _map.tocsr()
-
-    def set_filter_mask(self, min_len, min_sig, verbose=False):
-        """
-        Determine and set the filter mask using the specified constraints.
-        :param min_len: minimum sequence length
-        :param min_sig: minimum off-diagonal signal (counts)
-        :param verbose: debug output
-        """
-
-        # boolean array masking sequences shorter than limit
-        ix1 = self.order.lengths() >= min_len
-        if verbose:
-            print '\tmin_len removed', self.total_seq - ix1.sum()
-
-        # boolean array masking sequences weaker than limit
-        ix2 = simple_sparse.max_offdiag(self.seq_map) >= min_sig
-        if verbose:
-            print '\tmin_sig removed', self.total_seq - ix2.sum()
-
-        # ix &= degen_mask
-        # print 'without degens', ix.sum()
-
-        #ix1 = np.fromiter((i not in degen_ids for i in xrange(len(m))), dtype=bool)
-        #print ' degens', ix1.sum()
-
-        # combine the masks and pass to instance of SeqOrder
-        self.order.set_mask_only(ix1 & ix2)
-        if verbose:
-            print '\tAcceptance union', self.order.count_accepted()
-
-    def prepare_seq_map(self, min_len, min_sig, norm=True, bisto=False, mean_type='geometric', verbose=False):
-        """
-        Prepare the sequence map (seq_map) by application of various filters and normalisations.
-
-        :param min_len: minimum sequence length
-        :param min_sig: minimum inter-sequence signal in raw counts.
-        :param norm: normalisation by sequence lengths
-        :param bisto: make the output matrix bistochastic
-        :param mean_type: when performing normalisation, use "geometric, harmonic or arithmetic" mean.
-        :param verbose: debug output
-        """
-        if verbose:
-            print 'Prepare sequence map'
-            print '\toriginally', self.seq_map.shape
-        m = self.seq_map.astype(np.float)
-
-        # apply mask filter to unwanted sequences
-        self.set_filter_mask(min_len, min_sig, verbose)
-
-        # if there are sequences to mask, remove them from the map
-        if self.order.count_accepted() < self.total_seq:
-            m = simple_sparse.compress(m.tocoo(), self.order.mask_vector())
-            if verbose:
-                print '\tfilter reduced', m.shape
-
-        # apply length normalisation if requested
-        if norm:
-            m = self._norm_seq(m, mean_type)
-            if verbose:
-                print '\tnormed'
-
-        # make map bistochastic if requested
-        if bisto:
-            m, scl = simple_sparse.kr_biostochastic(m)
-            # retain the scale factors
-            self.bisto_scale = scl
-            if verbose:
-                print '\tbalanced'
-
-        self.processed_map = m
-
-    def get_processed_map(self, permute=False, dtype=np.float, verbose=False):
-        """
-        Return a copy of the processed map
-        :param permute: reorder with current state
-        :param dtype: cast to another type
-        :param verbose: debug output
-        :return: the processed map
-        """
-        _m = self.processed_map.astype(dtype)
-        # reorder if requested
-        if permute:
-            _m = self._reorder_seq(_m)
-            if verbose:
-                print '\treordered'
-        return _m
-
     def _bin_map(self, bam):
+        """
+        Accumulate read-pair observations from the supplied BAM file.
+        Maps are initialized here. Logical control is achieved through initialisation of the
+        ContactMap instance, rather than supplying this function arguments.
+        :param bam: this instance's open bam file.
+        """
         import tqdm
 
         def _simple_match(r):
@@ -981,11 +818,11 @@ class ContactMap:
             logger.info('Initialising contact map of {0}x{0} fragment bins, '
                         'representing {1} bp over {2} sequences'.format(self.grouping.total_bins,
                                                                         self.total_len, self.total_seq))
-            _raw_map = simple_sparse.Sparse2DAccumulator(self.grouping.total_bins)
+            _extent_map = simple_sparse.Sparse2DAccumulator(self.grouping.total_bins)
             _grouping_map = self.grouping.map
         else:
             _grouping_map = None
-            _raw_map = None
+            _extent_map = None
 
         with tqdm.tqdm(total=self.total_reads) as pbar:
 
@@ -1071,7 +908,7 @@ class ContactMap:
                     r1pos, r2pos = r2pos, r1pos
                     l1, l2 = l2, l1
 
-                if _raw_map:
+                if _extent_map:
                     b1 = find_nearest_jit(_grouping_map[ix1], r1pos)
                     b2 = find_nearest_jit(_grouping_map[ix2], r2pos)
 
@@ -1080,7 +917,7 @@ class ContactMap:
                         b1, b2 = b2, b1
 
                     # tally all mapped reads for binned map, not just those considered in tips
-                    _raw_map[b1, b2] += 1
+                    _extent_map[b1, b2] += 1
 
                 # for seq-map, we may reject reads outside of a defined tip region
                 tip_info = _on_tip(r1pos, r2pos, l1, l2, _tip_size)
@@ -1094,14 +931,236 @@ class ContactMap:
 
         # default to always making matrices symmetric
         if self.bin_size:
-            self.raw_map = _raw_map.get_coo()
-            del _raw_map
+            self.extent_map = _extent_map.get_coo()
+            del _extent_map
 
         self.seq_map = _seq_map.get_coo()
         del _seq_map
 
         logger.info('Pair accounting: {}'.format(counts))
-        logger.info('Total raw map weight {}'.format(self.map_weight()))
+        logger.info('Total extent map weight {}'.format(self.map_weight()))
+
+    @staticmethod
+    def get_fields():
+        """
+        :return: the list of fields used in seq_info dict.
+        """
+        return SeqInfo._fields
+
+    def make_reverse_index(self, field_name):
+        """
+        Make a reverse look-up (dict) from the chosen field in seq_info to the internal index value
+        of the given sequence. Non-unique fields will raise an exception.
+        :param field_name: the seq_info field to use as the reverse.
+        :return: internal array index of the sequence
+        """
+        rev_idx = {}
+        for n, seq in enumerate(self.seq_info):
+            fv = getattr(seq, field_name)
+            if fv in rev_idx:
+                raise RuntimeError('field contains non-unique entries, a 1-1 mapping cannot be made')
+            rev_idx[fv] = n
+        return rev_idx
+
+    def map_weight(self):
+        return self.seq_map.sum()
+
+    def is_empty(self):
+        return self.map_weight() == 0
+
+    def find_order(self, min_len, min_sig, norm=True, bisto=True, mean_type='geometric', inverse_method='inverse',
+                   verbose=False):
+        """
+        Using LKH TSP solver, find the best ordering of the sequence map in terms of proximity ligation counts.
+        Here, it is assumed that sequence proximity can be inferred from number of observed trans read-pairs, where
+        an inverse relationship exists.
+        :param min_len: the minimum sequence length to include
+        :param min_sig: the minimum off-diagonal signal (trans read-pair count)
+        :param norm: apply length normalisation before analysis
+        :param bisto: make the matrix bistochastic before analysis
+        :param mean_type: for length normalization, the chosen mean used between sequences
+        :param inverse_method: the chosen inverse method for converting count (similarity) to distance
+        :param verbose: debug output
+        :return: the surrogate ids in optimal order
+        """
+
+        # prepare the input sequence map for analysis
+        self.prepare_seq_map(min_len, min_sig, norm=norm, bisto=bisto, mean_type=mean_type, verbose=verbose)
+
+        # we'll supply a partially initialized distance function
+        dist_func = partial(ordering.similarity_to_distance, method='inverse', alpha=1.2, beta=1, verbose=verbose)
+
+        if self.tip_size:
+            m = self.get_processed_map()
+            lkh_o = ordering.lkh_order(m, 'lkhdb_run', precision=1, lkh_exe='../lkh/LKH-3.0/LKH', seed=12345,
+                                             runs=2, pop_size=50, dist_func=dist_func, special=False, verbose=True,
+                                             fixed_edges=[(i, i+1) for i in xrange(1, m.shape[0], 2)])
+            # tip-based paths have twice the nodes and must be decomposed into
+            # doublets, which also imply orientation.
+
+            # pair adjacent nodes
+            lkh_o = lkh_o.reshape(lkh_o.shape[0]/2, 2)
+            # convert to surrogate ids and infer orientation from paths taken through doublets
+            lkh_o = np.fromiter(((oi[0]/2, oi[1]-oi[0]) for oi in lkh_o), dtype=SeqOrder.INDEX_TYPE)
+
+        else:
+            lkh_o = ordering.lkh_order(self.get_processed_map(), 'lkh_run', lkh_exe='../lkh/LKH-3.0/LKH', precision=1,
+                                       seed=12345, runs=2, pop_size=50, dist_func=dist_func, special=False, verbose=True)
+
+            # for singlet tours, no orientation can be inferred.
+            lkh_o = np.fromiter(((oi, 1) for oi in lkh_o), dtype=SeqOrder.INDEX_TYPE)
+
+        if verbose:
+            print lkh_o
+
+        # lkh ordering references the supplied matrix indices, not the surrogate ids.
+        # we must map this consecutive set to the contact map indices.
+        lkh_o = self.order.remap_gapless(lkh_o)
+
+        return lkh_o
+
+    def _reorder_seq(self, _map):
+        """
+        Reorder a simple sequence map using the supplied map
+        :param _map: the map to reorder
+        :return: ordered map
+        """
+        assert sp.isspmatrix(_map), 'reordering expects a sparse matrix type'
+
+        _order = self.order.gapless_positions()
+        if self.tip_size:
+            _order = SeqOrder.double_order(_order)
+
+        assert _map.shape[0] == _order.shape[0], 'supplied map and unmasked order are different sizes'
+        p = sp.lil_matrix(_map.shape)
+        for i in xrange(len(_order)):
+            p[i, _order[i]] = 1.
+        p = p.tocsr()
+        return p.dot(_map.tocsr()).dot(p.T)
+
+    def _norm_seq(self, _map, mean_type='geometric'):
+        """
+        Normalise a simple sequence map in place by the geometric mean of interacting contig pairs lengths.
+        The map is assumed to be in starting order.
+
+        :param _map: the target map to apply normalisation
+        :param mean_type: choice of mean (harmonic, geometric, arithmetic)
+        :return: normalized map
+        """
+        if self.tip_size:
+            _map = _map.astype(np.float)
+            _tip_size = float(self.tip_size)
+            _l = [li if li < _tip_size else _tip_size for li in self.order.lengths()]
+            for ii in xrange(_map.nnz):
+                i, j = _map.coords[:2, ii]
+                _map.data[ii] *= _tip_size / min(_tip_size, _l[i]) * _tip_size / min(_tip_size, _l[j])
+            return _map
+
+        else:
+            _mean_func = mean_selector(mean_type)
+            _len = self.order.lengths().astype(np.float)
+            _map = _map.tolil().astype(np.float)
+            for i in xrange(_map.shape[0]):
+                _map[i, :] /= np.fromiter((1e-3 * _mean_func(_len[i],  _len[j])
+                                           for j in xrange(_map.shape[0])), dtype=np.float)
+            return _map.tocsr()
+
+    def set_filter_mask(self, min_len, min_sig, verbose=False):
+        """
+        Determine and set the filter mask using the specified constraints.
+        :param min_len: minimum sequence length
+        :param min_sig: minimum off-diagonal signal (counts)
+        :param verbose: debug output
+        """
+
+        # boolean array masking sequences shorter than limit
+        ix1 = self.order.lengths() >= min_len
+        if verbose:
+            print '\tmin_len removed', self.total_seq - ix1.sum()
+
+        # boolean array masking sequences weaker than limit
+        if self.tip_size:
+            signal = simple_sparse.max_offdiag_4d(self.seq_map)
+        else:
+            signal = simple_sparse.max_offdiag(self.seq_map)
+        ix2 = signal >= min_sig
+        if verbose:
+            print '\tmin_sig removed', self.total_seq - ix2.sum()
+
+        # ix &= degen_mask
+        # print 'without degens', ix.sum()
+
+        #ix1 = np.fromiter((i not in degen_ids for i in xrange(len(m))), dtype=bool)
+        #print ' degens', ix1.sum()
+
+        # combine the masks and pass to instance of SeqOrder
+        self.order.set_mask_only(ix1 & ix2)
+        if verbose:
+            print '\tAcceptance union', self.order.count_accepted()
+
+    def prepare_seq_map(self, min_len, min_sig, norm=True, bisto=False, mean_type='geometric', verbose=False):
+        """
+        Prepare the sequence map (seq_map) by application of various filters and normalisations.
+
+        :param min_len: minimum sequence length
+        :param min_sig: minimum inter-sequence signal in raw counts.
+        :param norm: normalisation by sequence lengths
+        :param bisto: make the output matrix bistochastic
+        :param mean_type: when performing normalisation, use "geometric, harmonic or arithmetic" mean.
+        :param verbose: debug output
+        """
+        if verbose:
+            print 'Prepare sequence map'
+            print '\toriginally', self.seq_map.shape
+
+        m = self.seq_map.astype(np.float)
+
+        # apply length normalisation if requested
+        if norm:
+            m = self._norm_seq(m, mean_type)
+            if verbose:
+                print '\tnormed'
+
+        # apply mask filter to unwanted sequences
+        self.set_filter_mask(min_len, min_sig, verbose)
+
+        # if there are sequences to mask, remove them from the map
+        if self.order.count_accepted() < self.total_seq:
+            if self.tip_size:
+                m = simple_sparse.compress_4d(m, self.order.mask_vector())
+            else:
+                m = simple_sparse.compress(m.tocoo(), self.order.mask_vector())
+            if verbose:
+                print '\tfilter reduced', m.shape
+
+        if self.tip_size:
+            m = simple_sparse.flatten_tensor_4d(m)
+
+        # make map bistochastic if requested
+        if bisto:
+            m, scl = simple_sparse.kr_biostochastic(m)
+            # retain the scale factors
+            self.bisto_scale = scl
+            if verbose:
+                print '\tbalanced'
+
+        self.processed_map = m
+
+    def get_processed_map(self, permute=False, dtype=np.float, verbose=False):
+        """
+        Return a copy of the processed map
+        :param permute: reorder with current state
+        :param dtype: cast to another type
+        :param verbose: debug output
+        :return: the processed map
+        """
+        _m = self.processed_map.astype(dtype)
+        # reorder if requested
+        if permute:
+            _m = self._reorder_seq(_m)
+            if verbose:
+                print '\treordered'
+        return _m
 
     def save(self, fname):
         with open(fname, 'wb') as out_h:
@@ -1138,7 +1197,7 @@ class ContactMap:
         if simple:
             m = self.get_seq_map(norm=norm, permute=permute)
         else:
-            m = self.get_raw_map(norm=norm, permute=permute)
+            m = self.get_extent_map(norm=norm, permute=permute)
 
         if pattern_only:
             if zero_diag:
@@ -1176,18 +1235,20 @@ class ContactMap:
         if fname:
             plt.savefig(fname, dpi=dpi)
 
-    def _norm_raw(self, mean_type='geometric'):
+    def _norm_extent(self, _map, mean_type='geometric'):
         """
-        Normalise a raw map in place by the geometric mean of interacting contig pairs lengths.
+        Normalise a extent map in place by the geometric mean of interacting contig pairs lengths.
         :return:
         """
-        _map = self.raw_map
         assert sp.isspmatrix(_map), 'Extent matrix is not a scipy matrix type'
+
+        if _map.dtype not in {np.float, float}:
+            _map = _map.astype(np.float)
         if not sp.isspmatrix_lil(_map):
             _map = _map.tolil()
 
         _mean_func = mean_selector(mean_type)
-        _len = self.order.lengths
+        _len = self.order.lengths().astype(np.float)
         _cbins = np.cumsum(self.grouping.bins)
         for row_i, col_dat in enumerate(_map.rows):
             i = np.searchsorted(_cbins, row_i, side='right')
@@ -1196,64 +1257,14 @@ class ContactMap:
             _map.data[row_i] /= wi
         return _map
 
-    def compress_extent(self):
+    def _reorder_extent(self, _map):
         """
-        Compress the extent map for each sequence that is presently masked. This will eliminate
-        all bins which pertain to a given masked sequence.
-        :return: a scipy.sparse.coo_matrix pertaining to only the unmasked sequences.
-        """
-        _m = self.raw_map
-        assert sp.isspmatrix(_m), 'Extent matrix is not a scipy sparse matrix type'
-        if not sp.isspmatrix_coo(_m):
-            _m = _m.tocoo()
-
-        _order = self.order.initial_order()
-        _bins = self.grouping.bins
-        _mask = _order[:, 2].astype(np.bool)
-
-        # build a list of every accepted element.
-        # TODO this could be done as below, without the memory footprint of realising all elements
-        s = 0
-        accept_bins = []
-        accept_index = set(np.where(_mask)[0])
-        for i in _order[:, 0]:
-            if i in accept_index:
-                accept_bins.extend([j+s for j in xrange(_bins[i])])
-            s += _bins[i]
-        # use a hashable container for quicker lookup
-        accept_bins = set(accept_bins)
-
-        # collect those values not in the excluded rows/columns
-        keep_row = []
-        keep_col = []
-        keep_data = []
-        for i in xrange(_m.nnz):
-            if _m.row[i] in accept_bins and _m.col[i] in accept_bins:
-                keep_row.append(_m.row[i])
-                keep_col.append(_m.col[i])
-                keep_data.append(_m.data[i])
-
-        # after removal of those intervening, shift the coordinates of affected bins
-        # TODO this could be moved into the loop above
-        _shift = np.cumsum((~_mask) * _bins)
-        _csbins = np.cumsum(_bins)
-        for i in xrange(len(keep_row)):
-            # rather than build a complete list of shifts across matrix, we'll
-            # sacrifice some CPU and do lookups for the appropriate bin
-            ir = np.searchsorted(_csbins, keep_row[i])
-            ic = np.searchsorted(_csbins, keep_col[i])
-            keep_row[i] -= _shift[ir]
-            keep_col[i] -= _shift[ic]
-
-        return sp.coo_matrix((keep_data, (keep_row, keep_col)), shape=_m.shape - _shift[-1])
-
-    def _reorder_raw(self, _map):
-        """
-        Reorder the raw map using current order.
+        Reorder the extent map using current order.
         :return: sparse CSR format permutation of the given map
         """
         _order = self.order.gapless_positions()
         _bins = self.grouping.bins[self.order.mask_vector()]
+        _ori = self.order.order['ori'][np.argsort(self.order.order['pos'])]
 
         # create a permutation matrix
         p = sp.lil_matrix(_map.shape)
@@ -1261,60 +1272,110 @@ class ContactMap:
         for i, oi in enumerate(_order):
             j_off = _bins[:oi].sum()
             i_off = _shuf_bins[:i].sum()
-            for k in xrange(_bins[oi]):
-                p[i_off+k, j_off+k] = 1
+            if _ori[i] > 0:
+                for k in xrange(_bins[oi]):
+                    p[i_off+k, j_off+k] = 1
+            else:
+                # rot90 those with reverse orientation
+                for k in xrange(_bins[oi]-1, -1, -1):
+                    p[i_off+k, j_off+k] = 1
 
-        # permute the raw_map
+        # permute the extent_map
         p = p.tocsr()
         return p.dot(_map.tocsr()).dot(p.T)
 
-    def get_raw_map(self, norm=False, permute=False):
+    def _compress_extent(self, _map):
         """
-        Return the binned map, optionally normalised and permuted.
-        :param norm: normalise intensities wrt to lengths
-        :param permute: permute to the current order.
-        :return: sparse matrix
+        Compress the extent map for each sequence that is presently masked. This will eliminate
+        all bins which pertain to a given masked sequence.
+        :return: a scipy.sparse.coo_matrix pertaining to only the unmasked sequences.
         """
-        if norm:
-            m = self._norm_raw()
-        else:
-            m = self.raw_map.copy()
+        assert sp.isspmatrix(_map), 'Extent matrix is not a scipy sparse matrix type'
+        if not sp.isspmatrix_coo(_map):
+            _map = _map.tocoo()
 
-        if permute:
-            m = self._reorder_raw(m)
+        _order = self.order.order
+        _bins = self.grouping.bins
 
-        return m
+        # build a list of every accepted element.
+        # TODO this could be done as below, without the memory footprint of realising all elements
+        s = 0
+        accept_bins = []
+        # accept_index = set(np.where(_mask)[0])
+        for i in xrange(len(_order)):
+            # if i in accept_index:
+            if _order[i]['mask']:
+                accept_bins.extend([j+s for j in xrange(_bins[i])])
+            s += _bins[i]
+
+        # use a hashable container for quicker lookup
+        accept_bins = set(accept_bins)
+
+        # collect those values not in the excluded rows/columns
+        keep_row = []
+        keep_col = []
+        keep_data = []
+        for i in xrange(_map.nnz):
+            if _map.row[i] in accept_bins and _map.col[i] in accept_bins:
+                keep_row.append(_map.row[i])
+                keep_col.append(_map.col[i])
+                keep_data.append(_map.data[i])
+
+        # after removal of those intervening, shift the coordinates of affected bins
+        # TODO this could be moved into the loop above
+        _shift = np.cumsum((~_order['mask']) * _bins)
+        _csbins = np.cumsum(_bins)
+        for i in xrange(len(keep_row)):
+            # rather than build a complete list of shifts across matrix, we'll
+            # sacrifice some CPU and do lookups for the appropriate bin
+            ir = np.searchsorted(_csbins, keep_row[i], side='right')
+            ic = np.searchsorted(_csbins, keep_col[i], side='right')
+            keep_row[i] -= _shift[ir]
+            keep_col[i] -= _shift[ic]
+
+        return sp.coo_matrix((keep_data, (keep_row, keep_col)), shape=_map.shape - _shift[-1])
 
     def get_extent_map(self, norm=True, bisto=False, permute=False, mean_type='geometric', verbose=False):
+        """
+        Return the extent map after applying specified processing steps. Masked sequences are always removed.
+        :param norm: sequence length normalisation
+        :param bisto: make map bistochastic
+        :param permute: permute the map using current order
+        :param mean_type: length normalisation mean (geometric, harmonic, arithmetic)
+        :param verbose: debug information
+        :return: processed extent map
+        """
 
         if verbose:
             print 'Prepare extent map'
-            print '\toriginally', self.raw_map.shape
-        m = self.seq_map.astype(np.float32)
+            print '\toriginally', self.extent_map.shape
+
+        m = self.extent_map.astype(np.float)
+
+        # apply length normalisation if requested
+        if norm:
+            m = self._norm_extent(m, mean_type)
+            if verbose:
+                print '\tnormed'
 
         # if there are sequences to mask, remove them from the map
         if self.order.count_accepted() < self.total_seq:
-            m = self.compress_extent()
+            m = self._compress_extent(m)
             if verbose:
                 print '\tfilter reduced', m.shape
 
-        # apply length normalisation if requested
-        # if norm:
-        #     m = self._norm_seq(m, mean_type)
-        #     if verbose:
-        #         print '\tnormed'
-
         # make map bistochastic if requested
-        # if bisto:
-        #     m = simple_sparse.kr_biostochastic(m)
-        #     if verbose:
-        #         print '\tbalanced'
+        if bisto:
+            m, scl = simple_sparse.kr_biostochastic(m)
+            if verbose:
+                print '\tbalanced'
 
         # reorder using current order state
         if permute:
-            m = self._reorder_raw(m)
+            m = self._reorder_extent(m)
             if verbose:
                 print '\treordered'
+
         return m
 
     def create_contig_graph(self, norm=True, scale=False, extern_ids=False):
@@ -1354,7 +1415,7 @@ class ContactMap:
                 j1, j2 = self.grouping.borders[j]
 
                 # as networkx chokes serialising numpy types, explicitly type cast
-                obs = float(self.raw_map[i1:i2, j1:j2].sum())
+                obs = float(self.extent_map[i1:i2, j1:j2].sum())
                 if obs == 0:
                     continue
 
@@ -1438,8 +1499,8 @@ if __name__ == '__main__':
         logger.info('Saving contact map instance...')
         cm.save(out_name(args.outbase, 'cm.p'))
 
-    # logger.info('Saving raw contact map...')
-    # mapio.write_map(cm.to_dense(), out_name(args.outbase, 'raw'), args.format)
+    # logger.info('Saving extent contact map...')
+    # mapio.write_map(cm.to_dense(), out_name(args.outbase, 'extent'), args.format)
     #
     # logger.info('Plotting sequence image...')
     # cm.plot(out_name(args.outbase, 'simple.png'), simple=True)

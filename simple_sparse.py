@@ -56,7 +56,11 @@ def kr_biostochastic(m, tol=1e-6, x0=None, delta=0.1, Delta=3, verbose=False, ma
     assert m.shape[0] == m.shape[1], 'input matrix must be square'
     if not scisp.isspmatrix_csr(m):
         m = m.tocsr()
-    assert is_hermitian(m, tol), 'input matrix must be fully symmetric'
+    try:
+        assert is_hermitian(m, tol), 'input matrix is expected to be fully symmetric'
+    except AssertionError as e:
+        import warnings
+        warnings.warn(e.message)
 
     n = m.shape[0]
     e = np.ones(n)
@@ -338,6 +342,37 @@ class Sparse4DAccumulator(object):
         return sparse.COO(_coords, _data, shape=_m.shape, has_duplicates=True)
 
 
+def max_offdiag_4d(_m):
+    """
+    Determine the maximum off-diagonal summed signal, where "summed signal" refers to reducing the
+    the tensor to a 2d matrix by summing over the last two axes (2x2 submatrices).
+    :param _m: a 4d sparse.COO or DOK matrix with dimension NxNx2x2.
+    :return: a vector of length N containing off-diagonal maximums.
+    """
+    return max_offdiag(_m.sum(axis=(2, 3)).tocsr())
+
+
+def flatten_tensor_4d(_m):
+    """
+    Flatten a 4D tensor into 2D by doubling the first two dimensions. It is assumed that the matrix
+    has already been made symmetric (if required).
+    :param _m: a 4d sparse.COO matrix with dimension NxNx2x2
+    :return: 2d sparse matrix of type scipy.sparse.coo_matrix
+    """
+    _coords = [[], []]
+    _data = []
+    for n in xrange(_m.nnz):
+        i, j, k, l = _m.coords[:, n]
+        ii = 2*i
+        jj = 2*j
+        _coords[0].append(ii+k)
+        _coords[1].append(jj+l)
+        _data.append(_m.data[n])
+
+    _m = scisp.coo_matrix((_data, _coords), shape=(2*_m.shape[0], 2*_m.shape[1]))
+    return _m
+
+
 def compress_4d(_m, _mask):
     """
     Remove rows and columns of a sparse 4D matrix using a 1d boolean mask. Masking operates on
@@ -347,7 +382,6 @@ def compress_4d(_m, _mask):
     :param _mask: True (keep), False (drop)
     :return: a sparse.COO of only the accepted rows/columns
     """
-    print _m
     assert isinstance(_m, (sparse.COO, sparse.DOK)), 'Input matrix must be of sparse.COO or sparse.DOK type'
     if not isinstance(_m, sparse.COO):
         _m = _m.to_coo()
