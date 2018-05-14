@@ -286,6 +286,7 @@ class SeqOrder:
 
         :param seq_info: sequence information dictionary
         """
+        self._positions = None
         _ord = np.arange(len(seq_info), dtype=np.int32)
         self.order = np.array(
             [(_ord[i], SeqOrder.FORWARD, SeqOrder.ACCEPTED, seq_info[i].length) for i in xrange(len(_ord))],
@@ -299,7 +300,7 @@ class SeqOrder:
         maintain the current state in a separate array. This avoids unncessary redetermination of positions
         when calling .intervening() and .before() methods.
         """
-        self.positions = np.argsort(self.order['pos'])
+        self._positions = np.argsort(self.order['pos'])
 
     def remap_gapless(self, gapless_indices):
         """
@@ -308,19 +309,44 @@ class SeqOrder:
         :param gapless_indices: dense index range, without gaps from masking
         :return: remappped indices with gaps
         """
-        return self.positions[gapless_indices]
+        shift = []
+        n = 0
+        for oi in np.sort(gapless_indices):
+            while not self.order[oi + n]['mask']:
+                n += 1
+            shift.append(n)
+        remapped = []
+        for n, oi in enumerate(gapless_indices):
+            remapped.append(oi + shift[oi])
+        return np.array(remapped)
 
-    def accepted_indices(self):
+    def all_positions(self, copy=True):
         """
-        :return: indices (surrogate ids) of accepted sequences.
+        The current positional order of all sequences. Internal logic relegates masked sequences to always come
+        last and ascending surrogate id order.
+        :param copy: return a copy of the positions
+        :return: all positions in order, masked or not.
         """
-        return set(np.where(self.order['mask'])[0])
+        if copy:
+            _p = self._positions.copy()
+        else:
+            _p = self._positions
+        return _p
 
-    def excluded_indices(self):
+    def gapless_positions(self):
         """
-        :return: indices (surrogate ids) of excluded sequences.
+        A dense index range representing the current positional order without masked sequences. Therefore
+        the returned array does not contain surrogate ids, but rather the relative positions of unmasked
+        sequences, when all masked sequences have been discarded.
+        :return: a dense index range of positional order, once all masked sequences have been discarded.
         """
-        return set(np.where(~self.order['mask'])[0])
+        # accumulated shift from gaps
+        gap_shift = np.cumsum(~self.order['mask'])
+        # just unmasked sequences
+        _p = self._positions[:self.count_accepted()].copy()
+        # removing gaps leads to a dense range of indices
+        _p -= gap_shift[_p]
+        return _p
 
     def set_mask_only(self, _mask):
         """
@@ -364,16 +390,16 @@ class SeqOrder:
                                   'of orders only mentioning accepted sequences'
             assert len(_ord) == self.count_accepted(), 'new order must mention all ' \
                                                        'currently accepted sequences'
-            assert len(set(_ord) & self.excluded_indices()) == 0, 'new order and excluded must not ' \
+            assert len(set(_ord) & set(self.excluded())) == 0, 'new order and excluded must not ' \
                                                                   'overlap when using implicit assignment'
-            assert len(set(_ord) ^ set(self.accepted_indices())) == 0, 'incomplete new order supplied,' \
+            assert len(set(_ord) ^ set(self.accepted())) == 0, 'incomplete new order supplied,' \
                                                                        'missing accepted ids'
             # assign the new orders
             self.order['pos'][_ord] = np.arange(len(_ord), dtype=np.int32)
         else:
             # just a simple complete order update
             assert len(_ord) == len(self.order), 'new order was a different length'
-            assert len(set(_ord) ^ set(self.accepted_indices())) == 0, 'incomplete new order supplied,' \
+            assert len(set(_ord) ^ set(self.accepted())) == 0, 'incomplete new order supplied,' \
                                                                        'missing accepted ids'
             self.order['pos'][_ord] = np.arange(len(_ord), dtype=np.int32)
 
@@ -473,7 +499,7 @@ class SeqOrder:
         pb = self.order['pos'][b]
         if pa > pb:
             pa, pb = pb, pa
-        inter_ix = self.positions[pa+1:pb]
+        inter_ix = self._positions[pa+1:pb]
         return np.sum(self.order['length'][inter_ix])
 
 
@@ -738,17 +764,19 @@ class ContactMap:
         self.prepare_seq_map(min_len, min_sig, norm=norm, bisto=bisto, mean_type=mean_type, verbose=verbose)
 
         # we'll supply a partially initialized distance function
-        dist_func = partial(ordering.similarity_to_distance,
-                            method='inverse', alpha=1.2, beta=1, verbose=verbose)
+        dist_func = partial(ordering.similarity_to_distance, method='inverse', alpha=1.2, beta=1, verbose=verbose)
 
         lkh_o = ordering.lkh_order(self.get_processed_map(), 'lkh_run', lkh_exe='../lkh/LKH-3.0/LKH', precision=1,
                                    seed=12345, runs=2, pop_size=50, dist_func=dist_func, special=False, verbose=True)
+
+        print lkh_o
 
         # lkh ordering references the supplied matrix indices, not the surrogate ids.
         # we must map this consecutive set to the contact map indices.
         lkh_o = self.order.remap_gapless(lkh_o)
         if verbose:
             print lkh_o
+
         return lkh_o
 
     def _reorder_seq(self, _map):
@@ -758,7 +786,7 @@ class ContactMap:
         :return: ordered map
         """
         assert sp.isspmatrix(_map), 'reordering expects a sparse matrix type'
-        _order = self.order.accepted()
+        _order = self.order.gapless_positions()
         assert _map.shape[0] == _order.shape[0], 'supplied map and unmasked order are different sizes'
         p = sp.lil_matrix(_map.shape)
         for i in xrange(len(_order)):
@@ -811,7 +839,7 @@ class ContactMap:
         # combine the masks and pass to instance of SeqOrder
         self.order.set_mask_only(ix1 & ix2)
         if verbose:
-            print '\tAcceptance union', len(self.order.accepted())
+            print '\tAcceptance union', self.order.count_accepted()
 
     def prepare_seq_map(self, min_len, min_sig, norm=True, bisto=False, mean_type='geometric', verbose=False):
         """
@@ -1224,7 +1252,7 @@ class ContactMap:
         Reorder the raw map using current order.
         :return: sparse CSR format permutation of the given map
         """
-        _order = self.order.accepted()
+        _order = self.order.gapless_positions()
         _bins = self.grouping.bins[self.order.mask_vector()]
 
         # create a permutation matrix
@@ -1265,7 +1293,7 @@ class ContactMap:
         m = self.seq_map.astype(np.float32)
 
         # if there are sequences to mask, remove them from the map
-        if len(self.order.accepted()) < self.total_seq:
+        if self.order.count_accepted() < self.total_seq:
             m = self.compress_extent()
             if verbose:
                 print '\tfilter reduced', m.shape
