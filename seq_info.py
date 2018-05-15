@@ -97,8 +97,7 @@ for si in tqdm.tqdm(Bio.SeqIO.parse(open_file(args.input), 'fasta'), total=nseq)
             l_sites = counter.count_sites(si.seq[:args.tip_size])
             r_sites = counter.count_sites(si.seq[-args.tip_size:])
 
-        row_i['l_sites'] = l_sites
-        row_i['r_sites'] = r_sites
+        row_i['sites'] = [l_sites, r_sites]
     else:
         row_i['sites'] = counter.count_sites(si.seq)
 
