@@ -61,7 +61,7 @@ parser.add_argument('output', help='Output file name')
 args = parser.parse_args()
 
 counter = SiteCounter(args.enzymes)
-seq_info = []
+seq_info = {}
 
 # estimate total sequences before beginning.
 nseq = 0
@@ -77,7 +77,7 @@ for si in tqdm.tqdm(Bio.SeqIO.parse(open_file(args.input), 'fasta'), total=nseq)
     if li < args.min_len:
         continue
 
-    row_i = {'seqid': si.id, 'length': li}
+    row_i = {'length': li}
 
     # assume SPAdes continues to record coverage as the last element of the seq id.
     try:
@@ -101,7 +101,7 @@ for si in tqdm.tqdm(Bio.SeqIO.parse(open_file(args.input), 'fasta'), total=nseq)
     else:
         row_i['sites'] = counter.count_sites(si.seq)
 
-    seq_info.append(row_i)
+    seq_info[si.id] = row_i
 
 # for reference, record input parameters as well as the collected information
 report = {

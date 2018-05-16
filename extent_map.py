@@ -642,14 +642,16 @@ class ContactMap:
             logger.info('RefId: {} excludes {} positions'.format(k, sum(i.end - i.begin for i in no_go[k])))
         return no_go
 
-    def __init__(self, bam_file, cov_file, seq_file, min_insert, min_mapq=0, min_len=0, random_seed=None, strong=None,
-                 bin_size=None, tip_size=None, precount=False, med_alpha=10):
+    def __init__(self, bam_file, cov_file, seq_file, min_insert, min_mapq=0, min_len=0, min_sig=1, max_fold=None,
+                 random_seed=None, strong=None, bin_size=None, tip_size=None, precount=False, med_alpha=10):
 
         self.strong = strong
         self.bin_size = bin_size
         self.min_mapq = min_mapq
         self.min_insert = min_insert
         self.min_len = min_len
+        self.min_sig = min_sig
+        self.max_fold = max_fold
         self.random_state = np.random.RandomState(random_seed)
         self.strong = strong
         self.seq_info = []
@@ -664,6 +666,8 @@ class ContactMap:
         self.med_alpha = med_alpha
         self.processed_map = None
         self.bisto_scale = None
+        self.seq_report = SequenceAnalyzer.read_report(cov_file)
+        self.seq_analyzer = None
 
         with pysam.AlignmentFile(bam_file, 'rb') as bam:
 
@@ -999,8 +1003,8 @@ class ContactMap:
     def is_empty(self):
         return self.map_weight() == 0
 
-    def find_order(self, min_len, min_sig, norm=True, bisto=True, mean_type='geometric', inverse_method='inverse',
-                   verbose=False):
+    def find_order(self, min_len, min_sig, max_fold, norm=True, bisto=True, mean_type='geometric',
+                   inverse_method='inverse', verbose=False):
         """
         Using LKH TSP solver, find the best ordering of the sequence map in terms of proximity ligation counts.
         Here, it is assumed that sequence proximity can be inferred from number of observed trans read-pairs, where
@@ -1008,6 +1012,7 @@ class ContactMap:
 
         :param min_len: the minimum sequence length to include
         :param min_sig: the minimum off-diagonal signal (trans read-pair count)
+        :param max_fold: maximum locally-measured fold-coverage to permit
         :param norm: apply length normalisation before analysis
         :param bisto: make the matrix bistochastic before analysis
         :param mean_type: for length normalization, the chosen mean used between sequences
@@ -1017,7 +1022,7 @@ class ContactMap:
         """
 
         # prepare the input sequence map for analysis
-        self.prepare_seq_map(min_len, min_sig, norm=norm, bisto=bisto, mean_type=mean_type, verbose=verbose)
+        self.prepare_seq_map(min_len, min_sig, max_fold, norm=norm, bisto=bisto, mean_type=mean_type, verbose=verbose)
 
         # we'll supply a partially initialized distance function
         dist_func = partial(ordering.similarity_to_distance, method=inverse_method, alpha=1.2, beta=1, verbose=verbose)
@@ -1056,12 +1061,13 @@ class ContactMap:
 
         return lkh_o
 
-    def set_filter_mask(self, min_len, min_sig, verbose=False):
+    def set_filter_mask(self, min_len, min_sig, max_fold=None, verbose=False):
         """
         Determine and set the filter mask using the specified constraints.
 
         :param min_len: minimum sequence length
         :param min_sig: minimum off-diagonal signal (counts)
+        :param max_fold: maximum locally-measured fold-coverage to permit
         :param verbose: debug output
         """
 
@@ -1069,6 +1075,13 @@ class ContactMap:
         ix1 = self.order.lengths() >= min_len
         if verbose:
             print '\tmin_len removed', self.total_seq - ix1.sum()
+
+        if max_fold:
+            seq_analyzer = SequenceAnalyzer(self.seq_map, self.seq_report, self.seq_info, self.tip_size)
+            degen_seqs = seq_analyzer.report_degenerates(max_fold, verbose=False)
+            ix3 = ~degen_seqs['status']
+            if verbose:
+                print '\tdegen removed', self.total_seq - ix3.sum()
 
         # boolean array masking sequences weaker than limit
         if self.tip_size:
@@ -1079,23 +1092,17 @@ class ContactMap:
         if verbose:
             print '\tmin_sig removed', self.total_seq - ix2.sum()
 
-        # ix &= degen_mask
-        # print 'without degens', ix.sum()
-
-        # ix1 = np.fromiter((i not in degen_ids for i in xrange(len(m))), dtype=bool)
-        # print ' degens', ix1.sum()
-
-        # combine the masks and pass to instance of SeqOrder
-        self.order.set_mask_only(ix1 & ix2)
+        self.order.set_mask_only(ix1 & ix2 & ix3)
         if verbose:
             print '\tAcceptance union', self.order.count_accepted()
 
-    def prepare_seq_map(self, min_len, min_sig, norm=True, bisto=False, mean_type='geometric', verbose=False):
+    def prepare_seq_map(self, min_len, min_sig, max_fold=None, norm=True, bisto=False, mean_type='geometric', verbose=False):
         """
         Prepare the sequence map (seq_map) by application of various filters and normalisations.
 
         :param min_len: minimum sequence length
         :param min_sig: minimum inter-sequence signal in raw counts.
+        :param max_fold: maximum locally-measured fold-coverage to permit
         :param norm: normalisation by sequence lengths
         :param bisto: make the output matrix bistochastic
         :param mean_type: when performing normalisation, use "geometric, harmonic or arithmetic" mean.
@@ -1114,7 +1121,7 @@ class ContactMap:
                 print '\tnormed'
 
         # apply mask filter to unwanted sequences
-        self.set_filter_mask(min_len, min_sig, verbose)
+        self.set_filter_mask(min_len, min_sig, max_fold, verbose)
 
         # if there are sequences to mask, remove them from the map
         if self.order.count_accepted() < self.total_seq:
@@ -1486,42 +1493,51 @@ class ContactMap:
 
 class SequenceAnalyzer:
 
-    def __init__(self, cm):
-        self.cm = cm
-        self.seq_report = yaml.load(open('manu/fecal_1/seq_info.yaml', 'r'))
+    COV_TYPE = np.dtype([('index', np.int16), ('status', np.bool), ('node', np.float),
+                         ('local', np.float), ('fold', np.float)])
 
-    def contact_graph(self):
+    @staticmethod
+    def read_report(file_name):
+        return yaml.load(open(file_name, 'r'))
+
+    def __init__(self, seq_map, seq_report, seq_info, tip_size):
+        self.seq_map = seq_map
+        self.seq_report = seq_report
+        self.seq_info = seq_info
+        self.tip_size = tip_size
+
+    def _contact_graph(self):
         g = nx.Graph()
+        n_seq = len(self.seq_info)
 
-        for i in xrange(cm.total_seq):
-            si = self.cm.seq_info[i]
+        for i in xrange(n_seq):
+            si = self.seq_info[i]
             d = self.seq_report['seq_info'][si.name]
-            if self.cm.tip_size:
+            if self.tip_size:
                 g.add_node(i, _id=si.name,
-                           _cov=float(d.coverage),
+                           _cov=float(d['coverage']),
                            # this is a 2 element list for tip mapping
-                           _sites=d.sites,
-                           _len=int(d.length))
+                           _sites=d['sites'],
+                           _len=int(d['length']))
             else:
                 g.add_node(i, _id=si.name,
-                           _cov=float(d.coverage),
-                           _sites=int(d.sites),
-                           _len=int(d.length))
+                           _cov=float(d['coverage']),
+                           _sites=int(d['sites']),
+                           _len=int(d['length']))
 
-        if self.cm.tip_size:
-            m = self.cm.seq_map.sum(axis=(2, 3)).tocsr()
-        else:
-            m = cm.seq_map.tocsr()
+        _m = self.seq_map
+        if self.tip_size:
+            _m = _m.sum(axis=(2, 3))
 
-        for i in xrange(cm.total_seq):
-            for j in xrange(i, cm.total_seq):
-                if m[i, j] > 0:
-                    g.add_edge(i, j, weight=float(m[i, j]))
+        for i in xrange(n_seq):
+            for j in xrange(i, n_seq):
+                if _m[i, j] > 0:
+                    g.add_edge(i, j, weight=float(_m[i, j]))
 
         return g
 
     @staticmethod
-    def nlargest(g, u, n, k=0, attr_name='weight', local_set=None):
+    def _nlargest(g, u, n, k=0, local_set=None):
         """
         Build a list of nodes of length n within a radius k hops of node u in graph g, which have the
         largest weight. For Hi-C data, after normalisation, high weight can be used as a means of inferring
@@ -1531,46 +1547,58 @@ class SequenceAnalyzer:
         :param u: the target node
         :param n: the length of the 'nearby nodes' list
         :param k: the maximum number of hops away from u
-        :param attr_name: the attribute from which to draw the 'weight's
         :param local_set: used in recursion
         :return: a set of nodes.
         """
         if not local_set:
             local_set = set()
 
-        neighbors = [v[0] for v in heapq.nlargest(n+1, g[u].items(), key=lambda x: x[1][attr_name])]
+        neighbors = [v[0] for v in heapq.nlargest(n+1, g[u].items(), key=lambda x: x[1]['weight'])]
         local_set.update(neighbors)
-
         if k > 0:
             for v in neighbors:
                 if v == u:
                     continue
-                SequenceAnalyzer.nlargest(g, v, n, k-1, local_set)
+                SequenceAnalyzer._nlargest(g, v, n, k-1, local_set)
 
         return list(local_set)
 
-    @staticmethod
-    def find_degenerates(g, fold_max, min_len=0):
+    def report_degenerates(self, fold_max, min_len=0, verbose=False):
         """
         Making the assumption that degenerate sequences (those sequences which are repeats) have high coverage
-        relative to their local region, find those nodes in the graph whose coverage exceeds a threshold.
+        relative to their local region, report those nodes in the graph whose coverage exceeds a threshold.
 
-        :param g: the graph which to analyze
         :param fold_max: the maximum relative coverage allowed (between a node and its local region)
         :param min_len: the shorest allowable sequence to consider
-        :return: a list of sequences considered degenerate
+        :param verbose: debug output
+        :return: a report of all sequences degenerate status
         """
+
+        g = self._contact_graph()
+
         degens = []
         for u in g.nodes_iter():
-            if g.node[u]['_len'] < min_len:
+            if g.node[u]['_len'] < min_len or g.degree(u) == 0:
                 continue
-            # get the
-            nn = SequenceAnalyzer.nlargest(g, u, 2, 1)
-            cov_local = np.array([g.node[v]['_cov'] for v in nn])
-            gcov = mstats.gmean(cov_local)
-            fold_local = g.node[u]['_cov'] / float(gcov)
-            if fold_local > fold_max:
-                degens.append((u, g.node[u]['_cov'], gcov, fold_local))
+
+            signif_local_nodes = SequenceAnalyzer._nlargest(g, u, 4, 1)
+            local_mean_cov = mstats.gmean(np.array([g.node[v]['_cov'] for v in signif_local_nodes]))
+            fold_vs_local = g.node[u]['_cov'] / float(local_mean_cov)
+
+            is_degen = True if fold_vs_local > fold_max else False
+
+            degens.append((u, is_degen, g.node[u]['_cov'], local_mean_cov, fold_vs_local))
+
+        degens = np.array(degens, dtype=SequenceAnalyzer.COV_TYPE)
+
+        if verbose:
+            if len(degens) == 0:
+                print 'No degenerate sequences found'
+            else:
+                print '\tDegenerate sequence report\n\t--------------------------'
+                for di in degens[degens['status']]:
+                    print '\t', di
+
         return degens
 
 
@@ -1596,6 +1624,8 @@ if __name__ == '__main__':
     parser.add_argument('--min-insert', type=int, required=False, help='Minimum pair separation')
     parser.add_argument('--min-mapq', type=int, default=0, help='Minimum acceptable mapping quality [0]')
     parser.add_argument('--min-reflen', type=int, default=1, help='Minimum acceptable reference length [0]')
+    parser.add_argument('--min-signal', type=int, default=1, help='Minimum acceptable trans signal [1]')
+    parser.add_argument('--max-fold', type=float, default=None, help='Maximum acceptable relative coverage [None]')
     parser.add_argument('--pickle', help='Picked contact map')
     parser.add_argument('fasta', help='Reference fasta sequence')
     parser.add_argument('bam', help='Input bam file in query order')
@@ -1614,6 +1644,8 @@ if __name__ == '__main__':
                         args.min_insert,
                         args.min_mapq,
                         min_len=args.min_reflen,
+                        min_sig=args.min_signal,
+                        max_fold=args.max_fold,
                         strong=args.strong,
                         bin_size=args.bin_size,
                         tip_size=args.tip_size,
