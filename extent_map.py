@@ -1003,31 +1003,37 @@ class ContactMap:
         :param max_fold: maximum locally-measured fold-coverage to permit
         :param verbose: debug output
         """
+        acceptance_mask = np.ones(self.total_seq, dtype=np.bool)
 
-        # boolean array masking sequences shorter than limit
-        ix1 = self.order.lengths() >= min_len
+        # mask for sequences shorter than limit
+        _mask = self.order.lengths() >= min_len
         if verbose:
-            print '\tmin_len removed', self.total_seq - ix1.sum()
+            print '\tmin_len removed', self.total_seq - _mask.sum()
+        acceptance_mask &= _mask
 
-        if max_fold:
-            seq_analyzer = SequenceAnalyzer(self.seq_map, self.seq_report, self.seq_info, self.tip_size)
-            degen_seqs = seq_analyzer.report_degenerates(max_fold, verbose=False)
-            ix3 = ~degen_seqs['status']
-            if verbose:
-                print '\tdegen removed', self.total_seq - ix3.sum()
-
-        # boolean array masking sequences weaker than limit
+        # mask for sequences weaker than limit
         if self.tip_size:
             signal = simple_sparse.max_offdiag_4d(self.seq_map)
         else:
             signal = simple_sparse.max_offdiag(self.seq_map)
-        ix2 = signal >= min_sig
+        _mask = signal >= min_sig
         if verbose:
-            print '\tmin_sig removed', self.total_seq - ix2.sum()
+            print '\tmin_sig removed', self.total_seq - _mask.sum()
+        acceptance_mask &= _mask
 
-        self.order.set_mask_only(ix1 & ix2 & ix3)
+        if max_fold:
+            seq_analyzer = SequenceAnalyzer(self.seq_map, self.seq_report, self.seq_info, self.tip_size)
+            degen_seqs = seq_analyzer.report_degenerates(max_fold, verbose=False)
+            _mask = ~degen_seqs['status']
+            if verbose:
+                print '\tdegen removed', self.total_seq - _mask.sum()
+            acceptance_mask &= _mask
+
+        # retain the union of all masks.
+        self.order.set_mask_only(acceptance_mask)
+
         if verbose:
-            print '\tAcceptance union', self.order.count_accepted()
+            print '\tAccepted sequences (mask union)', self.order.count_accepted()
 
     def prepare_seq_map(self, min_len, min_sig, max_fold=None, norm=True, bisto=False, mean_type='geometric', verbose=False):
         """
