@@ -47,10 +47,9 @@ SeqInfo = namedtuple('SeqInfo', ['offset', 'refid', 'name', 'length'])
 @vectorize([float64(float64)])
 def piecewise_3c(s):
     pr = MIN_FIELD
-    if s < 300e3:
+    if s < 500e3:
         # Pareto2
         pr = P2ALPHA / P2LAMBDA * (1 + (s - P2MU)/P2LAMBDA)**(- P2ALPHA - 1)
-
     return pr
 
 
@@ -95,7 +94,7 @@ def poisson_lpmf3(ob, ex):
     return -s
 
 
-def calc_likelihood(an_order, cm):
+def calc_likelihood(cm):
     """
     For a given order and ContactMap instance, calculate the log likelihood.
 
@@ -106,17 +105,18 @@ def calc_likelihood(an_order, cm):
 
     borders = cm.grouping.borders
     centers = cm.grouping.centers
-    lengths = cm.order.lengths
-    extent_map = cm.extent_map
-
+    extent_map = cm.extent_map.tocsr().astype(np.int32)
     total_obs = cm.map_weight()
+
+    lengths = cm.order.order['length']
+    ori = cm.order.order['ori']
 
     log_l = 0.0
     for i, j in itertools.combinations(xrange(cm.total_seq), 2):
 
         # inter-contig separation defined by cumulative
         # intervening contig length.
-        gap_length = intervening(an_order, lengths, i, j)
+        gap_length = cm.order.intervening(i, j)
 
         # contig lengths
         li = lengths[i]
@@ -127,8 +127,8 @@ def calc_likelihood(an_order, cm):
         c_jl = centers[j]
 
         # orientation of sequences
-        s_i = an_order[i, 1]
-        s_j = an_order[j, 1]
+        s_i = ori[i]
+        s_j = ori[j]
 
         # all separations between bins, including the potential intervening distance L
         d_ij = gap_length + 0.5*(li + lj) + s_i * c_jl - s_j * c_ik.T
@@ -142,12 +142,12 @@ def calc_likelihood(an_order, cm):
 
         # observed counts
         # for now this is converted to dense array as we need zeros
-        n_ij = extent_map[i1:i2, j1:j2].toarray()
+        n_ij = extent_map[i1:i2, j1:j2].todense()
 
         # log likelihood
         log_l += poisson_lpmf3(n_ij, q_ij)
 
-    return float(log_l),
+    return log_l
 
 
 # Cigar codes that are not permitted.
@@ -333,13 +333,21 @@ class SeqOrder:
 
         return np.array(remapped, dtype=SeqOrder.INDEX_TYPE)
 
+    def accepted_positions(self, copy=True):
+        """
+        The current positional order of only those sequences which have not been excluded by the mask.
+        :param copy: return a copy
+        :return: all accepted positons in order of index
+        """
+        return self.all_positions(copy=copy)[:self.count_accepted()]
+
     def all_positions(self, copy=True):
         """
         The current positional order of all sequences. Internal logic relegates masked sequences to always come
         last and ascending surrogate id order.
 
         :param copy: return a copy of the positions
-        :return: all positions in order, masked or not.
+        :return: all positions in order of index, masked or not.
         """
         if copy:
             _p = self._positions.copy()
@@ -1021,6 +1029,7 @@ class ContactMap:
             print '\tmin_sig removed', self.total_seq - _mask.sum()
         acceptance_mask &= _mask
 
+        # mask for sequences considered to have aberrant coverage.
         if max_fold:
             seq_analyzer = SequenceAnalyzer(self.seq_map, self.seq_report, self.seq_info, self.tip_size)
             degen_seqs = seq_analyzer.report_degenerates(max_fold, verbose=False)
@@ -1321,6 +1330,8 @@ class ContactMap:
         fig.set_figheight(height)
 
         if simple:
+            if self.processed_map is None:
+                self.prepare_seq_map(self.min_len, self.min_sig, norm=norm)
             m = self.get_processed_map(permute=permute)
         else:
             m = self.get_extent_map(norm=norm, permute=permute)
@@ -1333,7 +1344,12 @@ class ContactMap:
         else:
             # seaborn heatmaps take a little extra work
 
-            _lab = [self.seq_info[i].name for i in self.order.order[:, 0]]
+            _lab = []
+            for i in self.order.accepted_positions():
+                if self.order.order[i]['ori'] < 0:
+                    _lab.append('- {}'.format(self.seq_info[i].name))
+                else:
+                    _lab.append('+ {}'.format(self.seq_info[i].name))
 
             m = m.toarray()
             if zero_diag:
@@ -1349,10 +1365,12 @@ class ContactMap:
 
         if with_names:
             if simple:
-                ax.set_xticks(xrange(1, self.total_seq+1))
-                ax.set_yticks(xrange(1, self.total_seq+1))
+                step = 2 if self.tip_size else 1
+                ax.set_xticks(xrange(2, step*self.order.count_accepted()+step, step))
+                ax.set_yticks(xrange(2, step*self.order.count_accepted()+step, step))
             else:
-                _cbins = np.cumsum(self.grouping.bins[self.order.order[:, 0]])
+
+                _cbins = np.cumsum(self.grouping.bins[self.order.accepted_positions()])
                 ax.set_xticks(_cbins - 0.5)
                 ax.set_yticks(_cbins - 0.5)
 
@@ -1599,42 +1617,7 @@ if __name__ == '__main__':
         logger.info('Saving contact map instance...')
         cm.save(out_name(args.outbase, 'cm.p'))
 
-    # logger.info('Saving extent contact map...')
-    # mapio.write_map(cm.to_dense(), out_name(args.outbase, 'extent'), args.format)
-    #
-    # logger.info('Plotting sequence image...')
-    # cm.plot(out_name(args.outbase, 'simple.png'), simple=True)
-    #
-    # logger.info('Plotting starting binned image...')
-    # cm.plot(out_name(args.outbase, 'start.png'))
-    #
-    # logL = calc_likelihood(cm.order.order, cm)
-    # logger.info('Initial logL {}'.format(logL[0]))
-    #
-    # logger.info('Beginning HC ordering...')
-    # hc_o = ordering.hc_order(cm.create_contig_graph())
-    # cm.order.set_only_order(hc_o)
-    # logger.info('HC logL {}'.format(calc_likelihood(cm.order.order, cm)[0]))
-    # logger.info('Permuting map...')
-    # m = cm.get_ordered_map()
-    # logger.info('Plotting HC image...')
-    # cm.plot(out_name(args.outbase, 'hc.png'))
-    #
-    # logger.info('Beginning adhoc ordering...')
-    # ah_o = ordering.adhoc_order(cm.create_contig_graph(scale=True))
-    # cm.order.set_only_order(ah_o)
-    # logL = calc_likelihood(cm.order.order, cm)
-    # logger.info('Adhoc logL {}'.format(logL[0]))
-    # logger.info('Permuting map...')
-    # m = cm.get_ordered_map()
-    # logger.info('Plotting adhoc image...')
-    # cm.plot(out_name(args.outbase, 'adhoc.png'))
+    logger.info('Saving extent contact map...')
+    mapio.write_map(cm.to_dense(), out_name(args.outbase, 'extent'), args.format)
 
-    # logger.info('Beginning LHK ordering...')
-    # lkh_o = ordering.lkh_order(cm.get_seq_map(norm=True), args.outbase, precision=1, runs=100)
-    # cm.order.set_only_order(lkh_o)
-    # logL = calc_likelihood(cm.order.order, cm)
-    # logger.info('LKH logL {}'.format(logL[0]))
-    # logger.info('Plotting LKH image...')
-    # cm.plot(out_name(args.outbase, 'full_lkh.png'), permute=True, norm=True, with_names=False)
-    # cm.plot(out_name(args.outbase, 'seq_lkh.png'), simple=True, permute=True, norm=True, with_names=False)
+    cm.create_contig_graph()
