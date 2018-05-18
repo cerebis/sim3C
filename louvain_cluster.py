@@ -49,7 +49,7 @@ def decompose_graph(g):
     return decomposed
 
 
-def cluster(g, no_iso, method='simple', ragbag=False, verbose=False):
+def cluster(g, no_iso, method=None, ragbag=False, verbose=False):
 
     ragbag_group = None
     singletons = None
