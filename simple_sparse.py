@@ -1,6 +1,7 @@
 import numpy as np
 import scipy.sparse as scisp
 import sparse
+import warnings
 
 
 def is_hermitian(m, tol=1e-6):
@@ -34,7 +35,7 @@ def tensor_print(T):
 
                 print ']',
             print '|'
-        if i < T.shape[1] - 2:
+        if i < T.shape[1] - 1:
             print '+'
     print
 
@@ -54,13 +55,22 @@ def kr_biostochastic(m, tol=1e-6, x0=None, delta=0.1, Delta=3, verbose=False, ma
     """
     assert scisp.isspmatrix(m), 'input matrix must be sparse matrix from scipy.spmatrix'
     assert m.shape[0] == m.shape[1], 'input matrix must be square'
+
+    _orig = m.copy()
+
+    # replace 0 diagonals with 1, on the working matrix. This avoids potentially
+    # exploding scale-factors. KR should be regularlized!
+    m = m.tolil()
+    ix = np.where(m.diagonal() == 0)
+    m[ix, ix] = 1
+    if len(ix) > 0:
+        warnings.warn('Treating {} non-zero diagonal elements as 1 for balancing'.format(len(ix)))
+
     if not scisp.isspmatrix_csr(m):
         m = m.tocsr()
-    try:
-        assert is_hermitian(m, tol), 'input matrix is expected to be fully symmetric'
-    except AssertionError as e:
-        import warnings
-        warnings.warn(e.message)
+
+    if not is_hermitian(m, tol):
+        warnings.warn('input matrix is expected to be fully symmetric')
 
     n = m.shape[0]
     e = np.ones(n)
@@ -152,6 +162,8 @@ def kr_biostochastic(m, tol=1e-6, x0=None, delta=0.1, Delta=3, verbose=False, ma
             eta = max(eta, g * eta_o ** 2)
         eta = max(min(eta, etamax), stop_tol / res_norm)
 
+    del m
+
     if verbose:
         print 'It took {} iterations to achieve bistochasticity'.format(n_iter)
 
@@ -159,7 +171,7 @@ def kr_biostochastic(m, tol=1e-6, x0=None, delta=0.1, Delta=3, verbose=False, ma
         print 'Warning: maximum number of iterations ({}) reached without convergence'.format(max_iter)
 
     X = scisp.spdiags(x, 0, n, n, 'csr')
-    return X.T.dot(m.dot(X)), x
+    return X.T.dot(_orig.dot(X)), x
 
 
 class Sparse2DAccumulator(object):
@@ -404,3 +416,33 @@ def compress_4d(_m, _mask):
     new_shape = list(_m.shape)
     new_shape[:2] -= shift[-1]
     return sparse.COO(keep_coords, keep_data, shape=new_shape, has_duplicates=False)
+
+
+def dotdot(_m, _a):
+    """
+    Assuming A is a vector representing the trace of a diagonal matrix, dotdot
+    performs the transformation dot(A.T,dot(M,A)) on  a sparse matrix.
+    :param _m: the sparse matrix, modified in-place
+    :param _a: the 1d trace of a diagonal matrix
+    :return: the in-place modified matrix
+    """
+    for n in xrange(_m.nnz):
+        i, j = _m.coords[:2, n]
+        _m.data[n] *= _a[i] * _a[j]
+    return _m
+
+
+def kr_biostochastic_4d(m4d, **kwargs):
+    """
+    Knight-Ruiz applied to a NxNx2x2 tensor. The scale factors are determined by first converting
+    this to a 2D matrix, summed on axis 2 and 3. The method is intended for determining scale-factors
+    of the doublet matrix used in LKH ordering.
+    :param m4d: a NxNxmxn matrix
+    :param kwargs: options to kr_biostochastic()
+    :return: a scaled matrix, scale-factors
+    """
+    # reduce to a 2D array, where we're summing the 2x2 submatrices
+    m2d = m4d.astype(np.float).sum(axis=(2, 3)).tocsr()
+    _, scl = kr_biostochastic(m2d, **kwargs)
+    return dotdot(m4d.astype(np.float), scl), scl
+
