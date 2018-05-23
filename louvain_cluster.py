@@ -51,6 +51,8 @@ def decompose_graph(g):
 
 def cluster(g, no_iso, method=None, ragbag=False, verbose=False):
 
+    assert np.logical_xor(no_iso, ragbag), 'options no_iso and ragbag are mutually exclusive'
+
     ragbag_group = None
     singletons = None
 
@@ -70,10 +72,14 @@ def cluster(g, no_iso, method=None, ragbag=False, verbose=False):
 
     # put them in a ragbag instead
     elif ragbag:
-        print 'Ragbag cluster will cotnain {0} nodes'.format(len(singletons))
-        g.remove_nodes_from(singletons)
-        ragbag_group = dict((n, 1.0) for n in singletons)
-        print_info(g)
+        if len(singletons) == 0:
+            print 'Ragbag cluster would be empty, so excluded'
+            ragbag_group = {}
+        else:
+            print 'Ragbag cluster will cotnain {0} nodes'.format(len(singletons))
+            g.remove_nodes_from(singletons)
+            ragbag_group = dict((n, 1.0) for n in singletons)
+            print_info(g)
 
     # determine the best partitioning of g
     print 'Determining best partitioning'
