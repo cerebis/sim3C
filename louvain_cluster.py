@@ -151,7 +151,7 @@ def write_mcl(communities, path):
     with open(path, 'w') as hout:
         keys = sorted(communities.keys())
         for k in keys:
-            line = ' '.join(sorted(communities[k].keys()))
+            line = ' '.join([str(sid) for sid in sorted(communities[k].keys())])
             hout.write(line.strip())
             hout.write('\n')
 
