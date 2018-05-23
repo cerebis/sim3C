@@ -184,7 +184,7 @@ class Sparse2DAccumulator(object):
 
     def __setitem__(self, index, value):
         assert len(index) == 2 and index[0] >= 0 and index[1] >= 0, 'invalid index: {}'.format(index)
-        assert isinstance(value, int), 'values must be integers'
+        assert isinstance(value, (int, np.int)), 'values must be integers'
         self.mat[index] = value
 
     def __getitem__(self, index):
@@ -203,8 +203,6 @@ class Sparse2DAccumulator(object):
         _data = []
         _m = self.mat
         for i, j in _m.keys():
-            assert i <= j, 'fuck off'
-
             _coords[0].append(i)
             _coords[1].append(j)
             _data.append(_m[i, j])
