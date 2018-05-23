@@ -44,6 +44,18 @@ P2MU = 13.973247315647466
 SeqInfo = namedtuple('SeqInfo', ['offset', 'refid', 'name', 'length'])
 
 
+class NoneAcceptedException(Exception):
+    """All sequences were excluded during filtering"""
+    def __init__(self):
+        super(NoneAcceptedException, self).__init__('all sequences were excluded')
+
+
+class TooFewException(Exception):
+    """LKH requires a minimum of three nodes"""
+    def __init__(self):
+        super(TooFewException, self).__init__('LKH requires a minimum of three sequences')
+
+
 @vectorize([float64(float64)])
 def piecewise_3c(s):
     pr = MIN_FIELD
@@ -405,18 +417,20 @@ class SeqOrder:
     def set_only_order(self, _ord, implicit_excl=False):
         """
         Set only the order, while ignoring orientation. An ordering is defined
-        as a 1D vectorize whose values are the positions and whose indices are
-        the sequence surrogate ids. NOTE: This definition can be the opposite of what
-        is returned by some ordering methods, and np.argsort(_v) should inverse
-        the relation.
+        as a 1D array of the structured type INDEX_TYPE, where elements are the
+        position and orientation of each indices.
 
-        If the order includes only active sequences, setting implicit_excl=True
+        NOTE: This definition can be the opposite of what is returned by some
+        ordering methods, and np.argsort(_v) should inverse the relation.
+
+        NOTE: If the order includes only active sequences, setting implicit_excl=True
         the method will implicitly assume unmentioned ids are those currently
         masked. An exception is raised if a masked sequence is included in the order.
 
         :param _ord: 1d ordering
         :param implicit_excl: implicitly extend the order to include unmentioned excluded sequences.
         """
+        assert _ord.dtype == SeqOrder.INDEX_TYPE, 'Wrong type supplied, _ord should be of INDEX_TYPE'
 
         if len(_ord) < len(self.order):
             # some sanity checks
@@ -424,13 +438,19 @@ class SeqOrder:
                                   'of orders only mentioning accepted sequences'
             assert len(_ord) == self.count_accepted(), 'new order must mention all ' \
                                                        'currently accepted sequences'
-            assert len(set(_ord['index']) & set(self.excluded())) == 0, 'new order and excluded must not ' \
-                                                                        'overlap when using implicit assignment'
-            assert len(set(_ord['index']) ^ set(self.accepted())) == 0, 'incomplete new order supplied,' \
-                                                                        'missing accepted ids'
+            # those surrogate ids mentioned in the order
+            mentioned = set(_ord['index'])
+            assert len(mentioned & set(self.excluded())) == 0, 'new order and excluded must not ' \
+                                                               'overlap when using implicit assignment'
+            assert len(mentioned ^ set(self.accepted())) == 0, 'incomplete new order supplied,' \
+                                                               'missing accepted ids'
             # assign the new orders
             self.order['pos'][_ord['index']] = np.arange(len(_ord), dtype=np.int32)
             self.order['ori'][_ord['index']] = _ord['ori']
+            # mask remaining, unmentioned indices
+            # _mask = np.zeros_like(self.mask_vector(), dtype=np.bool)
+            # _mask[_ord['index']] = True
+            # self.set_mask_only(_mask)
         else:
             # just a simple complete order update
             assert len(_ord) == len(self.order), 'new order was a different length'
@@ -439,6 +459,14 @@ class SeqOrder:
             self.order['pos'][_ord] = np.arange(len(_ord), dtype=np.int32)
 
         self._update_positions()
+
+    def accepted_order(self):
+        """
+        :return: an INDEX_TYPE array of the order and orientation of the currently accepted sequences.
+        """
+        idx = np.where(self.order['mask'])
+        ori = np.ones(self.count_accepted(), dtype=np.int)
+        return np.array(zip(idx, ori), dtype=SeqOrder.INDEX_TYPE)
 
     def mask_vector(self):
         """
@@ -496,13 +524,6 @@ class SeqOrder:
             return self.order['length'][self.order['mask']]
         else:
             return self.order['length']
-
-    def get_length(self, _id):
-        """
-        :param _id: the surrogate id of sequence
-        :return: sequence length
-        """
-        return self.order[_id]['length']
 
     def shuffle(self):
         """
@@ -597,6 +618,7 @@ class ContactMap:
         self.strong = strong
         self.seq_info = []
         self.seq_map = None
+        self.seq_file = seq_file
         self.grouping = None
         self.extent_map = None
         self.order = None
@@ -606,6 +628,7 @@ class ContactMap:
         self.cov_info = None
         self.med_alpha = med_alpha
         self.processed_map = None
+        self.primary_acceptance_mask = None
         self.bisto_scale = None
         self.seq_report = SequenceAnalyzer.read_report(cov_file)
         self.seq_analyzer = None
@@ -714,8 +737,6 @@ class ContactMap:
         _matcher = _strong_match if self.strong else _simple_match
 
         def _on_tip_withlocs(p1, p2, l1, l2, _tip_size):
-            # TODO this instantiation is faster/as-fast as taking it outside
-            # TODO we would have to fix Sparse4D to just pass back indices i, j
             tailhead_mat = np.zeros((2, 2), dtype=np.uint32)
             i = None
             j = None
@@ -768,10 +789,10 @@ class ContactMap:
         #         print '\t',i
         #     print
 
-        _on_tip = _always_true if self.tip_size is None else _on_tip_withlocs
+        _on_tip = _always_true if not self.is_tipbased() else _on_tip_withlocs
 
         # initialise a sparse matrix for accumulating the map
-        if not self.tip_size:
+        if not self.is_tipbased():
             # just a basic NxN sparse array for normal whole-sequence binning
             _seq_map = simple_sparse.Sparse2DAccumulator(self.total_seq)
         else:
@@ -939,13 +960,25 @@ class ContactMap:
         return rev_idx
 
     def map_weight(self):
+        """
+        :return: the total map weight (sum ij)
+        """
         return self.seq_map.sum()
 
     def is_empty(self):
+        """
+        :return: True if the map has zero weight
+        """
         return self.map_weight() == 0
 
+    def is_tipbased(self):
+        """
+        :return: True if the seq_map is a tip-based 4D tensor
+        """
+        return self.tip_size is not None
+
     def find_order(self, min_len, min_sig, max_fold, norm=True, bisto=True, mean_type='geometric',
-                   inverse_method='inverse', verbose=False):
+                   inverse_method='inverse', external_mask=None, verbose=False):
         """
         Using LKH TSP solver, find the best ordering of the sequence map in terms of proximity ligation counts.
         Here, it is assumed that sequence proximity can be inferred from number of observed trans read-pairs, where
@@ -958,18 +991,26 @@ class ContactMap:
         :param bisto: make the matrix bistochastic before analysis
         :param mean_type: for length normalization, the chosen mean used between sequences
         :param inverse_method: the chosen inverse method for converting count (similarity) to distance
+        :param external_mask: include (union with filter) an additional mask on sequences
         :param verbose: debug output
         :return: the surrogate ids in optimal order
         """
 
         # prepare the input sequence map for analysis
-        self.prepare_seq_map(min_len, min_sig, max_fold, norm=norm, bisto=bisto, mean_type=mean_type, verbose=verbose)
+        self.prepare_seq_map(min_len, min_sig, max_fold, norm=norm, bisto=bisto, mean_type=mean_type,
+                             external_mask=external_mask, verbose=verbose)
 
         # we'll supply a partially initialized distance function
-        dist_func = partial(ordering.similarity_to_distance, method=inverse_method, alpha=1.2, beta=1, verbose=verbose)
+        dist_func = partial(ordering.similarity_to_distance, method=inverse_method, alpha=1.2, beta=1,
+                            verbose=verbose)
 
-        if self.tip_size:
+        if self.is_tipbased():
             m = self.get_processed_map()
+
+            # a minimum of three sequences is required to run LKH
+            if m.shape[0] < 3:
+                raise TooFewException()
+
             lkh_o = ordering.lkh_order(m, 'lkhdb_run', lkh_exe='../lkh/LKH-3.0/LKH', precision=1, seed=12345, runs=2,
                                        pop_size=50, dist_func=dist_func, special=False, verbose=True,
                                        fixed_edges=[(i, i+1) for i in xrange(1, m.shape[0], 2)])
@@ -1002,15 +1043,28 @@ class ContactMap:
 
         return lkh_o
 
-    def set_filter_mask(self, min_len, min_sig, max_fold=None, verbose=False):
+    def get_primary_acceptance_mask(self):
+        return self.primary_acceptance_mask.copy()
+
+    def set_primary_acceptance_mask(self, min_len, min_sig, max_fold=None, update=False, verbose=False):
         """
-        Determine and set the filter mask using the specified constraints.
+        Determine and set the filter mask using the specified constraints across the entire
+        contact map. The mask is True when a sequence is considered acceptable wrt to the
+        constraints. The mask is also returned by the function for convenience.
 
         :param min_len: minimum sequence length
         :param min_sig: minimum off-diagonal signal (counts)
         :param max_fold: maximum locally-measured fold-coverage to permit
+        :param update: replace the current primary mask if it exists
         :param verbose: debug output
+        :return: an acceptance mask over the entire contact map
         """
+        # simply return the current mask if it has already been determined
+        # and an update is not requested
+        if not update and self.primary_acceptance_mask is not None:
+            print '\tusing existing mask'
+            return self.get_primary_acceptance_mask()
+
         acceptance_mask = np.ones(self.total_seq, dtype=np.bool)
 
         # mask for sequences shorter than limit
@@ -1020,7 +1074,7 @@ class ContactMap:
         acceptance_mask &= _mask
 
         # mask for sequences weaker than limit
-        if self.tip_size:
+        if self.is_tipbased():
             signal = simple_sparse.max_offdiag_4d(self.seq_map)
         else:
             signal = simple_sparse.max_offdiag(self.seq_map)
@@ -1039,12 +1093,15 @@ class ContactMap:
             acceptance_mask &= _mask
 
         # retain the union of all masks.
-        self.order.set_mask_only(acceptance_mask)
+        self.primary_acceptance_mask = acceptance_mask
 
         if verbose:
             print '\tAccepted sequences (mask union)', self.order.count_accepted()
 
-    def prepare_seq_map(self, min_len, min_sig, max_fold=None, norm=True, bisto=False, mean_type='geometric', verbose=False):
+        return self.get_primary_acceptance_mask()
+
+    def prepare_seq_map(self, min_len, min_sig, max_fold=None, norm=True, bisto=False, mean_type='geometric',
+                        external_mask=None, update_mask=False, verbose=False):
         """
         Prepare the sequence map (seq_map) by application of various filters and normalisations.
 
@@ -1054,6 +1111,8 @@ class ContactMap:
         :param norm: normalisation by sequence lengths
         :param bisto: make the output matrix bistochastic
         :param mean_type: when performing normalisation, use "geometric, harmonic or arithmetic" mean.
+        :param external_mask: include (union with filter) an additional mask on sequences
+        :param update_mask: replace the existing primary mask, if one alread exists
         :param verbose: debug output
         """
         if verbose:
@@ -1064,32 +1123,42 @@ class ContactMap:
 
         # apply length normalisation if requested
         if norm:
-            m = self._norm_seq(m, mean_type)
+            m = self._norm_seq(m, self.is_tipbased(), mean_type=mean_type)
             if verbose:
                 print '\tnormed'
 
-        # apply mask filter to unwanted sequences
-        self.set_filter_mask(min_len, min_sig, max_fold, verbose)
+        # assign a mask to avoid problematic sequences
+        _mask = self.set_primary_acceptance_mask(min_len, min_sig, max_fold=max_fold,
+                                                 update=update_mask, verbose=verbose)
+        # from a union of the sequence filter and external mask
+        if external_mask is not None:
+            _mask &= external_mask
+            print '\tunion with external', _mask.sum()
+        self.order.set_mask_only(_mask)
+
+        if self.order.count_accepted() < 1:
+            raise NoneAcceptedException()
 
         # if there are sequences to mask, remove them from the map
         if self.order.count_accepted() < self.total_seq:
-            if self.tip_size:
+            if self.is_tipbased():
                 m = simple_sparse.compress_4d(m, self.order.mask_vector())
             else:
                 m = simple_sparse.compress(m.tocoo(), self.order.mask_vector())
             if verbose:
                 print '\tfilter reduced', m.shape
 
-        if self.tip_size:
-            m = simple_sparse.flatten_tensor_4d(m)
-
         # make map bistochastic if requested
         if bisto:
-            m, scl = simple_sparse.kr_biostochastic(m)
+            m, scl = self._bisto_seq(m, self.is_tipbased())
             # retain the scale factors
             self.bisto_scale = scl
             if verbose:
                 print '\tbalanced'
+
+        if self.is_tipbased():
+            # lastly, convert the 4D map into a 2Nx2N 2D map.
+            m = simple_sparse.flatten_tensor_4d(m)
 
         self.processed_map = m
 
@@ -1105,7 +1174,7 @@ class ContactMap:
         _m = self.processed_map.astype(dtype)
         # reorder if requested
         if permute:
-            _m = self._reorder_seq(_m)
+            _m = self._reorder_seq(_m, self.is_tipbased())
             if verbose:
                 print '\treordered'
         return _m
@@ -1154,7 +1223,34 @@ class ContactMap:
 
         return m
 
-    def _reorder_seq(self, _map):
+    def extent_to_seq(self):
+        """
+        Convert the extent map into a single-pixel per sequence "seq_map". This method
+        is useful when only a tip based seq_map has been produced, and an analysis would be
+        better done on a full accounting of mapping interactions across each sequences full
+        extent.
+        :return: a seq_map representing all counts across each sequence
+        """
+        m = self.extent_map.tocsr()
+        m_out = simple_sparse.Sparse2DAccumulator(self.total_seq)
+        cbins = np.cumsum(self.grouping.bins)
+        a0 = 0
+        for i in xrange(len(self.grouping.bins)):
+            a1 = cbins[i]
+            # sacrifice memory for significant speed up slicing below
+            row_i = m[a0:a1, :].todense()
+            b0 = 0
+            for j in xrange(i, len(self.grouping.bins)):
+                b1 = cbins[j]
+                mij = row_i[:, b0:b1].sum()
+                if mij == 0:
+                    continue
+                m_out[i, j] = int(mij)
+                b0 = b1
+            a0 = a1
+        return m_out.get_coo()
+
+    def _reorder_seq(self, _map, tip_based):
         """
         Reorder a simple sequence map using the supplied map
 
@@ -1164,7 +1260,7 @@ class ContactMap:
         assert sp.isspmatrix(_map), 'reordering expects a sparse matrix type'
 
         _order = self.order.gapless_positions()
-        if self.tip_size:
+        if tip_based:
             _order = SeqOrder.double_order(_order)
 
         assert _map.shape[0] == _order.shape[0], 'supplied map and unmasked order are different sizes'
@@ -1174,16 +1270,31 @@ class ContactMap:
         p = p.tocsr()
         return p.dot(_map.tocsr()).dot(p.T)
 
-    def _norm_seq(self, _map, mean_type='geometric'):
+    def _bisto_seq(self, m, tip_based):
+        """
+        Make a contact map bistochastic. This is another form of normslisation. Automatically
+        handles 2D and 4D maps.
+        :param m: a map to balance (make bistochastic)
+        :param tip_based: treat the supplied map as a tip-based tensor
+        :return: the balanced map
+        """
+        if tip_based:
+            m, scl = simple_sparse.kr_biostochastic_4d(m)
+        else:
+            m, scl = simple_sparse.kr_biostochastic(m)
+        return m, scl
+
+    def _norm_seq(self, _map, tip_based, mean_type='geometric'):
         """
         Normalise a simple sequence map in place by the geometric mean of interacting contig pairs lengths.
         The map is assumed to be in starting order.
 
         :param _map: the target map to apply normalisation
+        :param tip_based: treat the supplied map as a tip-based tensor
         :param mean_type: choice of mean (harmonic, geometric, arithmetic)
         :return: normalized map
         """
-        if self.tip_size:
+        if tip_based:
             _map = _map.astype(np.float)
             _tip_size = float(self.tip_size)
             _l = [li if li < _tip_size else _tip_size for li in self.order.lengths()]
@@ -1365,7 +1476,7 @@ class ContactMap:
 
         if with_names:
             if simple:
-                step = 2 if self.tip_size else 1
+                step = 2 if self.is_tipbased() else 1
                 ax.set_xticks(xrange(2, step*self.order.count_accepted()+step, step))
                 ax.set_yticks(xrange(2, step*self.order.count_accepted()+step, step))
             else:
@@ -1379,73 +1490,166 @@ class ContactMap:
         if fname:
             plt.savefig(fname, dpi=dpi)
 
-    def create_contig_graph(self, norm=True, scale=False, extern_ids=False):
-        """
-        Create a graph where contigs are nodes and edges linking
-        nodes are weighted by the cumulative weight of contacts shared
-        between them, normalized by the product of the number of fragments
-        involved.
+        plt.close()
 
-        :param norm: normalize weights by site count, Ni x Nj
+    def to_graph(self, norm=True, bisto=False, scale=False, extern_ids=False, convert_extent=False):
+        """
+        Convert the seq_map to a undirected Networkx Graph.
+
+        The contact map is effectively an adjacency matrix, where sequences
+        are the nodes and edges weighted by the observed counts. Self-loops
+        are not included by default and weights are affected by normalisation
+        choices.
+
+        :param norm: normalize weights by length
+        :param bisto: normalise using bistochasticity
         :param scale: scale weights (max_w = 1)
         :param extern_ids: use the original external sequence identifiers for node ids
+        :param convert_extent: use the full extent map to calculate a full seq_map (if seq_map is tip based)
         :return: graph of contigs
         """
-        _order = self.order.gapless_positions()
-        _len = self.order.lengths()
-
         if extern_ids:
             _nn = lambda x: self.seq_info[x].name
         else:
             _nn = lambda x: x
 
         g = nx.Graph()
-        for u in _order:
-            # as networkx chokes serialising numpy types, explicitly type cast
-            g.add_node(_nn(u), length=int(_len[u]))
+        g.add_nodes_from(_nn(u) for u in xrange(self.total_seq))
 
-        m = self.get_extent_map(norm=norm).tocsr()
+        if convert_extent:
+            m = self.extent_to_seq().astype(np.float)
+        else:
+            m = self.seq_map.astype(np.float)
 
-        max_w = 0
-        for i in xrange(len(_order)):
+        is4d = not convert_extent and self.is_tipbased()
+        if norm:
+            m = self._norm_seq(m, tip_based=is4d)
+        if bisto:
+            m, scl = self._bisto_seq(m, tip_based=is4d)
 
-            # number of sites on contig i
-            ni = self.grouping.bins[i]
-            i1, i2 = self.grouping.borders[i]
+        if is4d:
+            # convert 2x2 matrices to a single weight
+            m = m.sum(axis=(2, 3)).to_scipy_sparse()
 
-            for j in xrange(i + 1, len(_order)):
+        if not sp.isspmatrix_coo(m):
+            m = m.tocoo()
 
-                j1, j2 = self.grouping.borders[j]
+        scl = 1.0/m.max() if scale else 1
 
-                # as networkx chokes serialising numpy types, explicitly type cast
-                obs = float(m[i1:i2, j1:j2].sum())
-                if obs == 0:
-                    continue
-
-                # normalized by the square of the number of sites between i and j
-                if norm:
-                    # number of sites on contig j
-                    nj = self.grouping.bins[j]
-                    nrm_w = obs
-                    if obs != 0:
-                        nrm_w /= ni * nj
-                    g.add_edge(_nn(i), _nn(j), weight=nrm_w, rawweight=obs)
-
-                    if nrm_w > max_w:
-                        max_w = nrm_w
-
-                else:
-                    g.add_edge(_nn(i), _nn(j), weight=obs, rawweight=obs)
-
-                    if obs > max_w:
-                        max_w = obs
-
-        if scale:
-            for u, v in g.edges_iter():
-                if g[u][v] > 0:
-                    g[u][v]['weight'] /= max_w
+        for u, v, w in itertools.izip(m.row, m.col, m.data):
+            g.add_edge(_nn(u), _nn(v), weight=w * scl)
 
         return g
+
+
+def cluster_map(cm, method='louvain', convert_extent=False):
+    """
+    Cluster a contact map into groups, as an approximate proxy for "species" bins. This is recommended prior to
+    applying TSP ordering, minimising the breaking of its assumptions that all nodes should connect and be traversed.
+    :param cm: the contact map to cluster
+    :param method: clustering algorithm to employ
+    :param convert_extent: use the full extent map to calculate a full seq_map (if seq_map is tip based)
+    :return:
+    """
+
+    def read_mcl(pathname):
+        """
+        Read a MCL solution file converting this to a TruthTable
+        :param pathname: mcl output file
+        :return: truth table
+        """
+
+        with open(pathname, 'r') as h_in:
+            # read the MCL file, which lists all members of a class on a single line
+            # the class ids are implicit, therefore we use line number.
+            mcl = {}
+            for cl_id, line in enumerate(h_in):
+                line = line.rstrip()
+                if not line:
+                    break
+                mcl[cl_id] = {'seq_ids': np.array(sorted([int(tok) for tok in line.split()]))}
+        return mcl
+
+    g = cm.to_graph(norm=True, bisto=True, scale=True, convert_extent=convert_extent)
+
+    if method == 'louvain':
+        import louvain_cluster
+        # determine standard louvain clusters
+        all_cl = louvain_cluster.cluster(g, no_iso=True, ragbag=False)
+        louvain_cluster.write_mcl(all_cl, 'all_cl.mcl')
+        # standardise the result
+        all_cl = {cl_id: {'seq_ids': np.array(sorted([seq_id for seq_id in all_cl[cl_id]]))} for cl_id in all_cl}
+    elif method == 'mcl':
+        import subprocess
+        base_name = 'cm_graph'
+        nx.write_edgelist(g, path='{}.edges'.format(base_name), data=['weight'])
+        subprocess.check_call(['mcl-14-137/bin/mcl', '{}.edges'.format(base_name), '--abc',
+                               '-I', '1.2', '-o', '{}.mcl'.format(base_name)])
+        all_cl = read_mcl('{}.mcl'.format(base_name))
+    elif method == 'ganxis':
+        import subprocess
+        base_name = 'cm_graph'
+        nx.write_edgelist(g, path='{}.edges'.format(base_name), data=['weight'])
+        subprocess.check_call(['java', '-jar', 'GANXiS_v3.0.2/GANXiSw.jar', '-r', '0.25', '-d', '.', '-t', '100',
+                               '-ov', '1', '-W', '0', '-Sym', '1', '-i', '{}.edges'.format(base_name)])
+        all_cl = read_mcl('SLPAw_{}_run1_r0.25_v3_T100.icpm'.format(base_name))
+    else:
+        raise RuntimeError('unimplemented method [{}]'.format(method))
+
+    # add total extent to each cluster
+    for cl_id in all_cl:
+        all_cl[cl_id]['extent'] = cm.order.lengths()[all_cl[cl_id]['seq_ids']].sum()
+
+    return all_cl
+
+
+def order_clusters(cm, all_cl, min_len=None, min_sig=None, max_fold=None, min_extent=None, min_size=1):
+    """
+    Determine the order of sequences for a given cluster.
+
+    :param cm: the contact map
+    :param all_cl: the sequence clusters derived from the supplied contact map
+    :param min_len: within a cluster exclude sequences that are too short (bp)
+    :param min_sig: within a cluster exclude sequences with weak signal (counts)
+    :param max_fold: within a cluster, exclude sequences that appear to be overly represented
+    :param min_size: skip clusters which containt too few sequences
+    :param min_extent: skip clusters whose total extent (bp) is too short
+    :return: map of cluster orders, by cluster id
+    """
+
+    orders = {}
+    for cl_id, cl_map in all_cl.iteritems():
+        print 'Ordering cluster {}'.format(cl_id)
+
+        # calculate the clusters extent
+        cl_extent = cm.order.lengths()[cl_map['seq_ids']].sum()
+        print '\t{}bp extent'.format(cl_extent),
+        if cl_extent < min_extent:
+            print '-- excluded cluster due to small extent'
+            continue
+        elif len(cl_map['seq_ids']) < min_size:
+            print '-- excluded cluster contains too few sequences'
+            continue
+        else:
+            print
+
+        # enable only sequences in the cluster
+        _mask = np.zeros_like(cm.order.mask_vector())
+        _mask[cl_map['seq_ids']] = True
+
+        try:
+            _ord = cm.find_order(min_len, min_sig, max_fold=max_fold, verbose=True, norm=True, bisto=True,
+                                 inverse_method='neglog', external_mask=_mask)
+        except NoneAcceptedException as e:
+            print '{} : cluster {} will be masked'.format(e.message, cl_id)
+            continue
+        except TooFewException as e:
+            print '{} : ordering not possible for cluster {}'.format(e.message, cl_id)
+            _ord = cm.order.accepted_order()
+
+        orders[cl_id] = _ord
+
+    return orders
 
 
 class SequenceAnalyzer:
@@ -1617,7 +1821,8 @@ if __name__ == '__main__':
         logger.info('Saving contact map instance...')
         cm.save(out_name(args.outbase, 'cm.p'))
 
-    logger.info('Saving extent contact map...')
-    mapio.write_map(cm.to_dense(), out_name(args.outbase, 'extent'), args.format)
+    # cluster the entire map
+    cl_map = cluster_map(cm, method=args.cluster_method)
 
-    cm.create_contig_graph()
+    # order each cluster
+    order_clusters(cm, cl_map)
