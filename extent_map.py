@@ -1,26 +1,30 @@
-from collections import OrderedDict
-from numba import jit, vectorize, int64, int32, float64
-import simple_sparse
-import numpy as np
-from numpy import log, pi
-import scipy.sparse as sp
+import cPickle
+import heapq
 import itertools
 import logging
 import os
-import pysam
-import Bio.SeqIO as SeqIO
-import networkx as nx
-import ordering
-import matplotlib.pyplot as plt
-import cPickle
-import seaborn
+import subprocess
 import uuid
+from collections import OrderedDict
 from collections import namedtuple
 from functools import partial
-import heapq
-import yaml
-import scipy.stats.mstats as mstats
 
+import Bio.SeqIO as SeqIO
+import matplotlib.pyplot as plt
+import matplotlib.ticker as ticker
+import networkx as nx
+import numpy as np
+import pysam
+import scipy.sparse as sp
+import scipy.stats.mstats as mstats
+import seaborn
+import yaml
+from numba import jit, vectorize, int64, int32, float64
+from numpy import log, pi
+
+import louvain_cluster
+import ordering
+import simple_sparse
 
 logging.basicConfig(level=logging.DEBUG,
                     format='%(asctime)s %(name)-12s %(levelname)-8s %(message)s',
@@ -414,7 +418,23 @@ class SeqOrder:
 
         self._update_positions()
 
-    def set_only_order(self, _ord, implicit_excl=False):
+    def set_order_only(self, _ord, implicit_excl=False):
+        """
+        Convenience method to set the order using a list or 1D ndarray. Orientations will
+        be assumed as all forward (+1).
+
+        :param _ord: a list or ndarray of surrogate ids
+        :param implicit_excl: implicitly extend the order to include unmentioned excluded sequences.
+        """
+        assert isinstance(_ord, (list, np.ndarray)), 'Wrong type supplied, order must be a list or ndarray'
+        if isinstance(_ord, np.ndarray):
+            _ord = np.ravel(_ord)
+            assert np.ndim(_ord) == 1, 'orders as numpy arrays must be 1-dimensional'
+        # augment the order to incldue default orientations
+        _ord = np.array(zip(_ord, np.ones_like(_ord, dtype=np.bool)), dtype=SeqOrder.INDEX_TYPE)
+        self.set_order_and_orientation(_ord, implicit_excl=implicit_excl)
+
+    def set_order_and_orientation(self, _ord, implicit_excl=False):
         """
         Set only the order, while ignoring orientation. An ordering is defined
         as a 1D array of the structured type INDEX_TYPE, where elements are the
@@ -448,15 +468,16 @@ class SeqOrder:
             self.order['pos'][_ord['index']] = np.arange(len(_ord), dtype=np.int32)
             self.order['ori'][_ord['index']] = _ord['ori']
             # mask remaining, unmentioned indices
-            # _mask = np.zeros_like(self.mask_vector(), dtype=np.bool)
-            # _mask[_ord['index']] = True
-            # self.set_mask_only(_mask)
+            _mask = np.zeros_like(self.mask_vector(), dtype=np.bool)
+            _mask[_ord['index']] = True
+            self.set_mask_only(_mask)
         else:
             # just a simple complete order update
             assert len(_ord) == len(self.order), 'new order was a different length'
-            assert len(set(_ord) ^ set(self.accepted())) == 0, 'incomplete new order supplied,' \
-                                                               'missing accepted ids'
-            self.order['pos'][_ord] = np.arange(len(_ord), dtype=np.int32)
+            assert len(set(_ord['index']) ^ set(self.accepted())) == 0, 'incomplete new order supplied,' \
+                                                                        'missing accepted ids'
+            self.order['pos'][_ord['index']] = np.arange(len(_ord), dtype=np.int32)
+            self.order['ori'][_ord['index']] = _ord['ori']
 
         self._update_positions()
 
@@ -1416,18 +1437,72 @@ class ContactMap:
 
         return sp.coo_matrix((keep_data, (keep_row, keep_col)), shape=_map.shape - _shift[-1])
 
-    def plot(self, fname=None, simple=False, norm=False, permute=False, pattern_only=False, with_names=False,
+    def plot_seqnames(self, fname, simple=True, permute=False, **kwargs):
+        """
+        Plot the contact map, annotating the map with sequence names. WARNING: This can often be too dense
+        to be legible when there are many (1000s) of sequences.
+        :param fname: output file name
+        :param simple: True plot seq map, False plot the extent map
+        :param permute: permute the map with the present order
+        :param kwargs: additional options passed to plot()
+        """
+        if permute:
+            seq_id_iter = self.order.accepted_positions()
+        else:
+            seq_id_iter = xrange(self.order.count_accepted())
+
+        tick_labs = []
+        for i in seq_id_iter:
+            if self.order.order[i]['ori'] < 0:
+                tick_labs.append('- {}'.format(self.seq_info[i].name))
+            else:
+                tick_labs.append('+ {}'.format(self.seq_info[i].name))
+
+        if simple:
+            step = 2 if self.is_tipbased() else 1
+            tick_locs = xrange(2, step*self.order.count_accepted()+step, step)
+        else:
+            if permute:
+                _cbins = np.cumsum(self.grouping.bins[self.order.accepted_positions()])
+            else:
+                _cbins = np.cumsum(self.grouping.bins[self.order.accepted()])
+            tick_locs = _cbins - 0.5
+
+        self.plot(fname, permute=permute, simple=simple, tick_locs=tick_locs, tick_labs=tick_labs, **kwargs)
+
+    def plot_clusters(self, fname, cl_map, simple=True, permute=False, **kwargs):
+        """
+        Plot the contact map, annotating the map with cluster names and boundaries
+        :param fname: output file name
+        :param cl_map: the cluster solution
+        :param simple: True plot seq map, False plot the extent map
+        :param permute: permute the map with the present order
+        :param kwargs: additional options passed to plot()
+        """
+        if simple:
+            # tick spacign simple the number of sequences in the cluster
+            tick_locs = np.cumsum([0]+[len(cl_map[k]['seq_ids']) for k in cl_map])
+            if self.is_tipbased():
+                tick_locs *= 2
+        else:
+            # tick spacing depends on cumulative bins for sequences in cluster
+            tick_locs = np.cumsum([0]+[self.grouping.bins[cl_map[k]['seq_ids']].sum() for k in cl_map])
+
+        self.plot(fname, tick_locs=tick_locs, tick_labs=cluster_names(cl_map), **kwargs)
+
+    def plot(self, fname, simple=False, tick_locs=None, tick_labs=None, norm=False, permute=False, pattern_only=False,
              dpi=180, width=25, height=22, zero_diag=False, alpha=0.01, robust=False):
         """
         Plot the contact map. This can either be as a sparse pattern (requiring much less memory but without visual
         cues about intensity), simple sequence or full binned map and normalized or permuted.
 
         :param fname: output file name
+        :param tick_locs: major tick locations (minors take the midpoints)
+        :param tick_labs: minor tick labels
         :param simple: if true, sequence only map plotted
         :param norm: normalize intensities by geometric mean of lengths
         :param permute: reorder map to current order
         :param pattern_only: plot only a sparse pattern (much lower memory requirements)
-        :param with_names: add sequence  names to axes. For large maps, this will be hard to read
         :param dpi: adjust DPI of output
         :param width: plot width in inches
         :param height: plot height in inches
@@ -1436,6 +1511,8 @@ class ContactMap:
         :param robust: use seaborn robust dynamic range feature
         """
 
+        plt.close()
+        plt.style.use('ggplot')
         fig, ax = plt.subplots(1, 1)
         fig.set_figwidth(width)
         fig.set_figheight(height)
@@ -1453,43 +1530,45 @@ class ContactMap:
             ax.spy(m.tocsr(), markersize=5 if simple else 1)
 
         else:
-            # seaborn heatmaps take a little extra work
-
-            _lab = []
-            for i in self.order.accepted_positions():
-                if self.order.order[i]['ori'] < 0:
-                    _lab.append('- {}'.format(self.seq_info[i].name))
-                else:
-                    _lab.append('+ {}'.format(self.seq_info[i].name))
-
+            # a dense array is necessary here
             m = m.toarray()
             if zero_diag:
                 np.fill_diagonal(m, 0)
             m = np.log(m + alpha)
 
-            if with_names:
-                seaborn.heatmap(m, robust=robust, square=True, xticklabels=_lab, yticklabels=_lab,
-                                linewidths=0, ax=ax, cbar=False)
+            seaborn.heatmap(m, robust=robust, square=True, linewidths=0, ax=ax, cbar=False)
+
+        if tick_locs is not None:
+
+            maj_labels = ticker.FixedFormatter('')
+            if tick_labs is not None:
+                min_labels = ticker.FixedFormatter(tick_labs)
             else:
-                seaborn.heatmap(m, robust=robust, square=True, xticklabels=False, yticklabels=False,
-                                linewidths=0, ax=ax, cbar=False)
+                min_labels = maj_labels
 
-        if with_names:
-            if simple:
-                step = 2 if self.is_tipbased() else 1
-                ax.set_xticks(xrange(2, step*self.order.count_accepted()+step, step))
-                ax.set_yticks(xrange(2, step*self.order.count_accepted()+step, step))
-            else:
+            maj_ticks = ticker.FixedLocator(tick_locs[1:-1]-0.5)
+            min_ticks = ticker.FixedLocator(tick_locs[:-1] + 0.5*np.diff(tick_locs))
 
-                _cbins = np.cumsum(self.grouping.bins[self.order.accepted_positions()])
-                ax.set_xticks(_cbins - 0.5)
-                ax.set_yticks(_cbins - 0.5)
+            plt.yticks(fontsize=16)
+            plt.xticks(fontsize=16, rotation=45)
+            plt.tick_params(axis='both', which='minor', labelsize=20)
 
-                ax.grid(color='grey', linestyle='-.', linewidth=1)
+            ax.xaxis.set_major_formatter(maj_labels)
+            ax.yaxis.set_major_formatter(maj_labels)
+            ax.xaxis.set_major_locator(maj_ticks)
+            ax.yaxis.set_major_locator(maj_ticks)
 
-        if fname:
-            plt.savefig(fname, dpi=dpi)
+            ax.xaxis.set_minor_formatter(min_labels)
+            ax.yaxis.set_minor_formatter(min_labels)
+            ax.xaxis.set_minor_locator(min_ticks)
+            ax.yaxis.set_minor_locator(min_ticks)
 
+            # seaborn will not display the grid, so we make our own.
+            ax.hlines(tick_locs, *ax.get_xlim(), color='grey', linewidth=1, linestyle='-.')
+            ax.vlines(tick_locs, *ax.get_ylim(), color='grey', linewidth=1, linestyle='-.')
+
+        plt.tight_layout()
+        plt.savefig(fname, dpi=dpi)
         plt.close()
 
     def to_graph(self, norm=True, bisto=False, scale=False, extern_ids=False, convert_extent=False):
@@ -1542,6 +1621,20 @@ class ContactMap:
         return g
 
 
+def cluster_names(cl_soln, prefix='CL_'):
+    """
+    Pedantically work out how many digits are required for the largest cluster number,
+    so we can add leading zeros to the remainder.
+    :return: standardised cluster names
+    """
+    try:
+        num_width = max(1, int(np.ceil(np.log10(max(cl_soln.keys())))))
+    except OverflowError:
+        num_width = 1
+
+    return ['{0}{1:{2}d}'.format(prefix, k, num_width) for k in cl_soln]
+
+
 def cluster_map(cm, method='louvain', convert_extent=False):
     """
     Cluster a contact map into groups, as an approximate proxy for "species" bins. This is recommended prior to
@@ -1573,34 +1666,29 @@ def cluster_map(cm, method='louvain', convert_extent=False):
     g = cm.to_graph(norm=True, bisto=True, scale=True, convert_extent=convert_extent)
 
     if method == 'louvain':
-        import louvain_cluster
-        # determine standard louvain clusters
-        all_cl = louvain_cluster.cluster(g, no_iso=True, ragbag=False)
-        louvain_cluster.write_mcl(all_cl, 'all_cl.mcl')
-        # standardise the result
-        all_cl = {cl_id: {'seq_ids': np.array(sorted([seq_id for seq_id in all_cl[cl_id]]))} for cl_id in all_cl}
+        cl_to_ids = louvain_cluster.cluster(g, no_iso=False, ragbag=False)
     elif method == 'mcl':
-        import subprocess
         base_name = 'cm_graph'
         nx.write_edgelist(g, path='{}.edges'.format(base_name), data=['weight'])
         subprocess.check_call(['mcl-14-137/bin/mcl', '{}.edges'.format(base_name), '--abc',
                                '-I', '1.2', '-o', '{}.mcl'.format(base_name)])
-        all_cl = read_mcl('{}.mcl'.format(base_name))
+        cl_to_ids = read_mcl('{}.mcl'.format(base_name))
     elif method == 'ganxis':
-        import subprocess
         base_name = 'cm_graph'
         nx.write_edgelist(g, path='{}.edges'.format(base_name), data=['weight'])
         subprocess.check_call(['java', '-jar', 'GANXiS_v3.0.2/GANXiSw.jar', '-r', '0.25', '-d', '.', '-t', '100',
                                '-ov', '1', '-W', '0', '-Sym', '1', '-i', '{}.edges'.format(base_name)])
-        all_cl = read_mcl('SLPAw_{}_run1_r0.25_v3_T100.icpm'.format(base_name))
+        cl_to_ids = read_mcl('SLPAw_{}_run1_r0.25_v3_T100.icpm'.format(base_name))
     else:
         raise RuntimeError('unimplemented method [{}]'.format(method))
 
+    # standardise the result
+    cl_soln = {cl_id: {'seq_ids': np.array(sorted([seq_id for seq_id in cl_to_ids[cl_id]]))} for cl_id in cl_to_ids}
     # add total extent to each cluster
-    for cl_id in all_cl:
-        all_cl[cl_id]['extent'] = cm.order.lengths()[all_cl[cl_id]['seq_ids']].sum()
+    for cl_id in cl_soln:
+        cl_soln[cl_id]['extent'] = cm.order.lengths()[cl_soln[cl_id]['seq_ids']].sum()
 
-    return all_cl
+    return cl_soln
 
 
 def order_clusters(cm, all_cl, min_len=None, min_sig=None, max_fold=None, min_extent=None, min_size=1):
@@ -1622,9 +1710,8 @@ def order_clusters(cm, all_cl, min_len=None, min_sig=None, max_fold=None, min_ex
         print 'Ordering cluster {}'.format(cl_id)
 
         # calculate the clusters extent
-        cl_extent = cm.order.lengths()[cl_map['seq_ids']].sum()
-        print '\t{}bp extent'.format(cl_extent),
-        if cl_extent < min_extent:
+        print '\t{}bp extent'.format(cl_map['extent']),
+        if cl_map['extent'] < min_extent:
             print '-- excluded cluster due to small extent'
             continue
         elif len(cl_map['seq_ids']) < min_size:
@@ -1765,7 +1852,7 @@ class SequenceAnalyzer:
 
 if __name__ == '__main__':
     import argparse
-    import mapio
+
 
     def out_name(base, suffix):
         return '{}_{}'.format(base, suffix)
@@ -1813,16 +1900,16 @@ if __name__ == '__main__':
                         precount=args.eta,
                         med_alpha=args.med_alpha)
 
-        # if cm.is_empty():
-        #     import sys
-        #     logger.info('Stopping as the map is empty')
-        #     sys.exit(1)
+        if cm.is_empty():
+            import sys
+            logger.info('Stopping as the map is empty')
+            sys.exit(1)
 
         logger.info('Saving contact map instance...')
         cm.save(out_name(args.outbase, 'cm.p'))
 
     # cluster the entire map
-    cl_map = cluster_map(cm, method=args.cluster_method)
+    # cl_map = cluster_map(cm, method=args.cluster_method)
 
     # order each cluster
-    order_clusters(cm, cl_map)
+    # order_clusters(cm, cl_map)
