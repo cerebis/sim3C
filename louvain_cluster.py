@@ -51,7 +51,7 @@ def decompose_graph(g):
 
 def cluster(g, no_iso, method=None, ragbag=False, verbose=False):
 
-    assert np.logical_xor(no_iso, ragbag), 'options no_iso and ragbag are mutually exclusive'
+    assert not (no_iso and ragbag), 'options no_iso and ragbag are mutually exclusive'
 
     ragbag_group = None
     singletons = None
