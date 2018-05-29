@@ -23,6 +23,7 @@ from numba import jit, vectorize, int64, int32, float64
 from numpy import log, pi
 
 import louvain_cluster
+import io_utils
 import ordering
 import simple_sparse
 
@@ -949,12 +950,12 @@ class ContactMap:
         logger.info('Total extent map weight {}'.format(self.map_weight()))
 
     def save(self, fname):
-        with open(fname, 'wb') as out_h:
+        with io_utils.open_output(fname, compress='gzip') as out_h:
             cPickle.dump(self, out_h)
 
     @staticmethod
     def load(fname):
-        with open(fname, 'rb') as in_h:
+        with io_utils.open_input(fname) as in_h:
             return cPickle.load(in_h)
 
     @staticmethod
@@ -1486,9 +1487,16 @@ class ContactMap:
                 tick_locs *= 2
         else:
             # tick spacing depends on cumulative bins for sequences in cluster
-            tick_locs = np.cumsum([0]+[self.grouping.bins[cl_map[k]['seq_ids']].sum() for k in cl_map])
+            # cumulative bin count, excluding masked sequences
+            csbins = [0]
+            for k in cl_map:
+                # get the order records for the sequences in cluster k
+                _oi = self.order.order[cl_map[k]['seq_ids']]
+                # count the cumulative bins at each cluster for those sequences which are not masked
+                csbins.append(self.grouping.bins[cl_map[k]['seq_ids'][_oi['mask']]].sum() + csbins[-1])
+            tick_locs = np.array(csbins, dtype=np.int)
 
-        self.plot(fname, tick_locs=tick_locs, tick_labs=cluster_names(cl_map), **kwargs)
+        self.plot(fname, permute=permute, simple=simple, tick_locs=tick_locs, tick_labs=cluster_names(cl_map), **kwargs)
 
     def plot(self, fname, simple=False, tick_locs=None, tick_labs=None, norm=False, permute=False, pattern_only=False,
              dpi=180, width=25, height=22, zero_diag=False, alpha=0.01, robust=False):
@@ -1647,38 +1655,89 @@ def cluster_map(cm, method='louvain', convert_extent=False):
 
     def read_mcl(pathname):
         """
-        Read a MCL solution file converting this to a TruthTable
-        :param pathname: mcl output file
-        :return: truth table
+        Read a MCL solution file converting this to a TruthTable.
+
+        :param pathname: mcl file name
+        :return: dict of cluster_id to array of seq_ids
         """
 
         with open(pathname, 'r') as h_in:
             # read the MCL file, which lists all members of a class on a single line
             # the class ids are implicit, therefore we use line number.
-            mcl = {}
+            cl_map = {}
             for cl_id, line in enumerate(h_in):
                 line = line.rstrip()
                 if not line:
                     break
-                mcl[cl_id] = {'seq_ids': np.array(sorted([int(tok) for tok in line.split()]))}
-        return mcl
+                cl_map[cl_id] = np.array(sorted([int(tok) for tok in line.split()]))
+        return cl_map
 
+    def read_table(pathname, seq_col=0, cl_col=1):
+        """
+        Read cluster solution from a tabular file, one assignment per line. Implicit sequence
+        naming is achieved by setting seq_col=None. The reverse (implicit column naming) is
+        not currently supported.
+
+        :param pathname: table file name
+        :param seq_col: column number of seq_ids
+        :param cl_col: column number of cluster ids
+        :return: dict of cluster_id to array of seq_ids
+        """
+        assert seq_col != cl_col, 'sequence and cluster columns must be different'
+        with open(pathname, 'r') as h_in:
+            cl_map = {}
+            n = 0
+            for line in h_in:
+                line = line.strip()
+                if not line:
+                    break
+                if seq_col is None:
+                    cl_id = int(line)
+                    seq_id = n
+                    n += 1
+                else:
+                    t = line.split()
+                    if len(t) != 2:
+                        print 'invalid line encountered when reading cluster table: [{}]'.format(line)
+
+                    seq_id, cl_id = int(t[seq_col]), int(t[cl_col])
+                cl_map.setdefault(cl_id, []).append(seq_id)
+            for k in cl_map:
+                cl_map[k] = np.array(cl_map[k], dtype=np.int)
+            return cl_map
+
+    seed = 1234
+    base_name = 'cm_graph'
     g = cm.to_graph(norm=True, bisto=True, scale=True, convert_extent=convert_extent)
 
+    method = method.lower()
     if method == 'louvain':
         cl_to_ids = louvain_cluster.cluster(g, no_iso=False, ragbag=False)
     elif method == 'mcl':
-        base_name = 'cm_graph'
         nx.write_edgelist(g, path='{}.edges'.format(base_name), data=['weight'])
         subprocess.check_call(['mcl-14-137/bin/mcl', '{}.edges'.format(base_name), '--abc',
                                '-I', '1.2', '-o', '{}.mcl'.format(base_name)])
         cl_to_ids = read_mcl('{}.mcl'.format(base_name))
-    elif method == 'ganxis':
-        base_name = 'cm_graph'
+    elif method == 'simap':
         nx.write_edgelist(g, path='{}.edges'.format(base_name), data=['weight'])
-        subprocess.check_call(['java', '-jar', 'GANXiS_v3.0.2/GANXiSw.jar', '-r', '0.25', '-d', '.', '-t', '100',
-                               '-ov', '1', '-W', '0', '-Sym', '1', '-i', '{}.edges'.format(base_name)])
-        cl_to_ids = read_mcl('SLPAw_{}_run1_r0.25_v3_T100.icpm'.format(base_name))
+        subprocess.check_call(['java', '-jar', 'simap-1.0.0.jar', 'mdl', '-s', str(seed),
+                               '-i', '1e-5', '1e-3', '-a', '1e-5',
+                               '-g', '{}.edges'.format(base_name), '-o', '{}.simap'.format(base_name)])
+        cl_to_ids = read_table('{}.simap'.format(base_name))
+    elif method == 'infomap':
+        pass
+    elif method == 'slm':
+        mod_func = '1'
+        resolution = '1.0'
+        opti_algo = '3'
+        n_starts = '10'
+        n_iters = '10'
+        nx.write_edgelist(g, path='{}.edges'.format(base_name), data=['weight'], delimiter='\t')
+        subprocess.check_call(['java', '-jar', 'SLM4J/ModularityOptimizer.jar',
+                               '{}.edges'.format(base_name), '{}.simap'.format(base_name),
+                               mod_func, resolution, opti_algo, n_starts, n_iters, str(seed), '1'])
+
+        cl_to_ids = read_table('{}.simap'.format(base_name), seq_col=None, cl_col=0)
     else:
         raise RuntimeError('unimplemented method [{}]'.format(method))
 
