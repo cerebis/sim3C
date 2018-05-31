@@ -1320,11 +1320,12 @@ class ContactMap:
         """
         if tip_based:
             _map = _map.astype(np.float)
-            _tip_size = float(self.tip_size)
-            _l = [li if li < _tip_size else _tip_size for li in self.order.lengths()]
+            _ts = self.tip_size
+            _tssq = float(_ts**2)
+            _l = [li if li < _ts else _ts for li in self.order.lengths()]
             for ii in xrange(_map.nnz):
                 i, j = _map.coords[:2, ii]
-                _map.data[ii] *= _tip_size / min(_tip_size, _l[i]) * _tip_size / min(_tip_size, _l[j])
+                _map.data[ii] *= _tssq / (_l[i] * _l[j])
             return _map
 
         else:
