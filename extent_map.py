@@ -4,6 +4,7 @@ import itertools
 import logging
 import os
 import subprocess
+import tempfile
 import uuid
 from collections import OrderedDict
 from collections import namedtuple
@@ -1084,7 +1085,8 @@ class ContactMap:
         # simply return the current mask if it has already been determined
         # and an update is not requested
         if not update and self.primary_acceptance_mask is not None:
-            print '\tusing existing mask'
+            if verbose:
+                print '\tusing existing mask'
             return self.get_primary_acceptance_mask()
 
         acceptance_mask = np.ones(self.total_seq, dtype=np.bool)
@@ -1526,8 +1528,8 @@ class ContactMap:
         fig.set_figheight(height)
 
         if simple:
-            if self.processed_map is None:
-                self.prepare_seq_map(self.min_len, self.min_sig, norm=norm)
+            # assume the map must be remade
+            self.prepare_seq_map(self.min_len, self.min_sig, norm=norm, update_mask=True)
             m = self.get_processed_map(permute=permute)
         else:
             m = self.get_extent_map(norm=norm, permute=permute)
@@ -1579,7 +1581,8 @@ class ContactMap:
         plt.savefig(fname, dpi=dpi)
         plt.close()
 
-    def to_graph(self, norm=True, bisto=False, scale=False, extern_ids=False, convert_extent=False):
+    def to_graph(self, norm=True, bisto=False, scale=False, extern_ids=False, convert_extent=False,
+                 verbose=False):
         """
         Convert the seq_map to a undirected Networkx Graph.
 
@@ -1593,6 +1596,7 @@ class ContactMap:
         :param scale: scale weights (max_w = 1)
         :param extern_ids: use the original external sequence identifiers for node ids
         :param convert_extent: use the full extent map to calculate a full seq_map (if seq_map is tip based)
+        :param verbose: debug output
         :return: graph of contigs
         """
         if extern_ids:
@@ -1604,6 +1608,8 @@ class ContactMap:
         g.add_nodes_from(_nn(u) for u in xrange(self.total_seq))
 
         if convert_extent:
+            if verbose:
+                print 'Converting extent map to seq map'
             m = self.extent_to_seq().astype(np.float)
         else:
             m = self.seq_map.astype(np.float)
@@ -1643,13 +1649,16 @@ def cluster_names(cl_soln, prefix='CL_'):
     return ['{0}{1:{2}d}'.format(prefix, k, num_width) for k in cl_soln]
 
 
-def cluster_map(cm, method='louvain', convert_extent=False):
+def cluster_map(cm, method='louvain', convert_extent=False, work_dir=None, infomap_depth=2, verbose=False):
     """
     Cluster a contact map into groups, as an approximate proxy for "species" bins. This is recommended prior to
     applying TSP ordering, minimising the breaking of its assumptions that all nodes should connect and be traversed.
     :param cm: the contact map to cluster
     :param method: clustering algorithm to employ
     :param convert_extent: use the full extent map to calculate a full seq_map (if seq_map is tip based)
+    :param work_dir: working directory to which files are written during clustering. Default: use system tmp
+    :param infomap_depth: when using Infomap, treat clusters to this depth of the hierarchy.
+    :param verbose: debug output
     :return:
     """
 
@@ -1706,38 +1715,76 @@ def cluster_map(cm, method='louvain', convert_extent=False):
                 cl_map[k] = np.array(cl_map[k], dtype=np.int)
             return cl_map
 
+    def read_tree(pathname, max_depth=2):
+        """
+        Read a tree clustering file as output by Infomap.
+
+        :param pathname: the path to the tree file
+        :param max_depth: the maximum depth to consider when combining objects into clusters.
+        :return: dict of cluster_id to array of seq_ids
+        """
+        with open(pathname, 'r') as in_h:
+            cl_map = {}
+            for line in in_h:
+                line = line.strip()
+                if not line:
+                    break
+                if line.startswith('#'):
+                    continue
+                fields = line.split()
+                hierarchy = fields[0].split(':')
+                cl_map.setdefault(tuple(['orig'] + hierarchy[:max_depth]), []).append(fields[-1])
+
+            # rename clusters and order descending in size
+            desc_key = sorted(cl_map, key=lambda x: len(cl_map[x]), reverse=True)
+            for n, k in enumerate(desc_key):
+                cl_map[n] = np.array(cl_map.pop(k), dtype=np.int)
+
+        return cl_map
+
+    if work_dir is None:
+        work_dir = tempfile.gettempdir()
+    else:
+        assert os.path.exists(work_dir), 'supplied output path [{}] does not exist'.format(work_dir)
+
     seed = 1234
     base_name = 'cm_graph'
-    g = cm.to_graph(norm=True, bisto=True, scale=True, convert_extent=convert_extent)
+    g = cm.to_graph(norm=True, bisto=True, scale=True, convert_extent=convert_extent, verbose=verbose)
 
     method = method.lower()
     if method == 'louvain':
         cl_to_ids = louvain_cluster.cluster(g, no_iso=False, ragbag=False)
     elif method == 'mcl':
+        ofile = os.path.join(work_dir, '{}.mcl'.format(base_name))
         nx.write_edgelist(g, path='{}.edges'.format(base_name), data=['weight'])
         subprocess.check_call(['mcl-14-137/bin/mcl', '{}.edges'.format(base_name), '--abc',
-                               '-I', '1.2', '-o', '{}.mcl'.format(base_name)])
-        cl_to_ids = read_mcl('{}.mcl'.format(base_name))
+                               '-I', '1.2', '-o', ofile])
+        cl_to_ids = read_mcl(ofile)
     elif method == 'simap':
+        ofile = os.path.join(work_dir, '{}.simap'.format(base_name))
         nx.write_edgelist(g, path='{}.edges'.format(base_name), data=['weight'])
         subprocess.check_call(['java', '-jar', 'simap-1.0.0.jar', 'mdl', '-s', str(seed),
                                '-i', '1e-5', '1e-3', '-a', '1e-5',
-                               '-g', '{}.edges'.format(base_name), '-o', '{}.simap'.format(base_name)])
-        cl_to_ids = read_table('{}.simap'.format(base_name))
+                               '-g', '{}.edges'.format(base_name),
+                               '-o', ofile])
+        cl_to_ids = read_table(ofile)
     elif method == 'infomap':
-        pass
+        nx.write_edgelist(g, path='{}.edges'.format(base_name), data=['weight'])
+        subprocess.check_call(['../infomap/Infomap', '-u', '-v', '-z', '-i', 'link-list',
+                               '{}.edges'.format(base_name), work_dir])
+        cl_to_ids = read_tree(os.path.join(work_dir, '{}.tree'.format(base_name)), max_depth=infomap_depth)
     elif method == 'slm':
         mod_func = '1'
         resolution = '1.0'
         opti_algo = '3'
         n_starts = '10'
         n_iters = '10'
+        ofile = os.path.join(work_dir, '{}.slm'.format(base_name))
         nx.write_edgelist(g, path='{}.edges'.format(base_name), data=['weight'], delimiter='\t')
         subprocess.check_call(['java', '-jar', 'SLM4J/ModularityOptimizer.jar',
-                               '{}.edges'.format(base_name), '{}.simap'.format(base_name),
+                               '{}.edges'.format(base_name), ofile,
                                mod_func, resolution, opti_algo, n_starts, n_iters, str(seed), '1'])
-
-        cl_to_ids = read_table('{}.simap'.format(base_name), seq_col=None, cl_col=0)
+        cl_to_ids = read_table(ofile, seq_col=None, cl_col=0)
     else:
         raise RuntimeError('unimplemented method [{}]'.format(method))
 

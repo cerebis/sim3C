@@ -1,7 +1,16 @@
 # biopython requires gcc installed
 biopython
+community
 intervaltree
+lap
+matplotlib
+networkx
+numba
 numpy
-scipy
-tqdm
+polo
+pysam
 PyYAML
+scipy
+seaborn
+sparse
+tqdm
