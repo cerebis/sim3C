@@ -20,7 +20,7 @@ import scipy.sparse as sp
 import scipy.stats.mstats as mstats
 import seaborn
 import yaml
-from numba import jit, vectorize, int64, int32, float64
+from numba import jit, vectorize, int64, int32, float64, void
 from numpy import log, pi
 
 import louvain_cluster
@@ -623,6 +623,24 @@ def find_nearest_jit(group_sites, x):
         # raise RuntimeError('find_nearest: {} didnt fit in {}'.format(x, group_sites))
         return group_sites[-1, 1]
     return group_sites[ix, 1]
+
+
+@jit(void(float64[:,:,:,:], float64[:,:], float64[:], float64))
+def fast_norm_seq(coords, data, tip_lengths, tip_size):
+    """
+    In-place normalisation of the sparse 4D matrix used in tip-based maps.
+
+    As tip-based normalisation is slow for large matrices, the inner-loop has been
+    moved to a Numba method.
+
+    :param coords: the COO matrix coordinate member variable (4xN array)
+    :param data:  the COO matrix data member variable (1xN array)
+    :param tip_lengths: per-element min(sequence_length, tip_size)
+    :param tip_size: tip size used in map
+    """
+    for ii in xrange(coords.shape[1]):
+        i, j = coords[:2, ii]
+        data[ii] *= tip_size**2 / (tip_lengths[i] * tip_lengths[j])
 
 
 class ContactMap:
@@ -1320,12 +1338,8 @@ class ContactMap:
         """
         if tip_based:
             _map = _map.astype(np.float)
-            _ts = self.tip_size
-            _tssq = float(_ts**2)
-            _l = [li if li < _ts else _ts for li in self.order.lengths()]
-            for ii in xrange(_map.nnz):
-                i, j = _map.coords[:2, ii]
-                _map.data[ii] *= _tssq / (_l[i] * _l[j])
+            _tip_lengths = np.minimum(self.tip_size, self.order.lengths()).astype(np.float)
+            fast_norm_seq(_map.coords, _map.data, _tip_lengths, self.tip_size)
             return _map
 
         else:
