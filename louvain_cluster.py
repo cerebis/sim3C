@@ -76,7 +76,7 @@ def cluster(g, no_iso, method=None, ragbag=False, verbose=False):
             print 'Ragbag cluster would be empty, so excluded'
             ragbag_group = {}
         else:
-            print 'Ragbag cluster will cotnain {0} nodes'.format(len(singletons))
+            print 'Ragbag cluster will contain {0} nodes'.format(len(singletons))
             g.remove_nodes_from(singletons)
             ragbag_group = dict((n, 1.0) for n in singletons)
             print_info(g)
