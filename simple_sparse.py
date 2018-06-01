@@ -162,6 +162,9 @@ def kr_biostochastic(m, tol=1e-6, x0=None, delta=0.1, Delta=3, verbose=False, ma
             eta = max(eta, g * eta_o ** 2)
         eta = max(min(eta, etamax), stop_tol / res_norm)
 
+    if n_iter > max_iter:
+        raise RuntimeError('matrix balancing failed to converge in {} iterations'.format(n_iter))
+
     del m
 
     if verbose:
