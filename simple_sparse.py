@@ -7,6 +7,7 @@ import warnings
 def is_hermitian(m, tol=1e-6):
     """
     Test that a sparse matrix is hermitian (also suffices for symmetric)
+
     :param m: square matrix
     :param tol: tolernace above zero for m - m.T < tol
     :return: True matrix is Hermitian
@@ -18,6 +19,7 @@ def tensor_print(T):
     """
     Pretty print a dense (numpy) 4D matrix. Users should consider the size of the matrix before
     printing, as they can be large! More useful for smaller objects
+
     :param T: the tensor to print wit dim: (N,M,n,m)
     """
 
@@ -44,6 +46,7 @@ def kr_biostochastic(m, tol=1e-6, x0=None, delta=0.1, Delta=3, verbose=False, ma
     """
     Normalise a matrix to be bistochastic using Knight-Ruiz algorithm. This method is expected
     to converge more quickly.
+
     :param m: the input matrix (fully symmetric)
     :param tol: precision tolerance
     :param x0: an initial guess
@@ -199,6 +202,7 @@ class Sparse2DAccumulator(object):
     def get_coo(self, symm=True):
         """
         Create a COO format sparse representation of the accumulated values.
+
         :param symm: ensure matrix is symmetric on return
         :return: a scipy.coo_matrix sparse matrix
         """
@@ -236,6 +240,7 @@ def max_offdiag(_m):
 def compress(_m, _mask):
     """
     Remove rows and columns using a 1d boolean mask.
+
     :param _mask: True (keep), False (drop)
     :return: a coo_matrix of only the accepted rows/columns
     """
@@ -304,6 +309,7 @@ class Sparse4DAccumulator(object):
         """
         Create a COO format sparse representation of the accumulated values. NOTE: As scipy
         does not support multidimensional arrays, this object is from the "sparse" module.
+
         :param symm: ensure matrix is symmetric on return
         :return: a sparse.COO matrix
         """
@@ -332,6 +338,7 @@ class Sparse4DAccumulator(object):
     def _flip(c_row):
         """
         Flip indices (coordinates) as pairs: (i,j), (k,l) -> (j,i), (l,k)
+
         :param c_row: coordinate row to flip
         :return the flipped indices
         """
@@ -345,6 +352,7 @@ class Sparse4DAccumulator(object):
         """
         Make a 4D COO matrix symmetric, all elements above and below the diagonal are included.
         Duplicate entries will be summed.
+
         :param _m: the NxNx2x2 matrix to make symmetric
         :return: a new symmetric version
         """
