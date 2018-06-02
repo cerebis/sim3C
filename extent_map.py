@@ -1835,13 +1835,6 @@ def cluster_map(cm, method='louvain', work_dir=None, infomap_depth=2, verbose=Fa
         print 'Gathering clustering results'
         print 'There were {} clusters'.format(len(cl_to_ids))
 
-        # SLM output loses cluster ids, treated as gapless range. [0..n]
-        # we must restore the gaps.
-        # for k, v in cl_to_ids.iteritems():
-        #     _o = SeqOrder.asindex(v)
-        #     _o = cm.order.remap_gapless(_o)
-        #     cl_to_ids[k] = _o['index']
-
     # standardise the results, where sequences in each cluster
     # are listed in ascending order
     cl_soln = {}
