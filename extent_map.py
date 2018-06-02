@@ -62,6 +62,18 @@ class TooFewException(Exception):
         super(TooFewException, self).__init__('LKH requires a minimum of three sequences')
 
 
+class ZeroLengthException(Exception):
+    """Sequence of zero length"""
+    def __init__(self, seq_name):
+        super(ZeroLengthException, self).__init__('Sequence [{}] has zero length'.format(seq_name))
+
+
+class ParsingError(Exception):
+    """An error during input parsing"""
+    def __init__(self, msg):
+        super(ParsingError, self).__init__(msg)
+
+
 @vectorize([float64(float64)])
 def piecewise_3c(s):
     pr = MIN_FIELD
@@ -116,7 +128,6 @@ def calc_likelihood(cm):
     """
     For a given order and ContactMap instance, calculate the log likelihood.
 
-    :param an_order: ordered 1d container of identifiers.
     :param cm: instance of ContactMap with matching identifiers
     :return: log likelihood
     """
@@ -259,7 +270,7 @@ class ExtentGrouping:
         for n, seq in enumerate(seq_info):
 
             if seq.length == 0:
-                raise RuntimeError('Zero length sequence for {}'.format(seq))
+                raise ZeroLengthException(seq.id)
 
             # integer bin estimation
             num_bins = seq.length / bin_size
@@ -322,34 +333,62 @@ class SeqOrder:
 
         self._update_positions()
 
+    @staticmethod
+    def asindex(_ord):
+        """
+        Convert a simple list or ndarray of indices, to INDEX_TYPE array with default forward orientation.
+
+        :param _ord: list/ndarray of indices
+        :return: INDEX_TYPE array
+        """
+        assert isinstance(_ord, (list, np.ndarray)), 'input must be a list or ndarray'
+        return np.array(zip(_ord, np.ones_like(_ord, dtype=np.bool)), dtype=SeqOrder.INDEX_TYPE)
+
     def _update_positions(self):
         """
         An optimisation, whenever the positional state changes, this method must be called to
-        maintain the current state in a separate array. This avoids unncessary redetermination of positions
-        when calling .intervening() and .before() methods.
+        maintain the current state in a separate array. This avoids unnecessary recalculation
+        overhead.
         """
+        # Masked sequences last, then by current position.
+        sorted_indices = np.lexsort([self.order['pos'], ~self.order['mask']])
+        for n, i in enumerate(sorted_indices):
+            self.order[i]['pos'] = n
         self._positions = np.argsort(self.order['pos'])
 
     def remap_gapless(self, gapless_indices):
         """
-        Recover potentially sparse indices from a dense (gapless) index table. This can happen for
-        algorithms which were supplied only filtered data.
+        Recover the original, potentially sparse (gapped) indices from a dense (gapless) set
+        of indices. Gaps originate from sequences being masked in the order. External tools
+        often expect and return dense indices. When submitting changes to the current order
+        state, it is important to first apply this method and reintroduce any gaps.
 
-        :param gapless_indices: dense index table (index, ori), without gaps from masking
-        :return: remappped indices with gaps
+        Both a list/array of indices or a INDEX_TYPE array can be passed.
+
+        :param gapless_indices: dense list of indices or an ndarray of type INDEX_TYPE
+        :return: remappped indices with gaps (of a similar type to input)
         """
-        shift = []
         n = 0
-        for oi in np.sort(gapless_indices['index']):
-            while not self.order[oi + n]['mask']:
+        shift = []
+        for oi in self.order:
+            if not oi['mask']:
                 n += 1
-            shift.append(n)
+            else:
+                shift.append(n)
+        shift = np.array(shift)
 
-        remapped = []
-        for oi in gapless_indices:
-            remapped.append((oi['index'] + shift[oi['index']], oi['ori']))
+        if isinstance(gapless_indices, np.ndarray) and gapless_indices.dtype == SeqOrder.INDEX_TYPE:
+            remapped = []
+            for oi in gapless_indices:
+                remapped.append((oi['index'] + shift[oi['index']], oi['ori']))
+            return np.array(remapped, dtype=SeqOrder.INDEX_TYPE)
 
-        return np.array(remapped, dtype=SeqOrder.INDEX_TYPE)
+        else:
+            # assume an iterable collection
+            remapped = []
+            for oi in gapless_indices:
+                remapped.append(oi + shift[oi])
+            return np.array(remapped)
 
     def accepted_positions(self, copy=True):
         """
@@ -394,7 +433,10 @@ class SeqOrder:
         # accumulated shift from gaps
         gap_shift = np.cumsum(~self.order['mask'])
         # just unmasked sequences
-        _p = self._positions[:self.count_accepted()].copy()
+        # TODO test whether we can reenable this code.
+        # _p = self._positions[:self.count_accepted()].copy()
+        _p = np.argsort(self.order['pos'])
+        _p = _p[:self.count_accepted()]
         # removing gaps leads to a dense range of indices
         _p -= gap_shift[_p]
         return _p
@@ -413,11 +455,6 @@ class SeqOrder:
 
         # assign mask
         self.order['mask'] = _mask
-        # reorder, with masked sequences coming last, otherwise by position
-        sorted_indices = np.lexsort([self.order['pos'], ~self.order['mask']])
-        for n, i in enumerate(sorted_indices):
-            self.order[i]['pos'] = n
-
         self._update_positions()
 
     def set_order_only(self, _ord, implicit_excl=False):
@@ -432,8 +469,8 @@ class SeqOrder:
         if isinstance(_ord, np.ndarray):
             _ord = np.ravel(_ord)
             assert np.ndim(_ord) == 1, 'orders as numpy arrays must be 1-dimensional'
-        # augment the order to incldue default orientations
-        _ord = np.array(zip(_ord, np.ones_like(_ord, dtype=np.bool)), dtype=SeqOrder.INDEX_TYPE)
+        # augment the order to include default orientations
+        _ord = SeqOrder.asindex(_ord)
         self.set_order_and_orientation(_ord, implicit_excl=implicit_excl)
 
     def set_order_and_orientation(self, _ord, implicit_excl=False):
@@ -503,12 +540,8 @@ class SeqOrder:
 
         :param _id: the surrogate id of sequence
         """
-        # set up a full mask, reflecting the request
-        _mask = np.ones(len(self.order), dtype=np.bool)
-        _mask[_id] = False
-
-        # remask the set
-        self.set_mask_only(_mask)
+        self.order[_id]['mask'] = False
+        self._update_positions()
 
     def count_accepted(self):
         """
@@ -543,6 +576,13 @@ class SeqOrder:
         self.order[_id]['ori'] *= -1
 
     def lengths(self, exclude_masked=False):
+        # type: (bool) -> np.ndarray
+        """
+        Sequence lengths
+
+        :param exclude_masked: True include only umasked sequencces
+        :return: the lengths of sequences
+        """
         if exclude_masked:
             return self.order['length'][self.order['mask']]
         else:
@@ -585,30 +625,6 @@ class SeqOrder:
         return np.sum(self.order['length'][inter_ix])
 
 
-@jit(int64(int64[:, :], int64[:], int64, int64), nopython=True)
-def intervening(_ord, _lengths, a, b):
-
-    ix1 = None
-    for i in xrange(len(_ord)):
-        if a == _ord[i, 0]:
-            ix1 = i
-            break
-
-    ix2 = None
-    for i in xrange(len(_ord)):
-        if b == _ord[i, 0]:
-            ix2 = i
-            break
-
-    if ix1 == ix2:
-        return 0
-
-    if ix1 > ix2:
-        ix1, ix2 = ix2, ix1
-
-    return np.sum(_lengths[_ord[ix1 + 1:ix2, 0]])
-
-
 @jit(int64(int64[:, :], int64), nopython=True)
 def find_nearest_jit(group_sites, x):
     """
@@ -625,7 +641,7 @@ def find_nearest_jit(group_sites, x):
     return group_sites[ix, 1]
 
 
-@jit(void(float64[:,:,:,:], float64[:,:], float64[:], float64))
+@jit(void(float64[:, :, :, :], float64[:, :], float64[:], float64))
 def fast_norm_seq(coords, data, tip_lengths, tip_size):
     """
     In-place normalisation of the sparse 4D matrix used in tip-based maps.
@@ -730,7 +746,7 @@ class ContactMap:
 
             if self.total_seq == 0:
                 logger.info('No sequences in BAM found in FASTA')
-                raise RuntimeError('No sequences in BAM found in FASTA')
+                raise ParsingError('No sequences in BAM found in FASTA')
 
             logger.info('Accepted {} sequences covering {} bp'.format(self.total_seq, self.total_len))
             logger.info('References excluded: {}'.format(ref_count))
@@ -1018,43 +1034,35 @@ class ContactMap:
         """
         return self.tip_size is not None
 
-    def find_order(self, min_len, min_sig, max_fold, norm=True, bisto=True, mean_type='geometric',
-                   inverse_method='inverse', external_mask=None, verbose=False):
+    def find_order(self, _map, inverse_method='inverse', verbose=False):
         """
         Using LKH TSP solver, find the best ordering of the sequence map in terms of proximity ligation counts.
         Here, it is assumed that sequence proximity can be inferred from number of observed trans read-pairs, where
         an inverse relationship exists.
 
-        :param min_len: the minimum sequence length to include
-        :param min_sig: the minimum off-diagonal signal (trans read-pair count)
-        :param max_fold: maximum locally-measured fold-coverage to permit
-        :param norm: apply length normalisation before analysis
-        :param bisto: make the matrix bistochastic before analysis
-        :param mean_type: for length normalization, the chosen mean used between sequences
+        :param _map: the seq map to analyze
         :param inverse_method: the chosen inverse method for converting count (similarity) to distance
-        :param external_mask: include (union with filter) an additional mask on sequences
         :param verbose: debug output
         :return: the surrogate ids in optimal order
         """
 
         # prepare the input sequence map for analysis
-        self.prepare_seq_map(min_len, min_sig, max_fold, norm=norm, bisto=bisto, mean_type=mean_type,
-                             external_mask=external_mask, verbose=verbose)
+        # m = self.prepare_seq_map(min_len, min_sig, max_fold, norm=norm, bisto=bisto, mean_type=mean_type,
+        #                          external_mask=external_mask, update_mask=True, verbose=verbose)
+        # m = self.get_processed_map()
 
         # we'll supply a partially initialized distance function
-        dist_func = partial(ordering.similarity_to_distance, method=inverse_method, alpha=1.2, beta=1,
-                            verbose=verbose)
+        dist_func = partial(ordering.similarity_to_distance, method=inverse_method,
+                            alpha=1.2, beta=1, verbose=verbose)
 
         if self.is_tipbased():
-            m = self.get_processed_map()
-
             # a minimum of three sequences is required to run LKH
-            if m.shape[0] < 3:
+            if _map.shape[0] < 3:
                 raise TooFewException()
 
-            lkh_o = ordering.lkh_order(m, 'lkhdb_run', lkh_exe='../lkh/LKH-3.0/LKH', precision=1, seed=12345, runs=2,
+            lkh_o = ordering.lkh_order(_map, 'lkhdb_run', lkh_exe='../lkh/LKH-3.0/LKH', precision=1, seed=12345, runs=2,
                                        pop_size=50, dist_func=dist_func, special=False, verbose=True,
-                                       fixed_edges=[(i, i+1) for i in xrange(1, m.shape[0], 2)])
+                                       fixed_edges=[(i, i+1) for i in xrange(1, _map.shape[0], 2)])
 
             # To solve this with TSP, doublet tips use a graph transformation, where each node comes a pair. Pairs
             # possess fixed inter-connecting edges which must be included in any solution tour.
@@ -1068,8 +1076,8 @@ class ContactMap:
             lkh_o = np.fromiter(((oi[0]/2, oi[1]-oi[0]) for oi in lkh_o), dtype=SeqOrder.INDEX_TYPE)
 
         else:
-            m = self.get_processed_map()
-            lkh_o = ordering.lkh_order(m, 'lkh_run', lkh_exe='../lkh/LKH-3.0/LKH', precision=1, seed=12345, runs=2,
+
+            lkh_o = ordering.lkh_order(_map, 'lkh_run', lkh_exe='../lkh/LKH-3.0/LKH', precision=1, seed=12345, runs=2,
                                        pop_size=50, dist_func=dist_func, special=False, verbose=True)
 
             # for singlet tours, no orientation can be inferred.
@@ -1085,6 +1093,7 @@ class ContactMap:
         return lkh_o
 
     def get_primary_acceptance_mask(self):
+        assert self.primary_acceptance_mask is not None, 'Primary acceptance mask has not be initialized'
         return self.primary_acceptance_mask.copy()
 
     def set_primary_acceptance_mask(self, min_len, min_sig, max_fold=None, update=False, verbose=False):
@@ -1102,6 +1111,10 @@ class ContactMap:
         """
         # simply return the current mask if it has already been determined
         # and an update is not requested
+
+        if verbose:
+            print 'filtering: min_len {} min_sig {}'.format(min_len, min_sig)
+
         if not update and self.primary_acceptance_mask is not None:
             if verbose:
                 print '\tusing existing mask'
@@ -1138,28 +1151,41 @@ class ContactMap:
         self.primary_acceptance_mask = acceptance_mask
 
         if verbose:
-            print '\tAccepted sequences (mask union)', self.order.count_accepted()
+            print '\tAccepted sequences', self.primary_acceptance_mask.sum()
 
         return self.get_primary_acceptance_mask()
 
-    def prepare_seq_map(self, min_len, min_sig, max_fold=None, norm=True, bisto=False, mean_type='geometric',
-                        external_mask=None, update_mask=False, verbose=False):
+    def prepare_seq_map(self, norm=True, bisto=False, mean_type='geometric',
+                        external_mask=None, marginalise=False, flatten=True, verbose=False):
         """
         Prepare the sequence map (seq_map) by application of various filters and normalisations.
 
-        :param min_len: minimum sequence length
-        :param min_sig: minimum inter-sequence signal in raw counts.
-        :param max_fold: maximum locally-measured fold-coverage to permit
         :param norm: normalisation by sequence lengths
         :param bisto: make the output matrix bistochastic
         :param mean_type: when performing normalisation, use "geometric, harmonic or arithmetic" mean.
         :param external_mask: include (union with filter) an additional mask on sequences
-        :param update_mask: replace the existing primary mask, if one alread exists
+        :param marginalise:
+        :param flatten:
         :param verbose: debug output
         """
+
+        assert (not marginalise and not flatten) or np.logical_xor(marginalise, flatten), \
+            'marginalise and flatten are mutually exclusive'
+
         if verbose:
             print 'Prepare sequence map'
             print '\toriginally', self.seq_map.shape
+
+        _mask = self.get_primary_acceptance_mask()
+
+        # from a union of the sequence filter and external mask
+        if external_mask is not None:
+            _mask &= external_mask
+            print '\tunion with external', _mask.sum()
+        self.order.set_mask_only(_mask)
+
+        if self.order.count_accepted() < 1:
+            raise NoneAcceptedException()
 
         m = self.seq_map.astype(np.float)
 
@@ -1169,17 +1195,14 @@ class ContactMap:
             if verbose:
                 print '\tnormed'
 
-        # assign a mask to avoid problematic sequences
-        _mask = self.set_primary_acceptance_mask(min_len, min_sig, max_fold=max_fold,
-                                                 update=update_mask, verbose=verbose)
-        # from a union of the sequence filter and external mask
-        if external_mask is not None:
-            _mask &= external_mask
-            print '\tunion with external', _mask.sum()
-        self.order.set_mask_only(_mask)
-
-        if self.order.count_accepted() < 1:
-            raise NoneAcceptedException()
+        # make map bistochastic if requested
+        if bisto:
+            # TODO balancing may be better done after compression
+            m, scl = self._bisto_seq(m, self.is_tipbased())
+            # retain the scale factors
+            self.bisto_scale = scl
+            if verbose:
+                print '\tbalanced'
 
         # if there are sequences to mask, remove them from the map
         if self.order.count_accepted() < self.total_seq:
@@ -1190,19 +1213,22 @@ class ContactMap:
             if verbose:
                 print '\tfilter reduced', m.shape
 
-        # make map bistochastic if requested
-        if bisto:
-            m, scl = self._bisto_seq(m, self.is_tipbased())
-            # retain the scale factors
-            self.bisto_scale = scl
-            if verbose:
-                print '\tbalanced'
-
         if self.is_tipbased():
-            # lastly, convert the 4D map into a 2Nx2N 2D map.
-            m = simple_sparse.flatten_tensor_4d(m)
+            if marginalise:
+                if verbose:
+                    print 'marginalising NxNx2x2 tensor to NxN matrix'
+                # sum counts of the 2x2 confusion matrices into 1 value
+                m = m.sum(axis=(2, 3)).to_scipy_sparse()
+            elif flatten:
+                if verbose:
+                    print 'flattening NxNx2x2 tensor to 2Nx2N matrix'
+                # convert the 4D map into a 2Nx2N 2D map.
+                m = simple_sparse.flatten_tensor_4d(m)
 
+        # cache the results for optional quick access
         self.processed_map = m
+
+        return m
 
     def get_processed_map(self, permute=False, dtype=np.float, verbose=False):
         """
@@ -1543,8 +1569,8 @@ class ContactMap:
         fig.set_figheight(height)
 
         if simple:
-            # assume the map must be remade
-            self.prepare_seq_map(self.min_len, self.min_sig, norm=norm, update_mask=True)
+            # # assume the map must be remade
+            self.prepare_seq_map(norm=norm, external_mask=self.order.mask_vector())
             m = self.get_processed_map(permute=permute)
         else:
             m = self.get_extent_map(norm=norm, permute=permute)
@@ -1596,8 +1622,7 @@ class ContactMap:
         plt.savefig(fname, dpi=dpi)
         plt.close()
 
-    def to_graph(self, norm=True, bisto=False, scale=False, extern_ids=False, convert_extent=False,
-                 verbose=False):
+    def to_graph(self, norm=True, bisto=False, scale=False, extern_ids=False, verbose=False):
         """
         Convert the seq_map to a undirected Networkx Graph.
 
@@ -1610,7 +1635,6 @@ class ContactMap:
         :param bisto: normalise using bistochasticity
         :param scale: scale weights (max_w = 1)
         :param extern_ids: use the original external sequence identifiers for node ids
-        :param convert_extent: use the full extent map to calculate a full seq_map (if seq_map is tip based)
         :param verbose: debug output
         :return: graph of contigs
         """
@@ -1619,33 +1643,32 @@ class ContactMap:
         else:
             _nn = lambda x: x
 
+        if self.primary_acceptance_mask is None:
+            self.set_primary_acceptance_mask(self.min_len, self.min_sig, verbose=verbose)
+
+        m = self.prepare_seq_map(norm=norm, bisto=bisto, verbose=verbose,
+                                 marginalise=True, flatten=False)
+
+        if verbose:
+            print 'Graph will have {} nodes'.format(self.order.count_accepted())
+
         g = nx.Graph()
-        g.add_nodes_from(_nn(u) for u in xrange(self.total_seq))
-
-        if convert_extent:
-            if verbose:
-                print 'Converting extent map to seq map'
-            m = self.extent_to_seq().astype(np.float)
-        else:
-            m = self.seq_map.astype(np.float)
-
-        is4d = not convert_extent and self.is_tipbased()
-        if norm:
-            m = self._norm_seq(m, tip_based=is4d)
-        if bisto:
-            m, scl = self._bisto_seq(m, tip_based=is4d)
-
-        if is4d:
-            # convert 2x2 matrices to a single weight
-            m = m.sum(axis=(2, 3)).to_scipy_sparse()
 
         if not sp.isspmatrix_coo(m):
             m = m.tocoo()
 
         scl = 1.0/m.max() if scale else 1
 
-        for u, v, w in itertools.izip(m.row, m.col, m.data):
+        if verbose:
+            print 'Building graph'
+
+        import tqdm
+
+        for u, v, w in tqdm.tqdm(itertools.izip(m.row, m.col, m.data), desc='adding edges', total=m.nnz):
+            # assert g.has_node(u) and g.has_node(v), 'missing node {} or {}'.format(u, v)
             g.add_edge(_nn(u), _nn(v), weight=w * scl)
+
+        print nx.info(g)
 
         return g
 
@@ -1663,14 +1686,14 @@ def cluster_names(cl_soln, prefix='CL_'):
 
     return ['{0}{1:{2}d}'.format(prefix, k, num_width) for k in cl_soln]
 
+from typing import Optional
 
-def cluster_map(cm, method='louvain', convert_extent=False, work_dir=None, infomap_depth=2, verbose=False):
+def cluster_map(cm, method='louvain', work_dir=None, infomap_depth=2, verbose=False):
     """
     Cluster a contact map into groups, as an approximate proxy for "species" bins. This is recommended prior to
     applying TSP ordering, minimising the breaking of its assumptions that all nodes should connect and be traversed.
     :param cm: the contact map to cluster
     :param method: clustering algorithm to employ
-    :param convert_extent: use the full extent map to calculate a full seq_map (if seq_map is tip based)
     :param work_dir: working directory to which files are written during clustering. Default: use system tmp
     :param infomap_depth: when using Infomap, treat clusters to this depth of the hierarchy.
     :param verbose: debug output
@@ -1697,6 +1720,7 @@ def cluster_map(cm, method='louvain', convert_extent=False, work_dir=None, infom
         return cl_map
 
     def read_table(pathname, seq_col=0, cl_col=1):
+        # type: (str, Optional[int], int) -> dict
         """
         Read cluster solution from a tabular file, one assignment per line. Implicit sequence
         naming is achieved by setting seq_col=None. The reverse (implicit column naming) is
@@ -1764,9 +1788,12 @@ def cluster_map(cm, method='louvain', convert_extent=False, work_dir=None, infom
 
     seed = 1234
     base_name = 'cm_graph'
-    g = cm.to_graph(norm=True, bisto=True, scale=True, convert_extent=convert_extent, verbose=verbose)
+    g = cm.to_graph(norm=True, bisto=True, scale=True, verbose=verbose)
 
     method = method.lower()
+    if verbose:
+        print 'Performing clustering method [{}]'.format(method)
+
     if method == 'louvain':
         cl_to_ids = louvain_cluster.cluster(g, no_iso=False, ragbag=False)
     elif method == 'mcl':
@@ -1790,29 +1817,51 @@ def cluster_map(cm, method='louvain', convert_extent=False, work_dir=None, infom
         cl_to_ids = read_tree(os.path.join(work_dir, '{}.tree'.format(base_name)), max_depth=infomap_depth)
     elif method == 'slm':
         mod_func = '1'
-        resolution = '1.0'
+        resolution = '2.0'
         opti_algo = '3'
         n_starts = '10'
         n_iters = '10'
         ofile = os.path.join(work_dir, '{}.slm'.format(base_name))
+        verb = '1'
         nx.write_edgelist(g, path='{}.edges'.format(base_name), data=['weight'], delimiter='\t')
         subprocess.check_call(['java', '-jar', 'SLM4J/ModularityOptimizer.jar',
                                '{}.edges'.format(base_name), ofile,
-                               mod_func, resolution, opti_algo, n_starts, n_iters, str(seed), '1'])
+                               mod_func, resolution, opti_algo, n_starts, n_iters, str(seed), verb])
         cl_to_ids = read_table(ofile, seq_col=None, cl_col=0)
     else:
         raise RuntimeError('unimplemented method [{}]'.format(method))
 
-    # standardise the result
-    cl_soln = {cl_id: {'seq_ids': np.array(sorted([seq_id for seq_id in cl_to_ids[cl_id]]))} for cl_id in cl_to_ids}
+    if verbose:
+        print 'Gathering clustering results'
+        print 'There were {} clusters'.format(len(cl_to_ids))
+
+        # SLM output loses cluster ids, treated as gapless range. [0..n]
+        # we must restore the gaps.
+        # for k, v in cl_to_ids.iteritems():
+        #     _o = SeqOrder.asindex(v)
+        #     _o = cm.order.remap_gapless(_o)
+        #     cl_to_ids[k] = _o['index']
+
+    # standardise the results, where sequences in each cluster
+    # are listed in ascending order
+    cl_soln = {}
+    for _cl, _seqs in cl_to_ids.iteritems():
+        _ord = SeqOrder.asindex(np.sort(_seqs))
+        # IMPORTANT!! sequences are remapped to their gapless indices
+        _seqs = cm.order.remap_gapless(_ord)['index']
+        cl_soln[_cl] = {
+            'seq_ids': _seqs
+        }
+
     # add total extent to each cluster
-    for cl_id in cl_soln:
-        cl_soln[cl_id]['extent'] = cm.order.lengths()[cl_soln[cl_id]['seq_ids']].sum()
+    for _cl in cl_soln:
+        cl_soln[_cl]['extent'] = cm.order.lengths()[cl_soln[_cl]['seq_ids']].sum()
 
     return cl_soln
 
 
-def order_clusters(cm, all_cl, min_len=None, min_sig=None, max_fold=None, min_extent=None, min_size=1):
+def order_clusters(cm, all_cl, min_len=None, min_sig=None, max_fold=None, min_extent=None, min_size=1,
+                   verbose=False):
     """
     Determine the order of sequences for a given cluster.
 
@@ -1823,31 +1872,42 @@ def order_clusters(cm, all_cl, min_len=None, min_sig=None, max_fold=None, min_ex
     :param max_fold: within a cluster, exclude sequences that appear to be overly represented
     :param min_size: skip clusters which containt too few sequences
     :param min_extent: skip clusters whose total extent (bp) is too short
+    :param verbose: debug output
     :return: map of cluster orders, by cluster id
     """
 
+    cm.set_primary_acceptance_mask(min_len, min_sig, max_fold=max_fold, update=True, verbose=verbose)
+
     orders = {}
     for cl_id, cl_map in all_cl.iteritems():
-        print 'Ordering cluster {}'.format(cl_id)
+        if verbose:
+            print 'Ordering cluster {}'.format(cl_id)
 
         # calculate the clusters extent
-        print '\t{}bp extent'.format(cl_map['extent']),
+        if verbose:
+            print '\t{}bp extent'.format(cl_map['extent']),
         if cl_map['extent'] < min_extent:
-            print '-- excluded cluster due to small extent'
+            if verbose:
+                print '-- excluded cluster due to small extent'
             continue
         elif len(cl_map['seq_ids']) < min_size:
-            print '-- excluded cluster contains too few sequences'
+            if verbose:
+                print '-- excluded cluster contains too few sequences'
             continue
         else:
             print
 
-        # enable only sequences in the cluster
-        _mask = np.zeros_like(cm.order.mask_vector())
-        _mask[cl_map['seq_ids']] = True
-
         try:
-            _ord = cm.find_order(min_len, min_sig, max_fold=max_fold, verbose=True, norm=True, bisto=True,
-                                 inverse_method='neglog', external_mask=_mask)
+            # we'll consider only sequences in the cluster
+            _mask = np.zeros_like(cm.order.mask_vector())
+            _mask[cl_map['seq_ids']] = True
+            # cm.order.set_mask_only(_mask)
+
+            _map = cm.prepare_seq_map(norm=True, bisto=True, mean_type='geometric', external_mask=_mask,
+                                      verbose=True)
+
+            _ord = cm.find_order(_map, inverse_method='neglog', verbose=True)
+
         except NoneAcceptedException as e:
             print '{} : cluster {} will be masked'.format(e.message, cl_id)
             continue

@@ -219,9 +219,11 @@ class Sparse2DAccumulator(object):
 
 
 def max_offdiag(_m):
+    # type: (scisp.spmatrix) -> np.ndarray
     """
     Determine the maximum off-diagonal values of a given symmetric matrix. As this
     is assumed to be symmetric, we consider only the rows.
+
     :param _m: a scipy.sparse matrix
     :return: the off-diagonal maximum values
     """
@@ -356,9 +358,11 @@ class Sparse4DAccumulator(object):
 
 
 def max_offdiag_4d(_m):
+    # type: (sparse.COO) -> np.ndarray
     """
     Determine the maximum off-diagonal summed signal, where "summed signal" refers to reducing the
     the tensor to a 2d matrix by summing over the last two axes (2x2 submatrices).
+
     :param _m: a 4d sparse.COO or DOK matrix with dimension NxNx2x2.
     :return: a vector of length N containing off-diagonal maximums.
     """
@@ -369,6 +373,7 @@ def flatten_tensor_4d(_m):
     """
     Flatten a 4D tensor into 2D by doubling the first two dimensions. It is assumed that the matrix
     has already been made symmetric (if required).
+
     :param _m: a 4d sparse.COO matrix with dimension NxNx2x2
     :return: 2d sparse matrix of type scipy.sparse.coo_matrix
     """
@@ -392,6 +397,7 @@ def compress_4d(_m, _mask):
     only the first two primary axes (essentially a 2D matrix with 2x2 cells). If the input is not
     of sparse.COO type, it will be cast. An exception is raised if the matrix is not of
      sparse.DOK or sparse.COO type. The returned matrix is of type sparse.COO.
+
     :param _mask: True (keep), False (drop)
     :return: a sparse.COO of only the accepted rows/columns
     """
@@ -423,6 +429,7 @@ def dotdot(_m, _a):
     """
     Assuming A is a vector representing the trace of a diagonal matrix, dotdot
     performs the transformation dot(A.T,dot(M,A)) on  a sparse matrix.
+
     :param _m: the sparse matrix, modified in-place
     :param _a: the 1d trace of a diagonal matrix
     :return: the in-place modified matrix
@@ -438,6 +445,7 @@ def kr_biostochastic_4d(m4d, **kwargs):
     Knight-Ruiz applied to a NxNx2x2 tensor. The scale factors are determined by first converting
     this to a 2D matrix, summed on axis 2 and 3. The method is intended for determining scale-factors
     of the doublet matrix used in LKH ordering.
+
     :param m4d: a NxNxmxn matrix
     :param kwargs: options to kr_biostochastic()
     :return: a scaled matrix, scale-factors
