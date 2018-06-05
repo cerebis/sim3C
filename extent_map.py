@@ -22,6 +22,7 @@ import seaborn
 import yaml
 from numba import jit, vectorize, int64, int32, float64, void
 from numpy import log, pi
+from typing import Optional
 
 import louvain_cluster
 import io_utils
@@ -1685,8 +1686,6 @@ def cluster_names(cl_soln, prefix='CL_'):
         num_width = 1
 
     return ['{0}{1:{2}d}'.format(prefix, k, num_width) for k in cl_soln]
-
-from typing import Optional
 
 def cluster_map(cm, method='louvain', work_dir=None, infomap_depth=2, verbose=False):
     """
