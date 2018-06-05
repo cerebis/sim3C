@@ -1,3 +1,4 @@
+import contextlib
 import cPickle
 import heapq
 import itertools
@@ -6,8 +7,7 @@ import os
 import subprocess
 import tempfile
 import uuid
-from collections import OrderedDict
-from collections import namedtuple
+from collections import OrderedDict, namedtuple, Mapping
 from functools import partial
 
 import Bio.SeqIO as SeqIO
@@ -73,6 +73,14 @@ class ParsingError(Exception):
     """An error during input parsing"""
     def __init__(self, msg):
         super(ParsingError, self).__init__(msg)
+
+
+def make_random_seed():
+    """
+    Provide a random seed value between 1 and 10 million.
+    :return: integer random seed
+    """
+    return np.random.randint(1000000, 10000000)
 
 
 @vectorize([float64(float64)])
@@ -660,6 +668,60 @@ def fast_norm_seq(coords, data, tip_lengths, tip_size):
         data[ii] *= tip_size**2 / (tip_lengths[i] * tip_lengths[j])
 
 
+class IndexedFasta(Mapping):
+    """
+    Provides indexed access to a sequence file in Fasta format which can be compressed using bgzip.
+
+    The SeqIO.index_db method is used for access, and the temporary index is stored in the system
+    tmp directory by default. At closing, the index will be closed and the temporary file removed.
+
+    Wrapped with contextlib.closing(), instances of this object are with() compatible.
+    """
+
+    def __init__(self, fasta_file, tmp_path=None):
+        """
+        :param fasta_file: the input fasta file to access
+        :param tmp_path: temporary directory for creating index
+        """
+        if tmp_path is None:
+            tmp_path = tempfile.gettempdir()
+        elif not os.path.exists(tmp_path):
+            raise IOError('specified temporary path [{}] does not exist'.format(tmp_path))
+        self._tmp_file = os.path.join(tmp_path, '{}.seqdb'.format(str(uuid.uuid4())))
+        self._fasta_file = fasta_file
+        self._index = SeqIO.index_db(self._tmp_file, self._fasta_file, 'fasta')
+
+    def __getitem__(self, _id):
+        """
+        Access a sequence object by its Fasta identifier.
+
+        :param _id: fasta sequence identifier
+        :return: SeqRecord object representing the sequence
+        """
+        return self._index[_id]
+
+    def __iter__(self):
+        """
+        :return: iterator over sequence identifiers (keys)
+        """
+        return iter(self._index)
+
+    def __len__(self):
+        """
+        :return: the number of sequences in the file
+        """
+        return len(self._index)
+
+    def close(self):
+        """
+        Close the index and remove the associated temporary file
+        """
+        if self._index:
+            self._index.close()
+        if os.path.exists(self._tmp_file):
+            os.unlink(self._tmp_file)
+
+
 class ContactMap:
 
     def __init__(self, bam_file, cov_file, seq_file, min_insert, min_mapq=0, min_len=0, min_sig=1, max_fold=None,
@@ -697,12 +759,8 @@ class ContactMap:
             if 'SO' not in bam.header['HD'] or bam.header['HD']['SO'] != 'queryname':
                 raise IOError('BAM file must be sorted by read name')
 
-            seq_db = None
-            tmp_file = '.{}.seqdb'.format(str(uuid.uuid4()))
-            try:
-                # sqlite3 seems to hate tempfile based temporary files
-                # therefore we just make our own
-                seq_db = SeqIO.index_db(tmp_file, seq_file, 'fasta')
+            with contextlib.closing(IndexedFasta(seq_file)) as seq_db:
+
                 # determine the set of active sequences
                 # where the first filtration step is by length
                 ref_count = {'seq_missing': 0, 'too_short': 0}
@@ -730,12 +788,6 @@ class ContactMap:
                     logger.debug('Found {} bp sequence for {}'.format(li, seq_id))
 
                     offset += li
-
-            finally:
-                if seq_db:
-                    seq_db.close()
-                if os.path.exists(tmp_file):
-                    os.unlink(tmp_file)
 
             # total extent covered
             self.total_len = offset
@@ -1035,7 +1087,7 @@ class ContactMap:
         """
         return self.tip_size is not None
 
-    def find_order(self, _map, inverse_method='inverse', verbose=False):
+    def find_order(self, _map, inverse_method='inverse', seed=None, verbose=False):
         """
         Using LKH TSP solver, find the best ordering of the sequence map in terms of proximity ligation counts.
         Here, it is assumed that sequence proximity can be inferred from number of observed trans read-pairs, where
@@ -1043,6 +1095,7 @@ class ContactMap:
 
         :param _map: the seq map to analyze
         :param inverse_method: the chosen inverse method for converting count (similarity) to distance
+        :param seed: specify a random seed, otherwise one is generated at runtime
         :param verbose: debug output
         :return: the surrogate ids in optimal order
         """
@@ -1056,12 +1109,15 @@ class ContactMap:
         dist_func = partial(ordering.similarity_to_distance, method=inverse_method,
                             alpha=1.2, beta=1, verbose=verbose)
 
+        if seed is None:
+            seed = make_random_seed()
+
         if self.is_tipbased():
             # a minimum of three sequences is required to run LKH
             if _map.shape[0] < 3:
                 raise TooFewException()
 
-            lkh_o = ordering.lkh_order(_map, 'lkhdb_run', lkh_exe='../lkh/LKH-3.0/LKH', precision=1, seed=12345, runs=2,
+            lkh_o = ordering.lkh_order(_map, 'lkhdb_run', lkh_exe='../lkh/LKH-3.0/LKH', precision=1, seed=seed, runs=2,
                                        pop_size=50, dist_func=dist_func, special=False, verbose=True,
                                        fixed_edges=[(i, i+1) for i in xrange(1, _map.shape[0], 2)])
 
@@ -1078,7 +1134,7 @@ class ContactMap:
 
         else:
 
-            lkh_o = ordering.lkh_order(_map, 'lkh_run', lkh_exe='../lkh/LKH-3.0/LKH', precision=1, seed=12345, runs=2,
+            lkh_o = ordering.lkh_order(_map, 'lkh_run', lkh_exe='../lkh/LKH-3.0/LKH', precision=1, seed=seed, runs=2,
                                        pop_size=50, dist_func=dist_func, special=False, verbose=True)
 
             # for singlet tours, no orientation can be inferred.
@@ -1486,6 +1542,7 @@ class ContactMap:
         """
         Plot the contact map, annotating the map with sequence names. WARNING: This can often be too dense
         to be legible when there are many (1000s) of sequences.
+
         :param fname: output file name
         :param simple: True plot seq map, False plot the extent map
         :param permute: permute the map with the present order
@@ -1518,6 +1575,7 @@ class ContactMap:
     def plot_clusters(self, fname, cl_map, simple=True, permute=False, **kwargs):
         """
         Plot the contact map, annotating the map with cluster names and boundaries
+
         :param fname: output file name
         :param cl_map: the cluster solution
         :param simple: True plot seq map, False plot the extent map
@@ -1540,7 +1598,8 @@ class ContactMap:
                 csbins.append(self.grouping.bins[cl_map[k]['seq_ids'][_oi['mask']]].sum() + csbins[-1])
             tick_locs = np.array(csbins, dtype=np.int)
 
-        self.plot(fname, permute=permute, simple=simple, tick_locs=tick_locs, tick_labs=cluster_names(cl_map), **kwargs)
+        _labels = ContactMap.cluster_names(cl_map.keys())
+        self.plot(fname, permute=permute, simple=simple, tick_locs=tick_locs, tick_labs=_labels, **kwargs)
 
     def plot(self, fname, simple=False, tick_locs=None, tick_labs=None, norm=False, permute=False, pattern_only=False,
              dpi=180, width=25, height=22, zero_diag=False, alpha=0.01, robust=False):
@@ -1673,243 +1732,313 @@ class ContactMap:
 
         return g
 
-
-def cluster_names(cl_soln, prefix='CL_'):
-    """
-    Pedantically work out how many digits are required for the largest cluster number,
-    so we can add leading zeros to the remainder.
-    :return: standardised cluster names
-    """
-    try:
-        num_width = max(1, int(np.ceil(np.log10(max(cl_soln.keys())))))
-    except OverflowError:
-        num_width = 1
-
-    return ['{0}{1:{2}d}'.format(prefix, k, num_width) for k in cl_soln]
-
-def cluster_map(cm, method='louvain', work_dir=None, infomap_depth=2, verbose=False):
-    """
-    Cluster a contact map into groups, as an approximate proxy for "species" bins. This is recommended prior to
-    applying TSP ordering, minimising the breaking of its assumptions that all nodes should connect and be traversed.
-    :param cm: the contact map to cluster
-    :param method: clustering algorithm to employ
-    :param work_dir: working directory to which files are written during clustering. Default: use system tmp
-    :param infomap_depth: when using Infomap, treat clusters to this depth of the hierarchy.
-    :param verbose: debug output
-    :return:
-    """
-
-    def read_mcl(pathname):
+    @staticmethod
+    def _add_cluster_names(clustering, prefix='CL'):
         """
-        Read a MCL solution file converting this to a TruthTable.
+        Add names to a clustering in-place. Where we pedantically work out how many
+        digits are required for the largest cluster number, so we can add leading
+        zeros to the remainder. The method is used with plotting and
+        output of fasta for members of each cluster.
 
-        :param pathname: mcl file name
-        :return: dict of cluster_id to array of seq_ids
+        :param clustering: clustering solution returned from ContactMap.cluster_map
+        :param prefix: static prefix of cluster names.
+        """
+        try:
+            num_width = max(1, int(np.ceil(np.log10(max(clustering)))))
+        except OverflowError:
+            num_width = 1
+
+        for cl_id in clustering:
+            clustering[cl_id]['name'] = '{0}{1:{2}d}'.format(prefix, cl_id, num_width)
+
+    def cluster_map(self, method='louvain', work_dir=None, infomap_depth=2, seed=None, verbose=False):
+        """
+        Cluster a contact map into groups, as an approximate proxy for "species" bins. This is recommended prior to
+        applying TSP ordering, minimising the breaking of its assumptions that all nodes should connect and be
+        traversed.
+
+        :param method: clustering algorithm to employ
+        :param work_dir: working directory to which files are written during clustering. Default: use system tmp
+        :param infomap_depth: when using Infomap, treat clusters to this depth of the hierarchy.
+        :param seed: specify a random seed, otherwise one is generated at runtime.
+        :param verbose: debug output
+        :return: a dictionary detailing the full clustering of the contact map
         """
 
-        with open(pathname, 'r') as h_in:
-            # read the MCL file, which lists all members of a class on a single line
-            # the class ids are implicit, therefore we use line number.
-            cl_map = {}
-            for cl_id, line in enumerate(h_in):
-                line = line.rstrip()
-                if not line:
-                    break
-                cl_map[cl_id] = np.array(sorted([int(tok) for tok in line.split()]))
-        return cl_map
+        def read_mcl(pathname):
+            """
+            Read a MCL solution file converting this to a TruthTable.
 
-    def read_table(pathname, seq_col=0, cl_col=1):
-        # type: (str, Optional[int], int) -> dict
-        """
-        Read cluster solution from a tabular file, one assignment per line. Implicit sequence
-        naming is achieved by setting seq_col=None. The reverse (implicit column naming) is
-        not currently supported.
+            :param pathname: mcl file name
+            :return: dict of cluster_id to array of seq_ids
+            """
 
-        :param pathname: table file name
-        :param seq_col: column number of seq_ids
-        :param cl_col: column number of cluster ids
-        :return: dict of cluster_id to array of seq_ids
-        """
-        assert seq_col != cl_col, 'sequence and cluster columns must be different'
-        with open(pathname, 'r') as h_in:
-            cl_map = {}
-            n = 0
-            for line in h_in:
-                line = line.strip()
-                if not line:
-                    break
-                if seq_col is None:
-                    cl_id = int(line)
-                    seq_id = n
-                    n += 1
-                else:
-                    t = line.split()
-                    if len(t) != 2:
-                        print 'invalid line encountered when reading cluster table: [{}]'.format(line)
-
-                    seq_id, cl_id = int(t[seq_col]), int(t[cl_col])
-                cl_map.setdefault(cl_id, []).append(seq_id)
-            for k in cl_map:
-                cl_map[k] = np.array(cl_map[k], dtype=np.int)
+            with open(pathname, 'r') as h_in:
+                # read the MCL file, which lists all members of a class on a single line
+                # the class ids are implicit, therefore we use line number.
+                cl_map = {}
+                for cl_id, line in enumerate(h_in):
+                    line = line.rstrip()
+                    if not line:
+                        break
+                    cl_map[cl_id] = np.array(sorted([int(tok) for tok in line.split()]))
             return cl_map
 
-    def read_tree(pathname, max_depth=2):
-        """
-        Read a tree clustering file as output by Infomap.
+        def read_table(pathname, seq_col=0, cl_col=1):
+            # type: (str, Optional[int], int) -> dict
+            """
+            Read cluster solution from a tabular file, one assignment per line. Implicit sequence
+            naming is achieved by setting seq_col=None. The reverse (implicit column naming) is
+            not currently supported.
 
-        :param pathname: the path to the tree file
-        :param max_depth: the maximum depth to consider when combining objects into clusters.
-        :return: dict of cluster_id to array of seq_ids
-        """
-        with open(pathname, 'r') as in_h:
-            cl_map = {}
-            for line in in_h:
-                line = line.strip()
-                if not line:
-                    break
-                if line.startswith('#'):
-                    continue
-                fields = line.split()
-                hierarchy = fields[0].split(':')
-                cl_map.setdefault(tuple(['orig'] + hierarchy[:max_depth]), []).append(fields[-1])
+            :param pathname: table file name
+            :param seq_col: column number of seq_ids
+            :param cl_col: column number of cluster ids
+            :return: dict of cluster_id to array of seq_ids
+            """
+            assert seq_col != cl_col, 'sequence and cluster columns must be different'
+            with open(pathname, 'r') as h_in:
+                cl_map = {}
+                n = 0
+                for line in h_in:
+                    line = line.strip()
+                    if not line:
+                        break
+                    if seq_col is None:
+                        cl_id = int(line)
+                        seq_id = n
+                        n += 1
+                    else:
+                        t = line.split()
+                        if len(t) != 2:
+                            print 'invalid line encountered when reading cluster table: [{}]'.format(line)
 
-            # rename clusters and order descending in size
-            desc_key = sorted(cl_map, key=lambda x: len(cl_map[x]), reverse=True)
-            for n, k in enumerate(desc_key):
-                cl_map[n] = np.array(cl_map.pop(k), dtype=np.int)
+                        seq_id, cl_id = int(t[seq_col]), int(t[cl_col])
+                    cl_map.setdefault(cl_id, []).append(seq_id)
+                for k in cl_map:
+                    cl_map[k] = np.array(cl_map[k], dtype=np.int)
+                return cl_map
 
-        return cl_map
+        def read_tree(pathname, max_depth=2):
+            """
+            Read a tree clustering file as output by Infomap.
 
-    if work_dir is None:
-        work_dir = tempfile.gettempdir()
-    else:
-        assert os.path.exists(work_dir), 'supplied output path [{}] does not exist'.format(work_dir)
+            :param pathname: the path to the tree file
+            :param max_depth: the maximum depth to consider when combining objects into clusters.
+            :return: dict of cluster_id to array of seq_ids
+            """
+            with open(pathname, 'r') as in_h:
+                cl_map = {}
+                for line in in_h:
+                    line = line.strip()
+                    if not line:
+                        break
+                    if line.startswith('#'):
+                        continue
+                    fields = line.split()
+                    hierarchy = fields[0].split(':')
+                    cl_map.setdefault(tuple(['orig'] + hierarchy[:max_depth]), []).append(fields[-1])
 
-    seed = 1234
-    base_name = 'cm_graph'
-    g = cm.to_graph(norm=True, bisto=True, scale=True, verbose=verbose)
+                # rename clusters and order descending in size
+                desc_key = sorted(cl_map, key=lambda x: len(cl_map[x]), reverse=True)
+                for n, k in enumerate(desc_key):
+                    cl_map[n] = np.array(cl_map.pop(k), dtype=np.int)
 
-    method = method.lower()
-    if verbose:
-        print 'Performing clustering method [{}]'.format(method)
+            return cl_map
 
-    if method == 'louvain':
-        cl_to_ids = louvain_cluster.cluster(g, no_iso=False, ragbag=False)
-    elif method == 'mcl':
-        ofile = os.path.join(work_dir, '{}.mcl'.format(base_name))
-        nx.write_edgelist(g, path='{}.edges'.format(base_name), data=['weight'])
-        subprocess.check_call(['mcl-14-137/bin/mcl', '{}.edges'.format(base_name), '--abc',
-                               '-I', '1.2', '-o', ofile])
-        cl_to_ids = read_mcl(ofile)
-    elif method == 'simap':
-        ofile = os.path.join(work_dir, '{}.simap'.format(base_name))
-        nx.write_edgelist(g, path='{}.edges'.format(base_name), data=['weight'])
-        subprocess.check_call(['java', '-jar', 'simap-1.0.0.jar', 'mdl', '-s', str(seed),
-                               '-i', '1e-5', '1e-3', '-a', '1e-5',
-                               '-g', '{}.edges'.format(base_name),
-                               '-o', ofile])
-        cl_to_ids = read_table(ofile)
-    elif method == 'infomap':
-        nx.write_edgelist(g, path='{}.edges'.format(base_name), data=['weight'])
-        subprocess.check_call(['../infomap/Infomap', '-u', '-v', '-z', '-i', 'link-list',
-                               '{}.edges'.format(base_name), work_dir])
-        cl_to_ids = read_tree(os.path.join(work_dir, '{}.tree'.format(base_name)), max_depth=infomap_depth)
-    elif method == 'slm':
-        mod_func = '1'
-        resolution = '2.0'
-        opti_algo = '3'
-        n_starts = '10'
-        n_iters = '10'
-        ofile = os.path.join(work_dir, '{}.slm'.format(base_name))
-        verb = '1'
-        nx.write_edgelist(g, path='{}.edges'.format(base_name), data=['weight'], delimiter='\t')
-        subprocess.check_call(['java', '-jar', 'SLM4J/ModularityOptimizer.jar',
-                               '{}.edges'.format(base_name), ofile,
-                               mod_func, resolution, opti_algo, n_starts, n_iters, str(seed), verb])
-        cl_to_ids = read_table(ofile, seq_col=None, cl_col=0)
-    else:
-        raise RuntimeError('unimplemented method [{}]'.format(method))
-
-    if verbose:
-        print 'Gathering clustering results'
-        print 'There were {} clusters'.format(len(cl_to_ids))
-
-    # standardise the results, where sequences in each cluster
-    # are listed in ascending order
-    cl_soln = {}
-    for _cl, _seqs in cl_to_ids.iteritems():
-        _ord = SeqOrder.asindex(np.sort(_seqs))
-        # IMPORTANT!! sequences are remapped to their gapless indices
-        _seqs = cm.order.remap_gapless(_ord)['index']
-        cl_soln[_cl] = {
-            'seq_ids': _seqs
-        }
-
-    # add total extent to each cluster
-    for _cl in cl_soln:
-        cl_soln[_cl]['extent'] = cm.order.lengths()[cl_soln[_cl]['seq_ids']].sum()
-
-    return cl_soln
-
-
-def order_clusters(cm, all_cl, min_len=None, min_sig=None, max_fold=None, min_extent=None, min_size=1,
-                   verbose=False):
-    """
-    Determine the order of sequences for a given cluster.
-
-    :param cm: the contact map
-    :param all_cl: the sequence clusters derived from the supplied contact map
-    :param min_len: within a cluster exclude sequences that are too short (bp)
-    :param min_sig: within a cluster exclude sequences with weak signal (counts)
-    :param max_fold: within a cluster, exclude sequences that appear to be overly represented
-    :param min_size: skip clusters which containt too few sequences
-    :param min_extent: skip clusters whose total extent (bp) is too short
-    :param verbose: debug output
-    :return: map of cluster orders, by cluster id
-    """
-
-    cm.set_primary_acceptance_mask(min_len, min_sig, max_fold=max_fold, update=True, verbose=verbose)
-
-    orders = {}
-    for cl_id, cl_map in all_cl.iteritems():
-        if verbose:
-            print 'Ordering cluster {}'.format(cl_id)
-
-        # calculate the clusters extent
-        if verbose:
-            print '\t{}bp extent'.format(cl_map['extent']),
-        if cl_map['extent'] < min_extent:
-            if verbose:
-                print '-- excluded cluster due to small extent'
-            continue
-        elif len(cl_map['seq_ids']) < min_size:
-            if verbose:
-                print '-- excluded cluster contains too few sequences'
-            continue
+        if work_dir is None:
+            work_dir = tempfile.gettempdir()
         else:
-            print
+            assert os.path.exists(work_dir), 'supplied output path [{}] does not exist'.format(work_dir)
 
-        try:
-            # we'll consider only sequences in the cluster
-            _mask = np.zeros_like(cm.order.mask_vector())
-            _mask[cl_map['seq_ids']] = True
-            # cm.order.set_mask_only(_mask)
+        if seed is None:
+            seed = make_random_seed()
 
-            _map = cm.prepare_seq_map(norm=True, bisto=True, mean_type='geometric', external_mask=_mask,
-                                      verbose=True)
+        base_name = 'cm_graph'
+        g = self.to_graph(norm=True, bisto=True, scale=True, verbose=verbose)
 
-            _ord = cm.find_order(_map, inverse_method='neglog', verbose=True)
+        method = method.lower()
+        if verbose:
+            print 'Performing clustering method [{}]'.format(method)
 
-        except NoneAcceptedException as e:
-            print '{} : cluster {} will be masked'.format(e.message, cl_id)
-            continue
-        except TooFewException as e:
-            print '{} : ordering not possible for cluster {}'.format(e.message, cl_id)
-            _ord = cm.order.accepted_order()
+        if method == 'louvain':
+            cl_to_ids = louvain_cluster.cluster(g, no_iso=False, ragbag=False)
+        elif method == 'mcl':
+            ofile = os.path.join(work_dir, '{}.mcl'.format(base_name))
+            nx.write_edgelist(g, path='{}.edges'.format(base_name), data=['weight'])
+            subprocess.check_call(['mcl', '{}.edges'.format(base_name), '--abc',
+                                   '-I', '1.2', '-o', ofile])
+            cl_to_ids = read_mcl(ofile)
+        elif method == 'simap':
+            ofile = os.path.join(work_dir, '{}.simap'.format(base_name))
+            nx.write_edgelist(g, path='{}.edges'.format(base_name), data=['weight'])
+            subprocess.check_call(['java', '-jar', 'simap-1.0.0.jar', 'mdl', '-s', str(seed),
+                                   '-i', '1e-5', '1e-3', '-a', '1e-5',
+                                   '-g', '{}.edges'.format(base_name),
+                                   '-o', ofile])
+            cl_to_ids = read_table(ofile)
+        elif method == 'infomap':
+            nx.write_edgelist(g, path='{}.edges'.format(base_name), data=['weight'])
+            subprocess.check_call(['Infomap', '-u', '-v', '-z', '-i', 'link-list', '-s', str(seed),
+                                   '{}.edges'.format(base_name), work_dir])
+            cl_to_ids = read_tree(os.path.join(work_dir, '{}.tree'.format(base_name)), max_depth=infomap_depth)
+        elif method == 'slm':
+            mod_func = '1'
+            resolution = '2.0'
+            opti_algo = '3'
+            n_starts = '10'
+            n_iters = '10'
+            ofile = os.path.join(work_dir, '{}.slm'.format(base_name))
+            verb = '1'
+            nx.write_edgelist(g, path='{}.edges'.format(base_name), data=['weight'], delimiter='\t')
+            subprocess.check_call(['java', '-jar', 'SLM4J/ModularityOptimizer.jar',
+                                   '{}.edges'.format(base_name), ofile,
+                                   mod_func, resolution, opti_algo, n_starts, n_iters, str(seed), verb])
+            cl_to_ids = read_table(ofile, seq_col=None, cl_col=0)
+        else:
+            raise RuntimeError('unimplemented method [{}]'.format(method))
 
-        orders[cl_id] = _ord
+        if verbose:
+            print 'Gathering clustering results'
+            print 'There were {} clusters'.format(len(cl_to_ids))
 
-    return orders
+        # standardise the results, where sequences in each cluster
+        # are listed in ascending order
+        clustering = {}
+        for cl_id, _seqs in cl_to_ids.iteritems():
+            _ord = SeqOrder.asindex(np.sort(_seqs))
+            # IMPORTANT!! sequences are remapped to their gapless indices
+            _seqs = self.order.remap_gapless(_ord)['index']
+
+            clustering[cl_id] = {
+                'seq_ids': _seqs,
+                'extent': self.order.lengths()[clustering[cl_id]['seq_ids']].sum()
+
+                # TODO add other details for clusters here
+                # 1. gc
+                # 2. read-depth
+                # 3. residual modularity, permanence
+                # 4. profit?
+            }
+
+        ContactMap._add_cluster_names(clustering)
+
+        return clustering
+
+    def order_clusters(self, clustering, min_len=None, min_sig=None, max_fold=None, min_extent=None, min_size=1,
+                       verbose=False):
+        """
+        Determine the order of sequences for a given clustering solution, as returned by cluster_map.
+
+        :param clustering: the full clustering solution, derived from the supplied contact map
+        :param min_len: within a cluster exclude sequences that are too short (bp)
+        :param min_sig: within a cluster exclude sequences with weak signal (counts)
+        :param max_fold: within a cluster, exclude sequences that appear to be overly represented
+        :param min_size: skip clusters which containt too few sequences
+        :param min_extent: skip clusters whose total extent (bp) is too short
+        :param verbose: debug output
+        :return: map of cluster orders, by cluster id
+        """
+
+        self.set_primary_acceptance_mask(min_len, min_sig, max_fold=max_fold, update=True, verbose=verbose)
+
+        for cl_id, cl_info in clustering.iteritems():
+            if verbose:
+                print 'Ordering cluster {}'.format(cl_info['name'])
+
+            # calculate the clusters extent
+            if verbose:
+                print '\t{}bp extent'.format(cl_info['extent']),
+            if cl_info['extent'] < min_extent:
+                if verbose:
+                    print '-- excluded cluster due to small extent'
+                continue
+            elif len(cl_info['seq_ids']) < min_size:
+                if verbose:
+                    print '-- excluded cluster contains too few sequences'
+                continue
+            else:
+                print
+
+            try:
+                # we'll consider only sequences in the cluster
+                _mask = np.zeros_like(self.order.mask_vector())
+                _mask[cl_info['seq_ids']] = True
+                # cm.order.set_mask_only(_mask)
+
+                _map = self.prepare_seq_map(norm=True, bisto=True, mean_type='geometric', external_mask=_mask,
+                                            verbose=True)
+
+                _ord = self.find_order(_map, inverse_method='neglog', verbose=True)
+
+            except NoneAcceptedException as e:
+                print '{} : cluster {} will be masked'.format(e.message, cl_info['name'])
+                continue
+            except TooFewException as e:
+                print '{} : ordering not possible for cluster {}'.format(e.message, cl_info['name'])
+                _ord = self.order.accepted_order()
+
+            clustering[cl_id]['order'] = _ord
+
+        return clustering
+
+    def write_fasta(self, clustering, output_dir):
+
+        if os.path.exists(output_dir):
+            # currently, use simple logic for output directory. It must not already exist.
+            # TODO convert to an application error
+            raise RuntimeError('output directory already exists')
+
+        seq_info = self.seq_info
+
+        parent_dir = os.path.join(output_dir, 'fasta')
+
+        # set up indexed access to the input fasta
+        with contextlib.closing(IndexedFasta(self.seq_file)) as seq_db:
+
+            # iterate over the cluster set, in the existing order
+            for cl_id, cl_info in clustering.iteritems():
+
+                # Each cluster produces a multi-fasta. Sequences are not joined
+                cl_path = os.path.join(parent_dir, '{}.fna'.format(cl_info['name']))
+                with open(cl_path, 'w') as output_h:
+
+                    if 'order' not in cl_info:
+                        # unordered output
+                        raise RuntimeError('unordered output unimplemented')
+
+                    # ordered output
+                    else:
+                        # width of largest member.
+                        # TODO is may be more consistent to determine this globally and have sequences
+                        # TODO across all clusters equivalent length of characters.
+                        num_width = max(1, int(np.ceil(np.log10(len(cl_info['seq_ids'])))))
+
+                        # iterate over cluster members, in the determined order
+                        for n, _oi in enumerate(cl_info['order'], 1):
+
+                            # get the sequence's external name and length
+                            _name = seq_info[_oi['index']].name
+                            _length = seq_info[_oi['index']].length
+
+                            # fetch the SeqRecord object from the input fasta
+                            _seq = seq_db[_name]
+
+                            # reverse complement as needed
+                            if _oi['ori'] == SeqOrder.REVERSE:
+                                _seq = _seq.reverse_complement()
+                                _ori_symb = '-'
+                            elif _oi['ori'] == SeqOrder.FORWARD:
+                                _ori_symb = '+'
+                            else:
+                                # TODO convert to an application error
+                                raise RuntimeError('unknown orientation state [{}].'.format(_oi['ori']))
+
+                            # add a new name and description
+                            _seq.id = '{0}_{1:{2}d}'.format(cl_info['name'], n, num_width)
+                            _seq.name = _seq.id
+                            _seq.description = 'contig:{} ori:{} length:{}'.format(_name, _ori_symb, _length)
+                            SeqIO.write(_seq, output_h, 'fasta')
 
 
 class SequenceAnalyzer:
