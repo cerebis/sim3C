@@ -83,6 +83,18 @@ def make_random_seed():
     return np.random.randint(1000000, 10000000)
 
 
+def make_dir(path):
+    """
+    Convenience method for making directories with a standard logic.
+    An exception is raised when the specified path exists and is not a directory.
+    :param path: target path to create
+    """
+    if not os.path.exists(path):
+        os.mkdir(path)
+    elif not os.path.isdir(path):
+        raise IOError('output path already exists and not a directory')
+
+
 @vectorize([float64(float64)])
 def piecewise_3c(s):
     pr = MIN_FIELD
@@ -1170,11 +1182,11 @@ class ContactMap:
         # and an update is not requested
 
         if verbose:
-            print 'filtering: min_len {} min_sig {}'.format(min_len, min_sig)
+            print 'Filtering criterion min_len: {} min_sig: {}'.format(min_len, min_sig)
 
         if not update and self.primary_acceptance_mask is not None:
             if verbose:
-                print '\tusing existing mask'
+                print 'Using existing mask'
             return self.get_primary_acceptance_mask()
 
         acceptance_mask = np.ones(self.total_seq, dtype=np.bool)
@@ -1182,7 +1194,7 @@ class ContactMap:
         # mask for sequences shorter than limit
         _mask = self.order.lengths() >= min_len
         if verbose:
-            print '\tmin_len removed', self.total_seq - _mask.sum()
+            print 'Minimum length removal', self.total_seq - _mask.sum()
         acceptance_mask &= _mask
 
         # mask for sequences weaker than limit
@@ -1192,7 +1204,7 @@ class ContactMap:
             signal = simple_sparse.max_offdiag(self.seq_map)
         _mask = signal >= min_sig
         if verbose:
-            print '\tmin_sig removed', self.total_seq - _mask.sum()
+            print 'Minimum signal removal', self.total_seq - _mask.sum()
         acceptance_mask &= _mask
 
         # mask for sequences considered to have aberrant coverage.
@@ -1201,14 +1213,14 @@ class ContactMap:
             degen_seqs = seq_analyzer.report_degenerates(max_fold, verbose=False)
             _mask = ~degen_seqs['status']
             if verbose:
-                print '\tdegen removed', self.total_seq - _mask.sum()
+                print 'Degenerate removal', self.total_seq - _mask.sum()
             acceptance_mask &= _mask
 
         # retain the union of all masks.
         self.primary_acceptance_mask = acceptance_mask
 
         if verbose:
-            print '\tAccepted sequences', self.primary_acceptance_mask.sum()
+            print 'Accepted sequences', self.primary_acceptance_mask.sum()
 
         return self.get_primary_acceptance_mask()
 
@@ -1231,14 +1243,15 @@ class ContactMap:
 
         if verbose:
             print 'Prepare sequence map'
-            print '\toriginally', self.seq_map.shape
+            print 'Original size', self.seq_map.shape
 
         _mask = self.get_primary_acceptance_mask()
 
         # from a union of the sequence filter and external mask
         if external_mask is not None:
             _mask &= external_mask
-            print '\tunion with external', _mask.sum()
+            if verbose:
+                print 'After union with external', _mask.sum()
         self.order.set_mask_only(_mask)
 
         if self.order.count_accepted() < 1:
@@ -1250,7 +1263,7 @@ class ContactMap:
         if norm:
             m = self._norm_seq(m, self.is_tipbased(), mean_type=mean_type)
             if verbose:
-                print '\tnormed'
+                print 'Map normalized'
 
         # make map bistochastic if requested
         if bisto:
@@ -1259,7 +1272,7 @@ class ContactMap:
             # retain the scale factors
             self.bisto_scale = scl
             if verbose:
-                print '\tbalanced'
+                print 'Map balanced'
 
         # if there are sequences to mask, remove them from the map
         if self.order.count_accepted() < self.total_seq:
@@ -1268,17 +1281,17 @@ class ContactMap:
             else:
                 m = simple_sparse.compress(m.tocoo(), self.order.mask_vector())
             if verbose:
-                print '\tfilter reduced', m.shape
+                print 'Post filtration map dimensions', m.shape
 
         if self.is_tipbased():
             if marginalise:
                 if verbose:
-                    print 'marginalising NxNx2x2 tensor to NxN matrix'
+                    print 'Marginalising NxNx2x2 tensor to NxN matrix'
                 # sum counts of the 2x2 confusion matrices into 1 value
                 m = m.sum(axis=(2, 3)).to_scipy_sparse()
             elif flatten:
                 if verbose:
-                    print 'flattening NxNx2x2 tensor to 2Nx2N matrix'
+                    print 'Flattening NxNx2x2 tensor to 2Nx2N matrix'
                 # convert the 4D map into a 2Nx2N 2D map.
                 m = simple_sparse.flatten_tensor_4d(m)
 
@@ -1301,7 +1314,7 @@ class ContactMap:
         if permute:
             _m = self._reorder_seq(_m, self.is_tipbased())
             if verbose:
-                print '\treordered'
+                print 'Map reordered'
         return _m
 
     def get_extent_map(self, norm=True, bisto=False, permute=False, mean_type='geometric', verbose=False):
@@ -1318,7 +1331,7 @@ class ContactMap:
 
         if verbose:
             print 'Prepare extent map'
-            print '\toriginally', self.extent_map.shape
+            print 'Original size', self.extent_map.shape
 
         m = self.extent_map.astype(np.float)
 
@@ -1326,25 +1339,25 @@ class ContactMap:
         if norm:
             m = self._norm_extent(m, mean_type)
             if verbose:
-                print '\tnormed'
+                print 'Map normalized'
 
         # if there are sequences to mask, remove them from the map
         if self.order.count_accepted() < self.total_seq:
             m = self._compress_extent(m)
             if verbose:
-                print '\tfilter reduced', m.shape
+                print 'Post filtration map dimensions', m.shape
 
         # make map bistochastic if requested
         if bisto:
             m, scl = simple_sparse.kr_biostochastic(m)
             if verbose:
-                print '\tbalanced'
+                print 'Map balanced'
 
         # reorder using current order state
         if permute:
             m = self._reorder_extent(m)
             if verbose:
-                print '\treordered'
+                print 'Map reordered'
 
         return m
 
@@ -1572,37 +1585,96 @@ class ContactMap:
 
         self.plot(fname, permute=permute, simple=simple, tick_locs=tick_locs, tick_labs=tick_labs, **kwargs)
 
-    def plot_clusters(self, fname, cl_map, simple=True, permute=False, **kwargs):
+    def _enable_ordered_clusters(self, clustering, cl_list=None, verbose=False):
         """
-        Plot the contact map, annotating the map with cluster names and boundaries
+        Given a clustering and list of cluster ids (or none), enable (unmask) the related sequences in
+        the contact map. If a requested cluster has not been ordered, it will be dropped.
+
+        :param clustering: a clustering solution to the contact map
+        :param cl_list: a list of cluster ids to enable or None (all ordered clusters)
+        :param verbose: debug output
+        :return: the filtered list of cluster ids in ascending numerical order
+        """
+
+        if cl_list is None:
+            # include all ordered clusters if cl_list is not supplied
+            cl_list = [cl_id for cl_id in clustering if 'order' in clustering[cl_id]]
+        else:
+            # drop any requested sequences without an order
+            cl_list = [cl_id for cl_id in cl_list if 'order' in clustering[cl_id]]
+        cl_list = sorted(cl_list)
+
+        cmb_ord = []
+        for cl_id in cl_list:
+            cmb_ord.extend(clustering[cl_id]['order'])
+        cmb_ord = np.array(cmb_ord)
+
+        if len(cmb_ord) == 0:
+            raise RuntimeError('no requested cluster contained ordering information')
+
+        if verbose:
+            print 'Combined ordering contains {} sequences'.format(len(cmb_ord))
+
+        # prepare the mask
+        _mask = np.zeros_like(self.order.mask_vector(), dtype=np.bool)
+        _mask[cmb_ord['index']] = True
+        _mask &= self.get_primary_acceptance_mask()
+        if verbose:
+            print 'After masking ordering contains {} sequences'.format(_mask.sum())
+        self.order.set_mask_only(_mask)
+        self.order.set_order_and_orientation(cmb_ord, implicit_excl=True)
+
+        return cl_list
+
+    def plot_clusters(self, fname, clustering, cl_list=None, simple=True, permute=False, block_reduction=None,
+                      use_taxo=False, verbose=False, **kwargs):
+        """
+        Plot the contact map, annotating the map with cluster names and boundaries.
+
+        For large contact maps, block reduction can be employed to reduce the size for plotting purposes. Using
+        block_reduction=2 will reduce the map dimensions by a factor of 2. Must be integer.
 
         :param fname: output file name
-        :param cl_map: the cluster solution
+        :param clustering: the cluster solution
+        :param cl_list: the list of cluster ids to include in plot. If none, include all ordered clusters
         :param simple: True plot seq map, False plot the extent map
         :param permute: permute the map with the present order
+        :param block_reduction: specify a reduction factor (>1 integer) to reduce map size for plotting
+        :param use_taxo: use taxonomic information within clustering, assuming it exists
+        :param verbose: debug output
         :param kwargs: additional options passed to plot()
         """
+
+        # currently, plots are restricted to clusters which have been ordered
+        cl_list = self._enable_ordered_clusters(clustering, cl_list, verbose=verbose)
+
         if simple:
-            # tick spacign simple the number of sequences in the cluster
-            tick_locs = np.cumsum([0]+[len(cl_map[k]['seq_ids']) for k in cl_map])
+            # tick spacing simple the number of sequences in the cluster
+            tick_locs = np.cumsum([0] + [len(clustering[k]['seq_ids']) for k in cl_list])
             if self.is_tipbased():
                 tick_locs *= 2
         else:
             # tick spacing depends on cumulative bins for sequences in cluster
             # cumulative bin count, excluding masked sequences
             csbins = [0]
-            for k in cl_map:
+            for k in cl_list:
                 # get the order records for the sequences in cluster k
-                _oi = self.order.order[cl_map[k]['seq_ids']]
+                _oi = self.order.order[clustering[k]['seq_ids']]
                 # count the cumulative bins at each cluster for those sequences which are not masked
-                csbins.append(self.grouping.bins[cl_map[k]['seq_ids'][_oi['mask']]].sum() + csbins[-1])
+                csbins.append(self.grouping.bins[clustering[k]['seq_ids'][_oi['mask']]].sum() + csbins[-1])
             tick_locs = np.array(csbins, dtype=np.int)
 
-        _labels = ContactMap.cluster_names(cl_map.keys())
-        self.plot(fname, permute=permute, simple=simple, tick_locs=tick_locs, tick_labs=_labels, **kwargs)
+        if use_taxo:
+            _labels = [clustering[cl_id]['taxon'] for cl_id in cl_list]
+        else:
+            _labels = [clustering[cl_id]['name'] for cl_id in cl_list]
+
+        self.plot(fname, permute=permute, simple=simple, tick_locs=tick_locs, tick_labs=_labels,
+                  block_reduction=block_reduction, verbose=verbose, **kwargs)
 
     def plot(self, fname, simple=False, tick_locs=None, tick_labs=None, norm=False, permute=False, pattern_only=False,
-             dpi=180, width=25, height=22, zero_diag=False, alpha=0.01, robust=False):
+             dpi=180, width=25, height=22, zero_diag=False, alpha=0.01, robust=False, block_reduction=None,
+             verbose=False):
         """
         Plot the contact map. This can either be as a sparse pattern (requiring much less memory but without visual
         cues about intensity), simple sequence or full binned map and normalized or permuted.
@@ -1620,13 +1692,16 @@ class ContactMap:
         :param zero_diag: set bright self-interactions to zero
         :param alpha: log intensities are log (x + alpha)
         :param robust: use seaborn robust dynamic range feature
+        :param block_reduction: specify a reduction factor (>1 integer) to reduce map size for plotting
+        :param verbose: debug output
         """
 
-        plt.close()
         plt.style.use('ggplot')
-        fig, ax = plt.subplots(1, 1)
+
+        fig = plt.figure()
         fig.set_figwidth(width)
         fig.set_figheight(height)
+        ax = fig.add_subplot(111)
 
         if simple:
             # # assume the map must be remade
@@ -1642,6 +1717,11 @@ class ContactMap:
 
         else:
             # a dense array is necessary here
+            if block_reduction is not None:
+                m = simple_sparse.downsample(m, block_reduction)
+                tick_locs = np.floor(tick_locs.astype(np.float) / block_reduction)
+                if verbose:
+                    print 'Down-sampled map before plotting. New size:', m.shape
             m = m.toarray()
             if zero_diag:
                 np.fill_diagonal(m, 0)
@@ -1651,36 +1731,26 @@ class ContactMap:
 
         if tick_locs is not None:
 
-            maj_labels = ticker.FixedFormatter('')
+            plt.tick_params(axis='both', which='both',
+                            right=False, left=False, bottom=False, top=False,
+                            labelright=False, labelleft=False, labelbottom=False, labeltop=False)
+
             if tick_labs is not None:
                 min_labels = ticker.FixedFormatter(tick_labs)
-            else:
-                min_labels = maj_labels
+                ax.tick_params(axis='y', which='minor', left=True, labelleft=True, labelsize=10)
 
-            maj_ticks = ticker.FixedLocator(tick_locs[1:-1]-0.5)
-            min_ticks = ticker.FixedLocator(tick_locs[:-1] + 0.5*np.diff(tick_locs))
+                min_ticks = ticker.FixedLocator(tick_locs[:-1] + 0.5 * np.diff(tick_locs))
 
-            plt.yticks(fontsize=16)
-            plt.xticks(fontsize=16, rotation=45)
-            plt.tick_params(axis='both', which='minor', labelsize=20)
-
-            ax.xaxis.set_major_formatter(maj_labels)
-            ax.yaxis.set_major_formatter(maj_labels)
-            ax.xaxis.set_major_locator(maj_ticks)
-            ax.yaxis.set_major_locator(maj_ticks)
-
-            ax.xaxis.set_minor_formatter(min_labels)
-            ax.yaxis.set_minor_formatter(min_labels)
-            ax.xaxis.set_minor_locator(min_ticks)
-            ax.yaxis.set_minor_locator(min_ticks)
+                ax.yaxis.set_minor_formatter(min_labels)
+                ax.yaxis.set_minor_locator(min_ticks)
 
             # seaborn will not display the grid, so we make our own.
-            ax.hlines(tick_locs, *ax.get_xlim(), color='grey', linewidth=1, linestyle='-.')
-            ax.vlines(tick_locs, *ax.get_ylim(), color='grey', linewidth=1, linestyle='-.')
+            ax.hlines(tick_locs, *ax.get_xlim(), color='grey', linewidth=0.5, linestyle='-.')
+            ax.vlines(tick_locs, *ax.get_ylim(), color='grey', linewidth=0.5, linestyle='-.')
 
-        plt.tight_layout()
+        fig.tight_layout()
         plt.savefig(fname, dpi=dpi)
-        plt.close()
+        plt.close(fig)
 
     def to_graph(self, norm=True, bisto=False, scale=False, extern_ids=False, verbose=False):
         """
@@ -1735,21 +1805,23 @@ class ContactMap:
     @staticmethod
     def _add_cluster_names(clustering, prefix='CL'):
         """
-        Add names to a clustering in-place. Where we pedantically work out how many
-        digits are required for the largest cluster number, so we can add leading
-        zeros to the remainder. The method is used with plotting and
-        output of fasta for members of each cluster.
+        Add sequential names beginning from 1 to a clustering in-place.
+
+        A pedantic determination of how many digits are required for the
+        largest cluster number is performed, so names will sort conveniently
+        in alphanumeric order and align to the eye in output information.
 
         :param clustering: clustering solution returned from ContactMap.cluster_map
         :param prefix: static prefix of cluster names.
         """
         try:
-            num_width = max(1, int(np.ceil(np.log10(max(clustering)))))
+            num_width = max(1, int(np.ceil(np.log10(max(clustering)+1))))
         except OverflowError:
             num_width = 1
 
         for cl_id in clustering:
-            clustering[cl_id]['name'] = '{0}{1:{2}d}'.format(prefix, cl_id, num_width)
+            # names will 1-based
+            clustering[cl_id]['name'] = '{0}{1:0{2}d}'.format(prefix, cl_id+1, num_width)
 
     def cluster_map(self, method='louvain', work_dir=None, infomap_depth=2, seed=None, verbose=False):
         """
@@ -1866,20 +1938,20 @@ class ContactMap:
         elif method == 'mcl':
             ofile = os.path.join(work_dir, '{}.mcl'.format(base_name))
             nx.write_edgelist(g, path='{}.edges'.format(base_name), data=['weight'])
-            subprocess.check_call(['mcl', '{}.edges'.format(base_name), '--abc',
+            subprocess.check_call(['external/mcl', '{}.edges'.format(base_name), '--abc',
                                    '-I', '1.2', '-o', ofile])
             cl_to_ids = read_mcl(ofile)
         elif method == 'simap':
             ofile = os.path.join(work_dir, '{}.simap'.format(base_name))
             nx.write_edgelist(g, path='{}.edges'.format(base_name), data=['weight'])
-            subprocess.check_call(['java', '-jar', 'simap-1.0.0.jar', 'mdl', '-s', str(seed),
+            subprocess.check_call(['java', '-jar', 'external/simap-1.0.0.jar', 'mdl', '-s', str(seed),
                                    '-i', '1e-5', '1e-3', '-a', '1e-5',
                                    '-g', '{}.edges'.format(base_name),
                                    '-o', ofile])
             cl_to_ids = read_table(ofile)
         elif method == 'infomap':
             nx.write_edgelist(g, path='{}.edges'.format(base_name), data=['weight'])
-            subprocess.check_call(['Infomap', '-u', '-v', '-z', '-i', 'link-list', '-s', str(seed),
+            subprocess.check_call(['external/Infomap', '-u', '-v', '-z', '-i', 'link-list', '-s', str(seed),
                                    '{}.edges'.format(base_name), work_dir])
             cl_to_ids = read_tree(os.path.join(work_dir, '{}.tree'.format(base_name)), max_depth=infomap_depth)
         elif method == 'slm':
@@ -1891,7 +1963,7 @@ class ContactMap:
             ofile = os.path.join(work_dir, '{}.slm'.format(base_name))
             verb = '1'
             nx.write_edgelist(g, path='{}.edges'.format(base_name), data=['weight'], delimiter='\t')
-            subprocess.check_call(['java', '-jar', 'SLM4J/ModularityOptimizer.jar',
+            subprocess.check_call(['java', '-jar', 'external/ModularityOptimizer.jar',
                                    '{}.edges'.format(base_name), ofile,
                                    mod_func, resolution, opti_algo, n_starts, n_iters, str(seed), verb])
             cl_to_ids = read_table(ofile, seq_col=None, cl_col=0)
@@ -1912,7 +1984,7 @@ class ContactMap:
 
             clustering[cl_id] = {
                 'seq_ids': _seqs,
-                'extent': self.order.lengths()[clustering[cl_id]['seq_ids']].sum()
+                'extent': self.order.lengths()[_seqs].sum()
 
                 # TODO add other details for clusters here
                 # 1. gc
@@ -1926,7 +1998,7 @@ class ContactMap:
         return clustering
 
     def order_clusters(self, clustering, min_len=None, min_sig=None, max_fold=None, min_extent=None, min_size=1,
-                       verbose=False):
+                       seed=None, verbose=False):
         """
         Determine the order of sequences for a given clustering solution, as returned by cluster_map.
 
@@ -1936,6 +2008,7 @@ class ContactMap:
         :param max_fold: within a cluster, exclude sequences that appear to be overly represented
         :param min_size: skip clusters which containt too few sequences
         :param min_extent: skip clusters whose total extent (bp) is too short
+        :param seed: random seed
         :param verbose: debug output
         :return: map of cluster orders, by cluster id
         """
@@ -1964,12 +2037,11 @@ class ContactMap:
                 # we'll consider only sequences in the cluster
                 _mask = np.zeros_like(self.order.mask_vector())
                 _mask[cl_info['seq_ids']] = True
-                # cm.order.set_mask_only(_mask)
 
                 _map = self.prepare_seq_map(norm=True, bisto=True, mean_type='geometric', external_mask=_mask,
-                                            verbose=True)
+                                            verbose=verbose)
 
-                _ord = self.find_order(_map, inverse_method='neglog', verbose=True)
+                _ord = self.find_order(_map, inverse_method='neglog', seed=seed, verbose=verbose)
 
             except NoneAcceptedException as e:
                 print '{} : cluster {} will be masked'.format(e.message, cl_info['name'])
@@ -1982,37 +2054,86 @@ class ContactMap:
 
         return clustering
 
-    def write_fasta(self, clustering, output_dir):
+    def write_fasta(self, clustering, output_dir, source_fasta=None, clobber=False, verbose=False):
+        """
+        Write out multi-fasta for all determined clusters in clustering.
 
-        if os.path.exists(output_dir):
-            # currently, use simple logic for output directory. It must not already exist.
-            # TODO convert to an application error
-            raise RuntimeError('output directory already exists')
+        For each cluster, sequence order and orientation is as follows.
+        1. for unordered clusters, sequences will be in descending nucleotide length and
+           in original input orientation.
+        2. for ordered clusters, sequences will appear in the prescribed order and
+           orientation.
+
+        :param clustering: the clustering result, possibly also ordered
+        :param output_dir: parent output path
+        :param source_fasta: specify a source fasta file, otherwise assume the same path as was used in parsing
+        :param clobber: True overwrite files in the output path. Does not remove directories
+        :param verbose: debug output
+        """
+
+        make_dir(output_dir)
+
+        if verbose:
+            print 'Writing output to the path [{}]'.format(output_dir)
 
         seq_info = self.seq_info
 
         parent_dir = os.path.join(output_dir, 'fasta')
+        make_dir(parent_dir)
+
+        if source_fasta is None:
+            source_fasta = self.seq_file
 
         # set up indexed access to the input fasta
-        with contextlib.closing(IndexedFasta(self.seq_file)) as seq_db:
+        with contextlib.closing(IndexedFasta(source_fasta)) as seq_db:
 
             # iterate over the cluster set, in the existing order
             for cl_id, cl_info in clustering.iteritems():
 
                 # Each cluster produces a multi-fasta. Sequences are not joined
                 cl_path = os.path.join(parent_dir, '{}.fna'.format(cl_info['name']))
+
+                if not clobber and os.path.exists(cl_path):
+                    raise IOError('Output path exists [{}] and overwriting not enabled'.format(cl_path))
+
                 with open(cl_path, 'w') as output_h:
 
-                    if 'order' not in cl_info:
-                        # unordered output
-                        raise RuntimeError('unordered output unimplemented')
+                    try:
+                        num_width = max(1, int(np.ceil(np.log10(len(cl_info['seq_ids'])+1))))
+                    except OverflowError:
+                        num_width = 1
 
-                    # ordered output
+                    if verbose:
+                        print 'Writing cluster {} to {}'.format(cl_id, cl_path),
+
+                    # no ordering is available for cluster
+                    if 'order' not in cl_info:
+
+                        if verbose:
+                            print '[unordered]'
+
+                        # iterate simply over sequence ids, while imposing ascending numerical order
+                        for n, _seq_id in enumerate(np.sort(cl_info['seq_ids']), 1):
+
+                            # get the sequence's external name and length
+                            _name = seq_info[_seq_id].name
+                            _length = seq_info[_seq_id].length
+                            # fetch the SeqRecord object from the input fasta
+                            _seq = seq_db[_name]
+                            # orientations are listed as unknown
+                            _ori_symb = 'UNKNOWN'
+
+                            # add a new name and description
+                            _seq.id = '{0}_{1:0{2}d}'.format(cl_info['name'], n, num_width)
+                            _seq.name = _seq.id
+                            _seq.description = 'contig:{} ori:{} length:{}'.format(_name, _ori_symb, _length)
+                            SeqIO.write(_seq, output_h, 'fasta')
+
+                    # ordering will be used when writing sequences
                     else:
-                        # width of largest member.
-                        # TODO is may be more consistent to determine this globally and have sequences
-                        # TODO across all clusters equivalent length of characters.
-                        num_width = max(1, int(np.ceil(np.log10(len(cl_info['seq_ids'])))))
+
+                        if verbose:
+                            print '[ordered]'
 
                         # iterate over cluster members, in the determined order
                         for n, _oi in enumerate(cl_info['order'], 1):
@@ -2020,7 +2141,6 @@ class ContactMap:
                             # get the sequence's external name and length
                             _name = seq_info[_oi['index']].name
                             _length = seq_info[_oi['index']].length
-
                             # fetch the SeqRecord object from the input fasta
                             _seq = seq_db[_name]
 
@@ -2035,7 +2155,7 @@ class ContactMap:
                                 raise RuntimeError('unknown orientation state [{}].'.format(_oi['ori']))
 
                             # add a new name and description
-                            _seq.id = '{0}_{1:{2}d}'.format(cl_info['name'], n, num_width)
+                            _seq.id = '{0}_{1:0{2}d}'.format(cl_info['name'], n, num_width)
                             _seq.name = _seq.id
                             _seq.description = 'contig:{} ori:{} length:{}'.format(_name, _ori_symb, _length)
                             SeqIO.write(_seq, output_h, 'fasta')
