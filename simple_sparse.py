@@ -2,6 +2,7 @@ import numpy as np
 import scipy.sparse as scisp
 import sparse
 import warnings
+from math import ceil
 
 
 def is_hermitian(m, tol=1e-6):
@@ -40,6 +41,48 @@ def tensor_print(T):
         if i < T.shape[1] - 1:
             print '+'
     print
+
+
+def downsample(m, block_size, method='mean'):
+    """
+    Perform a down-sampling of a 2D matrix (scipy.sparse or ndarray)
+    by a factor of block_size in each dimension. Block size must be
+    an integer larger than 1.
+
+    When employing mean method, zero padding on edges is not compensated
+    for.
+
+    :param m: a matrix (scipy.sparse or ndarray)
+    :param block_size: an integer reduction factor
+    :param method: per block mean or maximum.
+    :return: scipy.sparse.csr_matrix
+    """
+    assert isinstance(m, (np.ndarray, scisp.spmatrix)), 'supplied array must be of type np.ndarray or scipy.spmatrix'
+    assert block_size > 1 and isinstance(block_size, int), 'block_size must be an integer larger than 1'
+
+    pad_size = lambda N, n: int(ceil(N / float(n)) * n) - N
+
+    pad_row = pad_size(m.shape[0], block_size)
+    pad_col = pad_size(m.shape[1], block_size)
+
+    # only dok has resize method up until scipy 1.1.0
+    if isinstance(m, np.ndarray):
+        m = scisp.dok_matrix(m)
+    else:
+        m = m.todok()
+    m.resize((m.shape[0] + pad_row, m.shape[1] + pad_col))
+
+    # conversion to csr here appears necessary to properly preserve matrix
+    m = sparse.COO(m.tocsr())
+
+    # TODO using mean does not handle zero-padded edge effect on mean values
+    if method == 'mean':
+        m = m.reshape((m.shape[0]/block_size, block_size, m.shape[1]/block_size, block_size)).sum(axis=(1, 3)).tocsr()
+        m *= 1.0/block_size**2
+    elif method == 'max':
+        m = m.reshape((m.shape[0]/block_size, block_size, m.shape[1]/block_size, block_size)).max(axis=(1, 3)).tocsr()
+
+    return m
 
 
 def kr_biostochastic(m, tol=1e-6, x0=None, delta=0.1, Delta=3, verbose=False, max_iter=1000):
