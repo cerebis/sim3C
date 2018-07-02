@@ -7,7 +7,7 @@ import os
 import subprocess
 import tempfile
 import uuid
-from collections import OrderedDict, namedtuple, Mapping
+from collections import OrderedDict, namedtuple, Mapping, Iterable
 from functools import partial
 
 import Bio.SeqIO as SeqIO
@@ -20,6 +20,8 @@ import scipy.sparse as sp
 import scipy.stats.mstats as mstats
 import seaborn
 import yaml
+from Bio.Restriction import Restriction
+from difflib import SequenceMatcher
 from numba import jit, vectorize, int64, int32, float64, void
 from numpy import log, pi
 from typing import Optional
@@ -48,7 +50,14 @@ P2LAMBDA = 13.675170758388262
 P2MU = 13.973247315647466
 
 
-SeqInfo = namedtuple('SeqInfo', ['offset', 'refid', 'name', 'length'])
+SeqInfo = namedtuple('SeqInfo', ['offset', 'refid', 'name', 'length', 'sites'])
+
+
+class UnknownEnzymeException(Exception):
+    """All sequences were excluded during filtering"""
+    def __init__(self, target, similar):
+        super(UnknownEnzymeException, self).__init__(
+            '{} is undefined, but its similar to: {}'.format(target, ', '.join(similar)))
 
 
 class NoneAcceptedException(Exception):
@@ -278,6 +287,74 @@ def mean_selector(name):
         raise RuntimeError('unsupported mean type [{}]'.format(name))
 
 
+class SiteCounter(object):
+
+    def __init__(self, enzyme_names, tip_size=None, is_linear=True):
+        """
+        Simple class to count the total number of enzymatic cut sites for the given
+        list if enzymes.
+
+        :param enzyme_names: a list of enzyme names (proper case sensitive spelling a la NEB)
+        :param tip_size: when using tip based counting, the size in bp
+        :param is_linear: Treat sequence as linear.
+        """
+        if isinstance(enzyme_names, basestring):
+            enzyme_names = [enzyme_names]
+        assert isinstance(enzyme_names, Iterable) and \
+               not isinstance(enzyme_names, basestring), 'enzyme_names must of a collection of names'
+        self.enzymes = [SiteCounter._get_enzyme_instance(en) for en in enzyme_names]
+        self.is_linear = is_linear
+        self.tip_size = tip_size
+
+    @staticmethod
+    def _get_enzyme_instance(enz_name):
+        """
+        Fetch an instance of a given restriction enzyme by its name.
+
+        :param enz_name: the case-sensitive name of the enzyme
+        :return: RestrictionType the enzyme instance
+        """
+        try:
+            # this has to match exactly
+            return getattr(Restriction, enz_name)
+        except AttributeError as e:
+            # since we're being strict about enzyme names, be helpful with errors
+            similar = []
+            for a in dir(Restriction):
+                score = SequenceMatcher(None, enz_name.lower(), a.lower()).ratio()
+                if score >= 0.8:
+                    similar.append(a)
+            raise UnknownEnzymeException(enz_name, similar)
+
+    def _count(self, seq):
+        return sum(len(en.search(seq, self.is_linear)) for en in self.enzymes)
+
+    def count_sites(self, seq):
+        """
+        Count the number of sites found in the given sequence, where sites from
+        all specified enzymes are combined
+
+        :param seq: Bio.Seq object
+        :return: the total number of sites
+        """
+        if self.tip_size:
+            seq_len = len(seq)
+            if seq_len < 2*self.tip_size:
+                # small contigs simply divide their extent in half
+                l_tip = seq[:seq_len/2]
+                r_tip = seq[-seq_len/2:]
+            else:
+                l_tip = seq[:self.tip_size]
+                r_tip = seq[-self.tip_size:]
+            # left and right tip counts
+            sites = [self._count(l_tip), self._count(r_tip)]
+        else:
+            # one value for whole sequence
+            sites = self._count(seq)
+
+        return sites
+
+
 class ExtentGrouping:
 
     def __init__(self, seq_info, bin_size):
@@ -330,7 +407,7 @@ class SeqOrder:
     EXCLUDED = False
 
     STRUCT_TYPE = np.dtype([('pos', np.int32), ('ori', np.int8), ('mask', np.bool), ('length', np.int32)])
-    INDEX_TYPE = np.dtype([('index', np.int16), ('ori', np.int8)])
+    INDEX_TYPE = np.dtype([('index', np.int32), ('ori', np.int8)])
 
     def __init__(self, seq_info):
         """
@@ -663,7 +740,7 @@ def find_nearest_jit(group_sites, x):
 
 
 @jit(void(float64[:, :, :, :], float64[:, :], float64[:], float64))
-def fast_norm_seq(coords, data, tip_lengths, tip_size):
+def fast_norm_tipbased_bylength(coords, data, tip_lengths, tip_size):
     """
     In-place normalisation of the sparse 4D matrix used in tip-based maps.
 
@@ -678,6 +755,23 @@ def fast_norm_seq(coords, data, tip_lengths, tip_size):
     for ii in xrange(coords.shape[1]):
         i, j = coords[:2, ii]
         data[ii] *= tip_size**2 / (tip_lengths[i] * tip_lengths[j])
+
+
+@jit(void(float64[:, :, :, :], float64[:, :], float64[:, :]))
+def fast_norm_tipbased_bysite(coords, data, sites):
+    """
+    In-place normalisation of the sparse 4D matrix used in tip-based maps.
+
+    As tip-based normalisation is slow for large matrices, the inner-loop has been
+    moved to a Numba method.
+
+    :param coords: the COO matrix coordinate member variable (4xN array)
+    :param data:  the COO matrix data member variable (1xN array)
+    :param sites: per-element min(sequence_length, tip_size)
+    """
+    for ii in xrange(coords.shape[1]):
+        i, j, k, l = coords[:, ii]
+        data[ii] *= 1.0/(sites[i, k] * sites[j, l])
 
 
 class IndexedFasta(Mapping):
@@ -736,7 +830,7 @@ class IndexedFasta(Mapping):
 
 class ContactMap:
 
-    def __init__(self, bam_file, cov_file, seq_file, min_insert, min_mapq=0, min_len=0, min_sig=1, max_fold=None,
+    def __init__(self, bam_file, enzymes, seq_file, min_insert, min_mapq=0, min_len=0, min_sig=1, max_fold=None,
                  random_seed=None, strong=None, bin_size=None, tip_size=None, precount=False, med_alpha=10):
 
         self.strong = strong
@@ -762,12 +856,15 @@ class ContactMap:
         self.processed_map = None
         self.primary_acceptance_mask = None
         self.bisto_scale = None
-        self.seq_report = SequenceAnalyzer.read_report(cov_file)
         self.seq_analyzer = None
+        self.enzymes = enzymes
+
+        # prepare the site counter for the given experimental conditions
+        site_counter = SiteCounter(enzymes, tip_size, is_linear=True)
 
         with pysam.AlignmentFile(bam_file, 'rb') as bam:
 
-            # test that BAM file is the corret sort order
+            # test that BAM file is the correct sort order
             if 'SO' not in bam.header['HD'] or bam.header['HD']['SO'] != 'queryname':
                 raise IOError('BAM file must be sorted by read name')
 
@@ -795,7 +892,10 @@ class ContactMap:
                     assert len(seq) == li, 'Sequence lengths in {} do not agree: ' \
                                            'bam {} fasta {}'.format(seq_id, len(seq), li)
 
-                    self.seq_info.append(SeqInfo(offset, n, seq_id, li))
+                    # enzymatic cut-sites found for this sequence
+                    sites = site_counter.count_sites(seq)
+
+                    self.seq_info.append(SeqInfo(offset, n, seq_id, li, sites))
 
                     logger.debug('Found {} bp sequence for {}'.format(li, seq_id))
 
@@ -1165,25 +1265,36 @@ class ContactMap:
         assert self.primary_acceptance_mask is not None, 'Primary acceptance mask has not be initialized'
         return self.primary_acceptance_mask.copy()
 
-    def set_primary_acceptance_mask(self, min_len, min_sig, max_fold=None, update=False, verbose=False):
+    def set_primary_acceptance_mask(self, min_len=None, min_sig=None, max_fold=None, update=False, verbose=False):
         """
         Determine and set the filter mask using the specified constraints across the entire
         contact map. The mask is True when a sequence is considered acceptable wrt to the
         constraints. The mask is also returned by the function for convenience.
 
-        :param min_len: minimum sequence length
-        :param min_sig: minimum off-diagonal signal (counts)
+        :param min_len: override instance value for minimum sequence length
+        :param min_sig: override instance value for minimum off-diagonal signal (counts)
         :param max_fold: maximum locally-measured fold-coverage to permit
         :param update: replace the current primary mask if it exists
         :param verbose: debug output
         :return: an acceptance mask over the entire contact map
         """
-        # simply return the current mask if it has already been determined
-        # and an update is not requested
+        assert max_fold is None, 'Filtering on max_fold is currently disabled'
+
+        # If parameter based critiera were unset, use instance member values set at instantiation time
+        if not min_len:
+            min_len = self.min_len
+        if not min_sig:
+            min_sig = self.min_sig
+
+        assert min_len, 'Filtering criteria min_len is None'
+        assert min_sig, 'Filtering criteria min_sig is None'
 
         if verbose:
+            print 'Setting primary acceptance mask'
             print 'Filtering criterion min_len: {} min_sig: {}'.format(min_len, min_sig)
 
+        # simply return the current mask if it has already been determined
+        # and an update is not requested
         if not update and self.primary_acceptance_mask is not None:
             if verbose:
                 print 'Using existing mask'
@@ -1207,14 +1318,15 @@ class ContactMap:
             print 'Minimum signal removal', self.total_seq - _mask.sum()
         acceptance_mask &= _mask
 
-        # mask for sequences considered to have aberrant coverage.
-        if max_fold:
-            seq_analyzer = SequenceAnalyzer(self.seq_map, self.seq_report, self.seq_info, self.tip_size)
-            degen_seqs = seq_analyzer.report_degenerates(max_fold, verbose=False)
-            _mask = ~degen_seqs['status']
-            if verbose:
-                print 'Degenerate removal', self.total_seq - _mask.sum()
-            acceptance_mask &= _mask
+        # TODO dropped degen removal for now
+        # # mask for sequences considered to have aberrant coverage.
+        # if max_fold:
+        #     seq_analyzer = SequenceAnalyzer(self.seq_map, self.seq_report, self.seq_info, self.tip_size)
+        #     degen_seqs = seq_analyzer.report_degenerates(max_fold, verbose=False)
+        #     _mask = ~degen_seqs['status']
+        #     if verbose:
+        #         print 'Degenerate removal', self.total_seq - _mask.sum()
+        #     acceptance_mask &= _mask
 
         # retain the union of all masks.
         self.primary_acceptance_mask = acceptance_mask
@@ -1242,7 +1354,7 @@ class ContactMap:
             'marginalise and flatten are mutually exclusive'
 
         if verbose:
-            print 'Prepare sequence map'
+            print 'Preparing sequence map'
             print 'Original size', self.seq_map.shape
 
         _mask = self.get_primary_acceptance_mask()
@@ -1261,14 +1373,14 @@ class ContactMap:
 
         # apply length normalisation if requested
         if norm:
-            m = self._norm_seq(m, self.is_tipbased(), mean_type=mean_type)
+            m = self._norm_seq(m, self.is_tipbased(), mean_type=mean_type, verbose=verbose)
             if verbose:
                 print 'Map normalized'
 
         # make map bistochastic if requested
         if bisto:
             # TODO balancing may be better done after compression
-            m, scl = self._bisto_seq(m, self.is_tipbased())
+            m, scl = self._bisto_seq(m, self.is_tipbased(), verbose)
             # retain the scale factors
             self.bisto_scale = scl
             if verbose:
@@ -1408,44 +1520,75 @@ class ContactMap:
         p = p.tocsr()
         return p.dot(_map.tocsr()).dot(p.T)
 
-    def _bisto_seq(self, m, tip_based):
+    def _bisto_seq(self, m, tip_based, verbose=False):
         """
         Make a contact map bistochastic. This is another form of normslisation. Automatically
         handles 2D and 4D maps.
         :param m: a map to balance (make bistochastic)
         :param tip_based: treat the supplied map as a tip-based tensor
+        :param verbose: debug output
         :return: the balanced map
         """
+        if verbose:
+            print 'Balancing contact map'
+
         if tip_based:
             m, scl = simple_sparse.kr_biostochastic_4d(m)
         else:
             m, scl = simple_sparse.kr_biostochastic(m)
         return m, scl
 
-    def _norm_seq(self, _map, tip_based, mean_type='geometric'):
+    def _get_sites(self):
+        _sites = np.array([si.sites for si in self.seq_info], dtype=np.float)
+        # all sequences are assumed to have a minimum of 1 site -- even if not observed
+        # TODO test whether it would be more accurate to assume that all sequences are under counted by 1.
+        _sites[np.where(_sites == 0)] = 1
+        return _sites
+
+    def _norm_seq(self, _map, tip_based, use_sites=True, mean_type='geometric', verbose=False):
         """
         Normalise a simple sequence map in place by the geometric mean of interacting contig pairs lengths.
         The map is assumed to be in starting order.
 
         :param _map: the target map to apply normalisation
         :param tip_based: treat the supplied map as a tip-based tensor
-        :param mean_type: choice of mean (harmonic, geometric, arithmetic)
+        :param use_sites: normalise matrix counts using observed sites, otherwise normalise
+        using sequence lengths as a proxy
+        :param mean_type: for length normalisation, choice of mean (harmonic, geometric, arithmetic)
+        :param verbose: debug output
         :return: normalized map
         """
-        if tip_based:
-            _map = _map.astype(np.float)
-            _tip_lengths = np.minimum(self.tip_size, self.order.lengths()).astype(np.float)
-            fast_norm_seq(_map.coords, _map.data, _tip_lengths, self.tip_size)
-            return _map
+        if use_sites:
+            if verbose:
+                print 'Doing site based normalisation'
+
+            if tip_based:
+                _map = _map.astype(np.float)
+                _sites = self._get_sites()
+                fast_norm_tipbased_bysite(_map.coords, _map.data, _sites)
+
+            else:
+                # TODO implement non-tip version
+                raise RuntimeError('currently unimplemented')
 
         else:
-            _mean_func = mean_selector(mean_type)
-            _len = self.order.lengths().astype(np.float)
-            _map = _map.tolil().astype(np.float)
-            for i in xrange(_map.shape[0]):
-                _map[i, :] /= np.fromiter((1e-3 * _mean_func(_len[i],  _len[j])
-                                           for j in xrange(_map.shape[0])), dtype=np.float)
-            return _map.tocsr()
+            if verbose:
+                print 'Doing length based normalisation'
+
+            if tip_based:
+                _tip_lengths = np.minimum(self.tip_size, self.order.lengths()).astype(np.float)
+                fast_norm_tipbased_bylength(_map.coords, _map.data, _tip_lengths, self.tip_size)
+
+            else:
+                _mean_func = mean_selector(mean_type)
+                _len = self.order.lengths().astype(np.float)
+                _map = _map.tolil().astype(np.float)
+                for i in xrange(_map.shape[0]):
+                    _map[i, :] /= np.fromiter((1e-3 * _mean_func(_len[i],  _len[j])
+                                               for j in xrange(_map.shape[0])), dtype=np.float)
+                _map = _map.tocsr()
+
+        return _map
 
     def _norm_extent(self, _map, mean_type='geometric'):
         """
@@ -1752,7 +1895,8 @@ class ContactMap:
         plt.savefig(fname, dpi=dpi)
         plt.close(fig)
 
-    def to_graph(self, norm=True, bisto=False, scale=False, extern_ids=False, verbose=False):
+    def to_graph(self, norm=True, bisto=False, scale=False, extern_ids=False,
+                 min_len=None, min_sig=None, verbose=False):
         """
         Convert the seq_map to a undirected Networkx Graph.
 
@@ -1765,6 +1909,8 @@ class ContactMap:
         :param bisto: normalise using bistochasticity
         :param scale: scale weights (max_w = 1)
         :param extern_ids: use the original external sequence identifiers for node ids
+        :param min_len: override minimum sequence length, otherwise use instance's setting)
+        :param min_sig: override minimum off-diagonal signal (in raw counts), otherwise use instance's setting)
         :param verbose: debug output
         :return: graph of contigs
         """
@@ -1773,8 +1919,12 @@ class ContactMap:
         else:
             _nn = lambda x: x
 
-        if self.primary_acceptance_mask is None:
-            self.set_primary_acceptance_mask(self.min_len, self.min_sig, verbose=verbose)
+        if not min_len and not min_sig:
+            # use the (potentially) existing mask if default criteria
+            self.set_primary_acceptance_mask(verbose=verbose)
+        else:
+            # update the acceptance mask if user has specified new criteria
+            self.set_primary_acceptance_mask(min_len, min_sig, update=True, verbose=verbose)
 
         m = self.prepare_seq_map(norm=norm, bisto=bisto, verbose=verbose,
                                  marginalise=True, flatten=False)
@@ -1790,7 +1940,7 @@ class ContactMap:
         scl = 1.0/m.max() if scale else 1
 
         if verbose:
-            print 'Building graph'
+            print 'Building graph from edges'
 
         import tqdm
 
@@ -1823,15 +1973,16 @@ class ContactMap:
             # names will 1-based
             clustering[cl_id]['name'] = '{0}{1:0{2}d}'.format(prefix, cl_id+1, num_width)
 
-    def cluster_map(self, method='louvain', work_dir=None, infomap_depth=2, seed=None, verbose=False):
+    def cluster_map(self, method='infomap', min_len=None, min_sig=None, work_dir=None, seed=None, verbose=False):
         """
         Cluster a contact map into groups, as an approximate proxy for "species" bins. This is recommended prior to
         applying TSP ordering, minimising the breaking of its assumptions that all nodes should connect and be
         traversed.
 
         :param method: clustering algorithm to employ
+        :param min_len: override minimum sequence length, otherwise use instance's setting)
+        :param min_sig: override minimum off-diagonal signal (in raw counts), otherwise use instance's setting)
         :param work_dir: working directory to which files are written during clustering. Default: use system tmp
-        :param infomap_depth: when using Infomap, treat clusters to this depth of the hierarchy.
         :param seed: specify a random seed, otherwise one is generated at runtime.
         :param verbose: debug output
         :return: a dictionary detailing the full clustering of the contact map
@@ -1891,12 +2042,11 @@ class ContactMap:
                     cl_map[k] = np.array(cl_map[k], dtype=np.int)
                 return cl_map
 
-        def read_tree(pathname, max_depth=2):
+        def read_tree(pathname):
             """
             Read a tree clustering file as output by Infomap.
 
             :param pathname: the path to the tree file
-            :param max_depth: the maximum depth to consider when combining objects into clusters.
             :return: dict of cluster_id to array of seq_ids
             """
             with open(pathname, 'r') as in_h:
@@ -1909,7 +2059,9 @@ class ContactMap:
                         continue
                     fields = line.split()
                     hierarchy = fields[0].split(':')
-                    cl_map.setdefault(tuple(['orig'] + hierarchy[:max_depth]), []).append(fields[-1])
+                    # take everything in the cluster assignment string except for the final token,
+                    # which is the object's id within the cluster.
+                    cl_map.setdefault(tuple(['orig'] + hierarchy[:-1]), []).append(fields[-1])
 
                 # rename clusters and order descending in size
                 desc_key = sorted(cl_map, key=lambda x: len(cl_map[x]), reverse=True)
@@ -1927,7 +2079,7 @@ class ContactMap:
             seed = make_random_seed()
 
         base_name = 'cm_graph'
-        g = self.to_graph(norm=True, bisto=True, scale=True, verbose=verbose)
+        g = self.to_graph(min_len=min_len, min_sig=min_sig, norm=True, bisto=True, scale=True, verbose=verbose)
 
         method = method.lower()
         if verbose:
@@ -1952,8 +2104,8 @@ class ContactMap:
         elif method == 'infomap':
             nx.write_edgelist(g, path='{}.edges'.format(base_name), data=['weight'])
             subprocess.check_call(['external/Infomap', '-u', '-v', '-z', '-i', 'link-list', '-s', str(seed),
-                                   '{}.edges'.format(base_name), work_dir])
-            cl_to_ids = read_tree(os.path.join(work_dir, '{}.tree'.format(base_name)), max_depth=infomap_depth)
+                                   '-N', '10', '{}.edges'.format(base_name), work_dir])
+            cl_to_ids = read_tree(os.path.join(work_dir, '{}.tree'.format(base_name)))
         elif method == 'slm':
             mod_func = '1'
             resolution = '2.0'
@@ -1985,20 +2137,64 @@ class ContactMap:
             clustering[cl_id] = {
                 'seq_ids': _seqs,
                 'extent': self.order.lengths()[_seqs].sum()
-
                 # TODO add other details for clusters here
-                # 1. gc
-                # 2. read-depth
-                # 3. residual modularity, permanence
-                # 4. profit?
+                # - residual modularity, permanence
             }
 
         ContactMap._add_cluster_names(clustering)
 
         return clustering
 
+    def cluster_sequence_report(self, clustering, source_fasta=None, is_spades=True, verbose=False):
+        """
+        For each cluster, analyze the member sequences and build a report.
+        Update the clustering dictionary with this result by adding a "report" for each.
+
+        :param clustering: clustering solution dictionary
+        :param source_fasta: source assembly fasta (other than defined at instantiation)
+        :param is_spades: if SPAdes output, we can extract coverage information from the sequence names
+        :param verbose: debug output
+        """
+        if verbose:
+            print 'Analyzing cluster member sequences'
+
+        seq_info = self.seq_info
+
+        if source_fasta is None:
+            source_fasta = self.seq_file
+
+        import Bio.SeqUtils as SeqUtils
+
+        # set up indexed access to the input fasta
+        with contextlib.closing(IndexedFasta(source_fasta)) as seq_db:
+            # iterate over the cluster set, in the existing order
+            for cl_id, cl_info in clustering.iteritems():
+                _len = []
+                _cov = []
+                _gc = []
+                for n, _seq_id in enumerate(np.sort(cl_info['seq_ids']), 1):
+                    # get the sequence's external name and length
+                    _name = seq_info[_seq_id].name
+                    _len.append(seq_info[_seq_id].length)
+                    # fetch the SeqRecord object from the input fasta
+                    _seq = seq_db[_name]
+                    _gc.append(SeqUtils.GC(_seq.seq))
+                    if is_spades:
+                        _cov.append(float(_name.split('_')[-1]))
+
+                if is_spades:
+                    report = np.array(zip(_len, _gc, _cov),
+                                      dtype=[('length', np.int),
+                                             ('gc', np.float),
+                                             ('cov', np.float)])
+                else:
+                    report = np.array(zip(_len, _gc, _cov),
+                                      dtype=[('length', np.int),
+                                             ('gc', np.float)])
+                clustering[cl_id]['seq_report'] = report
+
     def order_clusters(self, clustering, min_len=None, min_sig=None, max_fold=None, min_extent=None, min_size=1,
-                       seed=None, verbose=False):
+                       seed=None, dist_method='neglog', verbose=False):
         """
         Determine the order of sequences for a given clustering solution, as returned by cluster_map.
 
@@ -2009,6 +2205,7 @@ class ContactMap:
         :param min_size: skip clusters which containt too few sequences
         :param min_extent: skip clusters whose total extent (bp) is too short
         :param seed: random seed
+        :param dist_method: method used to transform contact map to a distance matrix
         :param verbose: debug output
         :return: map of cluster orders, by cluster id
         """
@@ -2041,7 +2238,7 @@ class ContactMap:
                 _map = self.prepare_seq_map(norm=True, bisto=True, mean_type='geometric', external_mask=_mask,
                                             verbose=verbose)
 
-                _ord = self.find_order(_map, inverse_method='neglog', seed=seed, verbose=verbose)
+                _ord = self.find_order(_map, inverse_method=dist_method, seed=seed, verbose=verbose)
 
             except NoneAcceptedException as e:
                 print '{} : cluster {} will be masked'.format(e.message, cl_info['name'])
@@ -2295,11 +2492,12 @@ if __name__ == '__main__':
     parser.add_argument('--min-mapq', type=int, default=0, help='Minimum acceptable mapping quality [0]')
     parser.add_argument('--min-reflen', type=int, default=1, help='Minimum acceptable reference length [0]')
     parser.add_argument('--min-signal', type=int, default=1, help='Minimum acceptable trans signal [1]')
-    parser.add_argument('--max-fold', type=float, default=None, help='Maximum acceptable relative coverage [None]')
+    # parser.add_argument('--max-fold', type=float, default=None, help='Maximum acceptable relative coverage [None]')
     parser.add_argument('--pickle', help='Picked contact map')
+    parser.add_argument('-e', '--enzymes', required=True, action='append',
+                        help='Case-sensitive enzyme name (NEB), use multiple times for multiple enzymes')
     parser.add_argument('fasta', help='Reference fasta sequence')
     parser.add_argument('bam', help='Input bam file in query order')
-    parser.add_argument('cov', help='Input depth of coverage file')
     parser.add_argument('outbase', help='Output base file name')
 
     args = parser.parse_args()
@@ -2309,13 +2507,13 @@ if __name__ == '__main__':
 
     else:
         cm = ContactMap(args.bam,
-                        args.cov,
+                        args.enzymes,
                         args.fasta,
                         args.min_insert,
                         args.min_mapq,
                         min_len=args.min_reflen,
                         min_sig=args.min_signal,
-                        max_fold=args.max_fold,
+                        # max_fold=args.max_fold,
                         strong=args.strong,
                         bin_size=args.bin_size,
                         tip_size=args.tip_size,
