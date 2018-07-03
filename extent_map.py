@@ -828,6 +828,29 @@ class IndexedFasta(Mapping):
             os.unlink(self._tmp_file)
 
 
+def count_fasta_sequences(file_name):
+    """
+    Estimate the number of fasta sequences in a file by counting headers. Decompression is automatically attempted
+    for files ending in .gz. Counting and decompression is by why of subprocess calls to grep and gzip. Uncompressed
+    files are also handled. This is about 8 times faster than parsing a file with BioPython and 6 times faster
+    than reading all lines in Python.
+
+    :param file_name: the fasta file to inspect
+    :return: the estimated number of records
+    """
+    if file_name.endswith('.gz'):
+        proc_uncomp = subprocess.Popen(['gzip', '-cd', file_name], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        proc_read = subprocess.Popen(['grep', r'^>'], stdin=proc_uncomp.stdout, stdout=subprocess.PIPE)
+    else:
+        proc_read = subprocess.Popen(['grep', r'^>', file_name], stdout=subprocess.PIPE)
+
+    n = 0
+    for _ in proc_read.stdout:
+        n += 1
+    return n
+
+import tqdm
+
 class ContactMap:
 
     def __init__(self, bam_file, enzymes, seq_file, min_insert, min_mapq=0, min_len=0, min_sig=1, max_fold=None,
@@ -859,47 +882,51 @@ class ContactMap:
         self.seq_analyzer = None
         self.enzymes = enzymes
 
-        # prepare the site counter for the given experimental conditions
-        site_counter = SiteCounter(enzymes, tip_size, is_linear=True)
+        # build a dictionary of sites in each reference first
+        fasta_info = {}
+        with io_utils.open_input(seq_file) as multi_fasta:
+            # prepare the site counter for the given experimental conditions
+            site_counter = SiteCounter(enzymes, tip_size, is_linear=True)
+            # get an estimate of sequences for progress
+            fasta_count = count_fasta_sequences(seq_file)
+            for seqrec in tqdm.tqdm(SeqIO.parse(multi_fasta, 'fasta'), total=fasta_count, desc='Analyzing sites'):
+                if len(seqrec) < min_len:
+                    continue
+                fasta_info[seqrec.id] = {'sites': site_counter.count_sites(seqrec.seq),
+                                         'length': len(seqrec)}
 
+        # now parse the header information from bam file
         with pysam.AlignmentFile(bam_file, 'rb') as bam:
 
             # test that BAM file is the correct sort order
             if 'SO' not in bam.header['HD'] or bam.header['HD']['SO'] != 'queryname':
                 raise IOError('BAM file must be sorted by read name')
 
-            with contextlib.closing(IndexedFasta(seq_file)) as seq_db:
+            # determine the set of active sequences
+            # where the first filtration step is by length
+            ref_count = {'seq_missing': 0, 'too_short': 0}
+            offset = 0
+            logger.info('Reading sequences...')
+            for n, (rname, rlen) in enumerate(zip(bam.references, bam.lengths)):
 
-                # determine the set of active sequences
-                # where the first filtration step is by length
-                ref_count = {'seq_missing': 0, 'too_short': 0}
-                offset = 0
-                logger.info('Reading sequences...')
-                for n, li in enumerate(bam.lengths):
+                # minimum length threshold
+                if rlen < min_len:
+                    ref_count['too_short'] += 1
+                    continue
 
-                    # minimum length threshold
-                    if li < min_len:
-                        ref_count['too_short'] += 1
-                        continue
+                try:
+                    fa = fasta_info[rname]
+                except KeyError:
+                    logger.info('Sequence: "{}" was not present in reference fasta'.format(rname))
+                    ref_count['seq_missing'] += 1
+                    continue
 
-                    seq_id = bam.references[n]
-                    if seq_id not in seq_db:
-                        logger.info('Sequence: "{}" not found in reference FASTA'.format(seq_id))
-                        ref_count['seq_missing'] += 1
-                        continue
+                assert fa['length'] == rlen, \
+                    'Sequence lengths in {} do not agree: bam {} fasta {}'.format(rname, fa['length'], rlen)
 
-                    seq = seq_db[seq_id].seq
-                    assert len(seq) == li, 'Sequence lengths in {} do not agree: ' \
-                                           'bam {} fasta {}'.format(seq_id, len(seq), li)
+                self.seq_info.append(SeqInfo(offset, n, rname, rlen, fa['sites']))
 
-                    # enzymatic cut-sites found for this sequence
-                    sites = site_counter.count_sites(seq)
-
-                    self.seq_info.append(SeqInfo(offset, n, seq_id, li, sites))
-
-                    logger.debug('Found {} bp sequence for {}'.format(li, seq_id))
-
-                    offset += li
+                offset += rlen
 
             # total extent covered
             self.total_len = offset
@@ -930,11 +957,6 @@ class ContactMap:
 
             # initialise the order
             self.order = SeqOrder(self.seq_info)
-
-            # logger.info('Parsing depth file...')
-            # self.cov_info = self.read_covfile(cov_file)
-            # for k, ci in self.cov_info.iteritems():
-            #     logger.info('RefId: {} depths A/L/R: {}, {}, {}'.format(k, ci['med'], ci['lmed'], ci['rmed']))
 
             # accumulate
             self._bin_map(bam)
@@ -1001,15 +1023,6 @@ class ContactMap:
 
         def _always_true(*args):
             return True, 1
-
-        # logger.info('Preparing no-go intervals for median filtering...')
-        # no_go = self.depth_intervals(self.med_alpha, 10)
-        #
-        # for k in no_go:
-        #     print k
-        #     for i in no_go[k]:
-        #         print '\t',i
-        #     print
 
         _on_tip = _always_true if not self.is_tipbased() else _on_tip_withlocs
 
@@ -1229,7 +1242,7 @@ class ContactMap:
             if _map.shape[0] < 3:
                 raise TooFewException()
 
-            lkh_o = ordering.lkh_order(_map, 'lkhdb_run', lkh_exe='../lkh/LKH-3.0/LKH', precision=1, seed=seed, runs=2,
+            lkh_o = ordering.lkh_order(_map, 'lkh_run', lkh_exe='../lkh/LKH-3.0/LKH', precision=1, seed=seed, runs=2,
                                        pop_size=50, dist_func=dist_func, special=False, verbose=True,
                                        fixed_edges=[(i, i+1) for i in xrange(1, _map.shape[0], 2)])
 
@@ -1373,7 +1386,7 @@ class ContactMap:
 
         # apply length normalisation if requested
         if norm:
-            m = self._norm_seq(m, self.is_tipbased(), mean_type=mean_type, verbose=verbose)
+            m = self._norm_seq(m, self.is_tipbased(), mean_type=mean_type, use_sites=True, verbose=verbose)
             if verbose:
                 print 'Map normalized'
 
