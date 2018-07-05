@@ -337,7 +337,7 @@ def similarity_to_distance(M, method, alpha=2, beta=1, headroom=1, verbose=False
 
 
 def lkh_order(m, base_name, precision=1, lkh_exe=None, runs=None, seed=None, dist_func=reciprocal_counts,
-              fixed_edges=None, special=True, pop_size=None, verbose=False):
+              fixed_edges=None, special=True, pop_size=None, stdout=None, verbose=False):
     """
     Employ LKH TSP solver to find the best order through a distance matrix. By default, it is assumed that
     LKH is on the path. A CalledProcessError is raised if execution fails. The input to LKH is an explicit
@@ -354,6 +354,7 @@ def lkh_order(m, base_name, precision=1, lkh_exe=None, runs=None, seed=None, dis
     :param fixed_edges: list of edge tuples (u,v) that _must_ occur in the tour
     :param special: use LKH "special" meta-setting
     :param pop_size: population size of tours used in special genetic algorithm component (default: runs/4)
+    :param stdout: redirection for stdout of lkh
     :param verbose: LKH will produce runtime information to stdout
     :return: 0-based order as a numpy array
     """
@@ -366,7 +367,7 @@ def lkh_order(m, base_name, precision=1, lkh_exe=None, runs=None, seed=None, dis
                   pop_size=pop_size, special=special, verbose=verbose, precision=precision)
         if not lkh_exe:
             lkh_exe = 'LKH'
-        subprocess.check_call([lkh_exe, '{}.par'.format(base_name)])
+        subprocess.check_call([lkh_exe, '{}.par'.format(base_name)], stdout=stdout, stderr=subprocess.STDOUT)
         tour = read_lkh('{}.tour'.format(base_name))
     except subprocess.CalledProcessError as e:
         print 'Execution of LHK failed'
@@ -435,7 +436,7 @@ def write_lkh(base_name, m, dim, max_trials=None, runs=None, verbose=False, seed
         if runs:
             out_h.write('RUNS = {}\n'.format(runs))
         out_h.write('SEED = {}\n'.format(seed))
-        out_h.write('OUTPUT_TOUR_FILE = {}.tour\n'.format(nopath))
+        out_h.write('OUTPUT_TOUR_FILE = {}.tour\n'.format(base_name))
         out_h.write('PRECISION = {}.tour\n'.format(precision))
         out_h.write('TRACE_LEVEL = {}'.format(int(verbose)))
 

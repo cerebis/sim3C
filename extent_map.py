@@ -875,7 +875,8 @@ import tqdm
 class ContactMap:
 
     def __init__(self, bam_file, enzymes, seq_file, min_insert, min_mapq=0, min_len=0, min_sig=1, max_fold=None,
-                 random_seed=None, strong=None, bin_size=None, tip_size=None, precount=False, med_alpha=10):
+                 random_seed=None, strong=None, bin_size=None, tip_size=None, precount=False, med_alpha=10,
+                 verbose=False):
 
         self.strong = strong
         self.bin_size = bin_size
@@ -981,6 +982,9 @@ class ContactMap:
 
             # accumulate
             self._bin_map(bam)
+
+            # create an initial acceptance mask
+            self.set_primary_acceptance_mask(verbose=verbose)
 
     def _bin_map(self, bam):
         """
@@ -1224,7 +1228,7 @@ class ContactMap:
         """
         return self.tip_size is not None
 
-    def find_order(self, _map, inverse_method='inverse', seed=None, verbose=False):
+    def find_order(self, _map, inverse_method='inverse', seed=None, runs=5, work_dir='.', verbose=False):
         """
         Using LKH TSP solver, find the best ordering of the sequence map in terms of proximity ligation counts.
         Here, it is assumed that sequence proximity can be inferred from number of observed trans read-pairs, where
@@ -1233,6 +1237,8 @@ class ContactMap:
         :param _map: the seq map to analyze
         :param inverse_method: the chosen inverse method for converting count (similarity) to distance
         :param seed: specify a random seed, otherwise one is generated at runtime
+        :param runs: number of individual runs of lkh to perform
+        :param work_dir: working directory
         :param verbose: debug output
         :return: the surrogate ids in optimal order
         """
@@ -1254,9 +1260,11 @@ class ContactMap:
             if _map.shape[0] < 3:
                 raise TooFewException()
 
-            lkh_o = ordering.lkh_order(_map, 'lkh_run', lkh_exe=ext_path('LKH-3.0'), precision=1, seed=seed, runs=2,
-                                       pop_size=50, dist_func=dist_func, special=False, verbose=True,
-                                       fixed_edges=[(i, i+1) for i in xrange(1, _map.shape[0], 2)])
+            with open(os.path.join(work_dir, 'lkh.log'), 'w+') as stdout:
+                control_base_name = os.path.join(work_dir, 'lkh_run')
+                lkh_o = ordering.lkh_order(_map, control_base_name, lkh_exe=ext_path('LKH-3.0'), precision=1, seed=seed,
+                                           runs=runs, pop_size=50, dist_func=dist_func, special=False, stdout=stdout,
+                                           verbose=True, fixed_edges=[(i, i+1) for i in xrange(1, _map.shape[0], 2)])
 
             # To solve this with TSP, doublet tips use a graph transformation, where each node comes a pair. Pairs
             # possess fixed inter-connecting edges which must be included in any solution tour.
@@ -1276,9 +1284,6 @@ class ContactMap:
 
             # for singlet tours, no orientation can be inferred.
             lkh_o = np.fromiter(((oi, 1) for oi in lkh_o), dtype=SeqOrder.INDEX_TYPE)
-
-        if verbose:
-            print lkh_o
 
         # lkh ordering references the supplied matrix indices, not the surrogate ids.
         # we must map this consecutive set to the contact map indices.
@@ -1330,7 +1335,7 @@ class ContactMap:
         # mask for sequences shorter than limit
         _mask = self.order.lengths() >= min_len
         if verbose:
-            print 'Minimum length removal', self.total_seq - _mask.sum()
+            print 'Minimum length threshold removing:', self.total_seq - _mask.sum()
         acceptance_mask &= _mask
 
         # mask for sequences weaker than limit
@@ -1340,7 +1345,7 @@ class ContactMap:
             signal = simple_sparse.max_offdiag(self.seq_map)
         _mask = signal >= min_sig
         if verbose:
-            print 'Minimum signal removal', self.total_seq - _mask.sum()
+            print 'Minimum signal threshold removing:', self.total_seq - _mask.sum()
         acceptance_mask &= _mask
 
         # TODO dropped degen removal for now
@@ -1998,7 +2003,7 @@ class ContactMap:
             # names will 1-based
             clustering[cl_id]['name'] = '{0}{1:0{2}d}'.format(prefix, cl_id+1, num_width)
 
-    def cluster_map(self, method='infomap', min_len=None, min_sig=None, work_dir=None, seed=None, verbose=False):
+    def cluster_map(self, method='infomap', min_len=None, min_sig=None, work_dir='.', seed=None, verbose=False):
         """
         Cluster a contact map into groups, as an approximate proxy for "species" bins. This is recommended prior to
         applying TSP ordering, minimising the breaking of its assumptions that all nodes should connect and be
@@ -2007,13 +2012,13 @@ class ContactMap:
         :param method: clustering algorithm to employ
         :param min_len: override minimum sequence length, otherwise use instance's setting)
         :param min_sig: override minimum off-diagonal signal (in raw counts), otherwise use instance's setting)
-        :param work_dir: working directory to which files are written during clustering. Default: use system tmp
+        :param work_dir: working directory to which files are written during clustering
         :param seed: specify a random seed, otherwise one is generated at runtime.
         :param verbose: debug output
         :return: a dictionary detailing the full clustering of the contact map
         """
 
-        def read_mcl(pathname):
+        def _read_mcl(pathname):
             """
             Read a MCL solution file converting this to a TruthTable.
 
@@ -2032,7 +2037,7 @@ class ContactMap:
                     cl_map[cl_id] = np.array(sorted([int(tok) for tok in line.split()]))
             return cl_map
 
-        def read_table(pathname, seq_col=0, cl_col=1):
+        def _read_table(pathname, seq_col=0, cl_col=1):
             # type: (str, Optional[int], int) -> dict
             """
             Read cluster solution from a tabular file, one assignment per line. Implicit sequence
@@ -2067,7 +2072,7 @@ class ContactMap:
                     cl_map[k] = np.array(cl_map[k], dtype=np.int)
                 return cl_map
 
-        def read_tree(pathname):
+        def _read_tree(pathname):
             """
             Read a tree clustering file as output by Infomap.
 
@@ -2095,10 +2100,21 @@ class ContactMap:
 
             return cl_map
 
-        if work_dir is None:
-            work_dir = tempfile.gettempdir()
-        else:
-            assert os.path.exists(work_dir), 'supplied output path [{}] does not exist'.format(work_dir)
+        def _write_edges(g, parent_dir, base_name, sep=' '):
+            """
+            Prepare an edge-list file from the specified graph. This will be written to the
+            specified parent directory, using basename.edges
+            :param g: the graph
+            :param parent_dir: parent directory of file
+            :param base_name: file base name
+            :param sep: separator within file
+            :return: file name
+            """
+            edge_file = os.path.join(parent_dir, '{}.edges'.format(base_name))
+            nx.write_edgelist(g, edge_file, data=['weight'], delimiter=sep)
+            return edge_file
+
+        assert os.path.exists(work_dir), 'supplied output path [{}] does not exist'.format(work_dir)
 
         if seed is None:
             seed = make_random_seed()
@@ -2113,37 +2129,42 @@ class ContactMap:
         if method == 'louvain':
             cl_to_ids = louvain_cluster.cluster(g, no_iso=False, ragbag=False)
         elif method == 'mcl':
-            ofile = os.path.join(work_dir, '{}.mcl'.format(base_name))
-            nx.write_edgelist(g, path='{}.edges'.format(base_name), data=['weight'])
-            subprocess.check_call([ext_path('mcl'), '{}.edges'.format(base_name), '--abc',
-                                   '-I', '1.2', '-o', ofile])
-            cl_to_ids = read_mcl(ofile)
+            with open(os.path.join(work_dir, 'mcl.log'), 'w+') as stdout:
+                ofile = os.path.join(work_dir, '{}.mcl'.format(base_name))
+                edge_file = _write_edges(g, work_dir, base_name)
+                nx.write_edgelist(g, edge_file, data=['weight'])
+                subprocess.check_call([ext_path('mcl'),  edge_file, '--abc', '-I', '1.2', '-o', ofile],
+                                      stdout=stdout, stderr=subprocess.STDOUT)
+                cl_to_ids = _read_mcl(ofile)
         elif method == 'simap':
-            ofile = os.path.join(work_dir, '{}.simap'.format(base_name))
-            nx.write_edgelist(g, path='{}.edges'.format(base_name), data=['weight'])
-            subprocess.check_call(['java', '-jar', ext_path('simap-1.0.0.jar'), 'mdl', '-s', str(seed),
-                                   '-i', '1e-5', '1e-3', '-a', '1e-5',
-                                   '-g', '{}.edges'.format(base_name),
-                                   '-o', ofile])
-            cl_to_ids = read_table(ofile)
+            with open(os.path.join(work_dir, 'simap.log'), 'w+') as stdout:
+                ofile = os.path.join(work_dir, '{}.simap'.format(base_name))
+                edge_file = _write_edges(g, work_dir, base_name)
+                subprocess.check_call(['java', '-jar', ext_path('simap-1.0.0.jar'), 'mdl', '-s', str(seed),
+                                       '-i', '1e-5', '1e-3', '-a', '1e-5', '-g', edge_file, '-o', ofile],
+                                      stdout=stdout, stderr=subprocess.STDOUT)
+                cl_to_ids = _read_table(ofile)
         elif method == 'infomap':
-            nx.write_edgelist(g, path='{}.edges'.format(base_name), data=['weight'])
-            subprocess.check_call([ext_path('Infomap'), '-u', '-v', '-z', '-i', 'link-list', '-s', str(seed),
-                                   '-N', '10', '{}.edges'.format(base_name), work_dir])
-            cl_to_ids = read_tree(os.path.join(work_dir, '{}.tree'.format(base_name)))
+            with open(os.path.join(work_dir, 'infomap.log'), 'w+') as stdout:
+                edge_file = _write_edges(g, work_dir, base_name)
+                subprocess.check_call([ext_path('Infomap'), '-u', '-v', '-z', '-i', 'link-list', '-s', str(seed),
+                                       '-N', '10', edge_file, work_dir],
+                                      stdout=stdout, stderr=subprocess.STDOUT)
+                cl_to_ids = _read_tree(os.path.join(work_dir, '{}.tree'.format(base_name)))
         elif method == 'slm':
-            mod_func = '1'
-            resolution = '2.0'
-            opti_algo = '3'
-            n_starts = '10'
-            n_iters = '10'
-            ofile = os.path.join(work_dir, '{}.slm'.format(base_name))
-            verb = '1'
-            nx.write_edgelist(g, path='{}.edges'.format(base_name), data=['weight'], delimiter='\t')
-            subprocess.check_call(['java', '-jar', ext_path('ModularityOptimizer.jar'),
-                                   '{}.edges'.format(base_name), ofile,
-                                   mod_func, resolution, opti_algo, n_starts, n_iters, str(seed), verb])
-            cl_to_ids = read_table(ofile, seq_col=None, cl_col=0)
+            with open(os.path.join(work_dir, 'slm.log'), 'w+') as stdout:
+                mod_func = '1'
+                resolution = '2.0'
+                opti_algo = '3'
+                n_starts = '10'
+                n_iters = '10'
+                ofile = os.path.join(work_dir, '{}.slm'.format(base_name))
+                verb = '1'
+                edge_file = _write_edges(g, work_dir, base_name, sep='\t')
+                subprocess.check_call(['java', '-jar', ext_path('ModularityOptimizer.jar'), edge_file, ofile,
+                                       mod_func, resolution, opti_algo, n_starts, n_iters, str(seed), verb],
+                                      stdout=stdout, stderr=subprocess.STDOUT)
+                cl_to_ids = _read_table(ofile, seq_col=None, cl_col=0)
         else:
             raise RuntimeError('unimplemented method [{}]'.format(method))
 
@@ -2216,10 +2237,10 @@ class ContactMap:
                     report = np.array(zip(_len, _gc, _cov),
                                       dtype=[('length', np.int),
                                              ('gc', np.float)])
-                clustering[cl_id]['seq_report'] = report
+                clustering[cl_id]['report'] = report
 
     def order_clusters(self, clustering, min_len=None, min_sig=None, max_fold=None, min_extent=None, min_size=1,
-                       seed=None, dist_method='neglog', verbose=False):
+                       work_dir='.', seed=None, dist_method='neglog', verbose=False):
         """
         Determine the order of sequences for a given clustering solution, as returned by cluster_map.
 
@@ -2229,31 +2250,33 @@ class ContactMap:
         :param max_fold: within a cluster, exclude sequences that appear to be overly represented
         :param min_size: skip clusters which containt too few sequences
         :param min_extent: skip clusters whose total extent (bp) is too short
+        :param work_dir: working directory
         :param seed: random seed
         :param dist_method: method used to transform contact map to a distance matrix
         :param verbose: debug output
         :return: map of cluster orders, by cluster id
         """
+        assert os.path.exists(work_dir), 'supplied output path [{}] does not exist'.format(work_dir)
 
         self.set_primary_acceptance_mask(min_len, min_sig, max_fold=max_fold, update=True, verbose=verbose)
 
-        for cl_id, cl_info in clustering.iteritems():
-            if verbose:
-                print 'Ordering cluster {}'.format(cl_info['name'])
+        if verbose:
+            print 'Ordering clusters'
 
-            # calculate the clusters extent
-            if verbose:
-                print '\t{}bp extent'.format(cl_info['extent']),
+        for cl_id, cl_info in clustering.iteritems():
+
+            cl_size = len(cl_info['seq_ids'])
+
             if cl_info['extent'] < min_extent:
                 if verbose:
-                    print '-- excluded cluster due to small extent'
+                    print 'Excluding {} too little extent: {} bp'.format(cl_info['name'], cl_info['extent'])
                 continue
-            elif len(cl_info['seq_ids']) < min_size:
+            elif cl_size < min_size:
                 if verbose:
-                    print '-- excluded cluster contains too few sequences'
+                    print 'Excluding {} too few sequences: {} '.format(cl_info['name'], cl_size)
                 continue
-            else:
-                print
+            elif verbose:
+                print 'Ordering {} extent: {} size: {}'.format(cl_info['name'], cl_info['extent'], cl_size)
 
             try:
                 # we'll consider only sequences in the cluster
@@ -2263,7 +2286,7 @@ class ContactMap:
                 _map = self.prepare_seq_map(norm=True, bisto=True, mean_type='geometric', external_mask=_mask,
                                             verbose=verbose)
 
-                _ord = self.find_order(_map, inverse_method=dist_method, seed=seed, verbose=verbose)
+                _ord = self.find_order(_map, work_dir=work_dir, inverse_method=dist_method, seed=seed, verbose=verbose)
 
             except NoneAcceptedException as e:
                 print '{} : cluster {} will be masked'.format(e.message, cl_info['name'])
@@ -2284,7 +2307,7 @@ class ContactMap:
         :param clustering: the input clustering, which contains a report
         """
 
-        def expect(w, x):
+        def _expect(w, x):
             """
             Weighted expectation of x with weights w. Weights do not need to be
             normalised
@@ -2305,8 +2328,8 @@ class ContactMap:
                            v['name'],
                            len(v['seq_ids']),
                            v['extent'],
-                           expect(sr['length'], sr['gc']), sr['gc'].mean(), np.median(sr['gc']), sr['gc'].std(),
-                           expect(sr['length'], sr['cov']), sr['cov'].mean(), np.median(sr['cov']), sr['cov'].std()])
+                           _expect(sr['length'], sr['gc']), sr['gc'].mean(), np.median(sr['gc']), sr['gc'].std(),
+                           _expect(sr['length'], sr['cov']), sr['cov'].mean(), np.median(sr['cov']), sr['cov'].std()])
 
             except KeyError:
                 raise NoReportException(k)
@@ -2593,7 +2616,7 @@ if __name__ == '__main__':
                         help='Case-sensitive enzyme name (NEB), use multiple times for multiple enzymes')
     parser.add_argument('fasta', help='Reference fasta sequence')
     parser.add_argument('bam', help='Input bam file in query order')
-    parser.add_argument('out-dir', help='Output directory')
+    parser.add_argument('out_dir', help='Output directory')
 
     args = parser.parse_args()
 
@@ -2603,11 +2626,12 @@ if __name__ == '__main__':
     else:
         logger.info("User set random seed: {}".format(args.seed))
 
+    make_dir(args.out_dir)
+
     if args.pickle:
         # Load a pre-existing serialized contact map
         logger.info('Loading existing contact map from: {}'.format(args.pickle))
         cm = load_object(args.pickle)
-
     else:
         # Create a contact map for analysis
         cm = ContactMap(args.bam,
@@ -2632,30 +2656,31 @@ if __name__ == '__main__':
         save_object(os.path.join(args.out_dir, 'contact_map.p'), cm)
 
     # cluster the entire map
-    clustering = cm.cluster_map(method='infomap', seed=args.seed, verbose=args.verbose)
+    clustering = cm.cluster_map(method='infomap', seed=args.seed, work_dir=args.out_dir, verbose=args.verbose)
     # generate report per cluster
-    cm.cluster_sequence_report(clustering, is_spades=True, verbose=args.verbose)
-    # write a tabular report
-    cm.write_report(os.path.join(args.out_dir, 'cluster_report.csv'), clustering)
+    cm.cluster_report(clustering, is_spades=True, verbose=args.verbose)
     # serialize clustering
     save_object(os.path.join(args.out_dir, 'clustering.p'), clustering)
+    # write a tabular report
+    cm.write_report(os.path.join(args.out_dir, 'cluster_report.csv'), clustering)
 
     # write per-cluster fasta files
     cm.write_fasta(clustering, args.out_dir, verbose=args.verbose)
 
     # order each cluster
     cm.order_clusters(clustering, min_size=args.min_order_size, min_extent=args.min_order_extent,
-                      dist_method=args.dist_method, verbose=args.verbose)
+                      dist_method=args.dist_method, work_dir=args.out_dir, verbose=args.verbose)
     # save the ordered clustering to another file.
     # TODO remove serialization of highly redundant objects
     save_object(os.path.join(args.out_dir, 'ordered.p'), clustering)
 
     # plot a heatmap, while making sure we don't exceed an maximum pixel size.
-    image_size = cm.order.count_accepted()
+    image_size = cm.get_primary_acceptance_mask().sum()
     reduce_factor = None
     if image_size > args.max_image:
         from math import ceil
         reduce_factor = int(ceil(image_size / float(args.max_image)))
+        logger.info('Reducing image size of {} by {}'.format(image_size, reduce_factor))
 
     cm.plot_clusters(os.path.join(args.out_dir, 'cluster_plot.png'), clustering,
                      block_reduction=reduce_factor, simple=False, permute=True)
