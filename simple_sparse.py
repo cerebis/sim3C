@@ -107,10 +107,11 @@ def kr_biostochastic(m, tol=1e-6, x0=None, delta=0.1, Delta=3, verbose=False, ma
     # replace 0 diagonals with 1, on the working matrix. This avoids potentially
     # exploding scale-factors. KR should be regularlized!
     m = m.tolil()
-    ix = np.where(m.diagonal() == 0)
-    m[ix, ix] = 1
-    if len(ix) > 0:
-        warnings.warn('Treating {} non-zero diagonal elements as 1 for balancing'.format(len(ix)))
+    is_zero = m.diagonal() == 0
+    if np.any(is_zero):
+        warnings.warn('{} non-zero diagonal element(s) treated as 1 for balancing'.format(is_zero.sum()))
+        ix = np.where(is_zero)
+        m[ix, ix] = 1
 
     if not scisp.isspmatrix_csr(m):
         m = m.tocsr()
