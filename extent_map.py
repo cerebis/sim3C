@@ -24,7 +24,9 @@ import pysam
 import scipy.sparse as sp
 import scipy.stats.mstats as mstats
 import seaborn
+import tqdm
 import yaml
+
 from Bio.Restriction import Restriction
 from difflib import SequenceMatcher
 from numba import jit, vectorize, int64, int32, float64, void
@@ -870,7 +872,6 @@ def count_fasta_sequences(file_name):
         n += 1
     return n
 
-import tqdm
 
 class ContactMap:
 
@@ -1366,81 +1367,101 @@ class ContactMap:
 
         return self.get_primary_acceptance_mask()
 
-    def prepare_seq_map(self, norm=True, bisto=False, mean_type='geometric',
-                        external_mask=None, marginalise=False, flatten=True, verbose=False):
+    def prepare_seq_map(self, norm=True, bisto=False, mean_type='geometric', verbose=False):
         """
         Prepare the sequence map (seq_map) by application of various filters and normalisations.
 
         :param norm: normalisation by sequence lengths
         :param bisto: make the output matrix bistochastic
         :param mean_type: when performing normalisation, use "geometric, harmonic or arithmetic" mean.
-        :param external_mask: include (union with filter) an additional mask on sequences
-        :param marginalise:
-        :param flatten:
         :param verbose: debug output
         """
 
-        assert (not marginalise and not flatten) or np.logical_xor(marginalise, flatten), \
-            'marginalise and flatten are mutually exclusive'
-
         if verbose:
             print 'Preparing sequence map'
-            print 'Original size', self.seq_map.shape
+            print 'Full map size', self.seq_map.shape
 
         _mask = self.get_primary_acceptance_mask()
 
-        # from a union of the sequence filter and external mask
-        if external_mask is not None:
-            _mask &= external_mask
-            if verbose:
-                print 'After union with external', _mask.sum()
         self.order.set_mask_only(_mask)
 
         if self.order.count_accepted() < 1:
             raise NoneAcceptedException()
 
-        m = self.seq_map.astype(np.float)
+        _map = self.seq_map.astype(np.float)
 
         # apply length normalisation if requested
         if norm:
-            m = self._norm_seq(m, self.is_tipbased(), mean_type=mean_type, use_sites=True, verbose=verbose)
+            _map = self._norm_seq(_map, self.is_tipbased(), mean_type=mean_type, use_sites=True, verbose=verbose)
             if verbose:
                 print 'Map normalized'
 
         # make map bistochastic if requested
         if bisto:
             # TODO balancing may be better done after compression
-            m, scl = self._bisto_seq(m, self.is_tipbased(), verbose)
+            _map, scl = self._bisto_seq(_map, self.is_tipbased(), verbose)
             # retain the scale factors
             self.bisto_scale = scl
             if verbose:
                 print 'Map balanced'
 
-        # if there are sequences to mask, remove them from the map
+        # cache the results for optional quick access
+        self.processed_map = _map
+
+    def get_subspace(self, external_mask=None, marginalise=False, flatten=True, verbose=False):
+        """
+        Using an already normalized full seq_map, return a subspace as indicated by an external
+        mask or if none is supplied, the full map without filtered elements.
+
+        The supplied external mask must refer to all sequences in the map.
+
+        :param external_mask: an external mask to combine with the existing primary mask
+        :param marginalise: Assuming 4D NxNx2x2 tensor, sum 2x2 elements to become a 2D NxN
+        :param flatten: convert a NxNx2x2 tensor to a 2Nx2N matrix
+        :param verbose: debug output
+        :return: subspace map
+        """
+        assert (not marginalise and not flatten) or np.logical_xor(marginalise, flatten), \
+            'marginalise and flatten are mutually exclusive'
+
+        # starting with the normalized map
+        _map = self.get_processed_map()
+
+        _mask = self.get_primary_acceptance_mask()
+        if verbose:
+            print 'Active sequences after primary filtering', _mask.sum()
+
+        # from a union of the sequence filter and external mask
+        if external_mask is not None:
+            _mask &= external_mask
+            if verbose:
+                print 'Active sequences after applying external mask', _mask.sum()
+
+        self.order.set_mask_only(_mask)
+
+        # remove masked sequences from the map
         if self.order.count_accepted() < self.total_seq:
             if self.is_tipbased():
-                m = simple_sparse.compress_4d(m, self.order.mask_vector())
+                _map = simple_sparse.compress_4d(_map, self.order.mask_vector())
             else:
-                m = simple_sparse.compress(m.tocoo(), self.order.mask_vector())
+                _map = simple_sparse.compress(_map.tocoo(), self.order.mask_vector())
             if verbose:
-                print 'Post filtration map dimensions', m.shape
+                print 'Subspace map dimensions', _map.shape
 
+        # convert tip-based tensor to other forms
         if self.is_tipbased():
             if marginalise:
                 if verbose:
                     print 'Marginalising NxNx2x2 tensor to NxN matrix'
                 # sum counts of the 2x2 confusion matrices into 1 value
-                m = m.sum(axis=(2, 3)).to_scipy_sparse()
+                _map = _map.sum(axis=(2, 3)).to_scipy_sparse()
             elif flatten:
                 if verbose:
                     print 'Flattening NxNx2x2 tensor to 2Nx2N matrix'
                 # convert the 4D map into a 2Nx2N 2D map.
-                m = simple_sparse.flatten_tensor_4d(m)
+                _map = simple_sparse.flatten_tensor_4d(_map)
 
-        # cache the results for optional quick access
-        self.processed_map = m
-
-        return m
+        return _map
 
     def get_processed_map(self, permute=False, dtype=np.float, verbose=False):
         """
@@ -1451,13 +1472,15 @@ class ContactMap:
         :param verbose: debug output
         :return: the processed map
         """
-        _m = self.processed_map.astype(dtype)
+        assert self.processed_map is not None, 'processed map has not been prepared!'
+
+        _map = self.processed_map.astype(dtype)
         # reorder if requested
         if permute:
-            _m = self._reorder_seq(_m, self.is_tipbased())
+            _map = self._reorder_seq(_map, self.is_tipbased())
             if verbose:
                 print 'Map reordered'
-        return _m
+        return _map
 
     def get_extent_map(self, norm=True, bisto=False, permute=False, mean_type='geometric', verbose=False):
         """
@@ -1475,33 +1498,33 @@ class ContactMap:
             print 'Prepare extent map'
             print 'Original size', self.extent_map.shape
 
-        m = self.extent_map.astype(np.float)
+        _map = self.extent_map.astype(np.float)
 
         # apply length normalisation if requested
         if norm:
-            m = self._norm_extent(m, mean_type)
+            _map = self._norm_extent(_map, mean_type)
             if verbose:
                 print 'Map normalized'
 
         # if there are sequences to mask, remove them from the map
         if self.order.count_accepted() < self.total_seq:
-            m = self._compress_extent(m)
+            _map = self._compress_extent(_map)
             if verbose:
-                print 'Post filtration map dimensions', m.shape
+                print 'Post filtration map dimensions', _map.shape
 
         # make map bistochastic if requested
         if bisto:
-            m, scl = simple_sparse.kr_biostochastic(m)
+            _map, scl = simple_sparse.kr_biostochastic(_map)
             if verbose:
                 print 'Map balanced'
 
         # reorder using current order state
         if permute:
-            m = self._reorder_extent(m)
+            _map = self._reorder_extent(_map)
             if verbose:
                 print 'Map reordered'
 
-        return m
+        return _map
 
     def extent_to_seq(self):
         """
@@ -1550,11 +1573,11 @@ class ContactMap:
         p = p.tocsr()
         return p.dot(_map.tocsr()).dot(p.T)
 
-    def _bisto_seq(self, m, tip_based, verbose=False):
+    def _bisto_seq(self, _map, tip_based, verbose=False):
         """
         Make a contact map bistochastic. This is another form of normslisation. Automatically
         handles 2D and 4D maps.
-        :param m: a map to balance (make bistochastic)
+        :param _map: a map to balance (make bistochastic)
         :param tip_based: treat the supplied map as a tip-based tensor
         :param verbose: debug output
         :return: the balanced map
@@ -1563,10 +1586,11 @@ class ContactMap:
             print 'Balancing contact map'
 
         if tip_based:
-            m, scl = simple_sparse.kr_biostochastic_4d(m)
+            print 'Dimension during bisto:', _map.shape
+            _map, scl = simple_sparse.kr_biostochastic_4d(_map)
         else:
-            m, scl = simple_sparse.kr_biostochastic(m)
-        return m, scl
+            _map, scl = simple_sparse.kr_biostochastic(_map)
+        return _map, scl
 
     def _get_sites(self):
         _sites = np.array([si.sites for si in self.seq_info], dtype=np.float)
@@ -1594,6 +1618,7 @@ class ContactMap:
 
             if tip_based:
                 _map = _map.astype(np.float)
+                print 'Dimension during norm:', _map.shape
                 _sites = self._get_sites()
                 fast_norm_tipbased_bysite(_map.coords, _map.data, _sites)
 
@@ -1758,35 +1783,46 @@ class ContactMap:
 
         self.plot(fname, permute=permute, simple=simple, tick_locs=tick_locs, tick_labs=tick_labs, **kwargs)
 
-    def _enable_ordered_clusters(self, clustering, cl_list=None, verbose=False):
+    def _enable_clusters(self, clustering, cl_list=None, ordered_only=True, min_extent=None, verbose=False):
         """
         Given a clustering and list of cluster ids (or none), enable (unmask) the related sequences in
         the contact map. If a requested cluster has not been ordered, it will be dropped.
 
         :param clustering: a clustering solution to the contact map
         :param cl_list: a list of cluster ids to enable or None (all ordered clusters)
+        :param ordered_only: include only clusters which have been ordered
+        :param min_extent: include only clusters whose total extent is greater
         :param verbose: debug output
         :return: the filtered list of cluster ids in ascending numerical order
         """
 
+        # start with all clusters if unspecified
         if cl_list is None:
-            # include all ordered clusters if cl_list is not supplied
-            cl_list = [cl_id for cl_id in clustering if 'order' in clustering[cl_id]]
-        else:
-            # drop any requested sequences without an order
-            cl_list = [cl_id for cl_id in cl_list if 'order' in clustering[cl_id]]
+            cl_list = clustering.keys()
+
+        # drop clusters that are too small
+        if min_extent:
+            cl_list = [k for k in cl_list if clustering[k]['extent'] >= min_extent]
+
+        if ordered_only:
+            # drop any clusters that have not been ordered
+            cl_list = [k for k in cl_list if 'order' in clustering[k]]
+
+        # impose a consistent order
         cl_list = sorted(cl_list)
 
-        cmb_ord = []
-        for cl_id in cl_list:
-            cmb_ord.extend(clustering[cl_id]['order'])
-        cmb_ord = np.array(cmb_ord)
+        if ordered_only:
+            # use the determined order and orientation
+            cmb_ord = np.hstack([clustering[k]['order'] for k in cl_list])
+        else:
+            # arbitrary order and orientation
+            cmb_ord = np.hstack([SeqOrder.asindex(clustering[k]['seq_ids']) for k in cl_list])
 
         if len(cmb_ord) == 0:
             raise RuntimeError('no requested cluster contained ordering information')
 
         if verbose:
-            print 'Combined ordering contains {} sequences'.format(len(cmb_ord))
+            print 'The cluster set contains {} sequences'.format(len(cmb_ord))
 
         # prepare the mask
         _mask = np.zeros_like(self.order.mask_vector(), dtype=np.bool)
@@ -1800,7 +1836,7 @@ class ContactMap:
         return cl_list
 
     def plot_clusters(self, fname, clustering, cl_list=None, simple=True, permute=False, block_reduction=None,
-                      use_taxo=False, verbose=False, **kwargs):
+                      ordered_only=True, min_extent=None, use_taxo=False, verbose=False, **kwargs):
         """
         Plot the contact map, annotating the map with cluster names and boundaries.
 
@@ -1813,13 +1849,16 @@ class ContactMap:
         :param simple: True plot seq map, False plot the extent map
         :param permute: permute the map with the present order
         :param block_reduction: specify a reduction factor (>1 integer) to reduce map size for plotting
+        :param ordered_only: include only clusters which have been ordered
+        :param min_extent: include only clusters whose total extent is greater
         :param use_taxo: use taxonomic information within clustering, assuming it exists
         :param verbose: debug output
         :param kwargs: additional options passed to plot()
         """
 
-        # currently, plots are restricted to clusters which have been ordered
-        cl_list = self._enable_ordered_clusters(clustering, cl_list, verbose=verbose)
+        # build a list of relevant clusters and setup the associated mask
+        cl_list = self._enable_clusters(clustering,  cl_list=cl_list, ordered_only=ordered_only,
+                                        min_extent=min_extent, verbose=verbose)
 
         if simple:
             # tick spacing simple the number of sequences in the cluster
@@ -1878,29 +1917,30 @@ class ContactMap:
 
         if simple:
             # # assume the map must be remade
-            self.prepare_seq_map(norm=norm, external_mask=self.order.mask_vector())
-            m = self.get_processed_map(permute=permute)
+            if self.processed_map is None:
+                self.prepare_seq_map(norm=norm)
+            _map = self.get_processed_map(permute=permute, verbose=verbose)
         else:
-            m = self.get_extent_map(norm=norm, permute=permute)
+            _map = self.get_extent_map(norm=norm, permute=permute)
 
         if pattern_only:
             if zero_diag:
-                m.setdiag(0)
-            ax.spy(m.tocsr(), markersize=5 if simple else 1)
+                _map.setdiag(0)
+            ax.spy(_map.tocsr(), markersize=5 if simple else 1)
 
         else:
             # a dense array is necessary here
             if block_reduction is not None:
-                m = simple_sparse.downsample(m, block_reduction)
+                _map = simple_sparse.downsample(_map, block_reduction)
                 tick_locs = np.floor(tick_locs.astype(np.float) / block_reduction)
                 if verbose:
-                    print 'Down-sampled map before plotting. New size:', m.shape
-            m = m.toarray()
+                    print 'Down-sampled map before plotting. New size:', _map.shape
+            _map = _map.toarray()
             if zero_diag:
-                np.fill_diagonal(m, 0)
-            m = np.log(m + alpha)
+                np.fill_diagonal(_map, 0)
+            _map = np.log(_map + alpha)
 
-            seaborn.heatmap(m, robust=robust, square=True, linewidths=0, ax=ax, cbar=False)
+            seaborn.heatmap(_map, robust=robust, square=True, linewidths=0, ax=ax, cbar=False)
 
         if tick_locs is not None:
 
@@ -1956,29 +1996,30 @@ class ContactMap:
             # update the acceptance mask if user has specified new criteria
             self.set_primary_acceptance_mask(min_len, min_sig, update=True, verbose=verbose)
 
-        m = self.prepare_seq_map(norm=norm, bisto=bisto, verbose=verbose,
-                                 marginalise=True, flatten=False)
+        if self.processed_map is None:
+            self.prepare_seq_map(norm=norm, bisto=bisto, verbose=verbose)
+        _map = self.get_subspace(marginalise=True, flatten=False, verbose=verbose)
 
         if verbose:
             print 'Graph will have {} nodes'.format(self.order.count_accepted())
 
         g = nx.Graph()
 
-        if not sp.isspmatrix_coo(m):
-            m = m.tocoo()
+        if not sp.isspmatrix_coo(_map):
+            _map = _map.tocoo()
 
-        scl = 1.0/m.max() if scale else 1
+        scl = 1.0/_map.max() if scale else 1
 
         if verbose:
             print 'Building graph from edges'
 
         import tqdm
 
-        for u, v, w in tqdm.tqdm(itertools.izip(m.row, m.col, m.data), desc='adding edges', total=m.nnz):
-            # assert g.has_node(u) and g.has_node(v), 'missing node {} or {}'.format(u, v)
+        for u, v, w in tqdm.tqdm(itertools.izip(_map.row, _map.col, _map.data), desc='adding edges', total=_map.nnz):
             g.add_edge(_nn(u), _nn(v), weight=w * scl)
 
-        print nx.info(g)
+        if verbose:
+            print nx.info(g)
 
         return g
 
@@ -2187,6 +2228,10 @@ class ContactMap:
                 # - residual modularity, permanence
             }
 
+        # reestablish clusters in descending order of extent
+        sorted_keys = sorted(clustering, key=lambda k: clustering[k]['extent'], reverse=True)
+        clustering = {n: clustering[k] for n, k in enumerate(sorted_keys)}
+
         ContactMap._add_cluster_names(clustering)
 
         return clustering
@@ -2258,10 +2303,12 @@ class ContactMap:
         """
         assert os.path.exists(work_dir), 'supplied output path [{}] does not exist'.format(work_dir)
 
-        self.set_primary_acceptance_mask(min_len, min_sig, max_fold=max_fold, update=True, verbose=verbose)
-
         if verbose:
             print 'Ordering clusters'
+
+        if self.processed_map is None:
+            self.set_primary_acceptance_mask(min_len, min_sig, max_fold=max_fold, update=True, verbose=verbose)
+            self.prepare_seq_map(norm=True, bisto=True, mean_type='geometric', verbose=verbose)
 
         for cl_id, cl_info in clustering.iteritems():
 
@@ -2283,8 +2330,9 @@ class ContactMap:
                 _mask = np.zeros_like(self.order.mask_vector())
                 _mask[cl_info['seq_ids']] = True
 
-                _map = self.prepare_seq_map(norm=True, bisto=True, mean_type='geometric', external_mask=_mask,
-                                            verbose=verbose)
+                _map = self.get_subspace(external_mask=_mask, verbose=verbose)
+
+                print 'Cluster size: {} ordering map size: {}'.format(cl_size, _map.shape)
 
                 _ord = self.find_order(_map, work_dir=work_dir, inverse_method=dist_method, seed=seed, verbose=verbose)
 
@@ -2668,7 +2716,7 @@ if __name__ == '__main__':
     cm.write_fasta(clustering, args.out_dir, verbose=args.verbose)
 
     # order each cluster
-    cm.order_clusters(clustering, min_size=args.min_order_size, min_extent=args.min_order_extent,
+    cm.order_clusters(clustering, min_len=5000, min_size=args.min_order_size, min_extent=args.min_order_extent,
                       dist_method=args.dist_method, work_dir=args.out_dir, verbose=args.verbose)
     # save the ordered clustering to another file.
     # TODO remove serialization of highly redundant objects
