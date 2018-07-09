@@ -67,6 +67,12 @@ class UnknownEnzymeException(Exception):
             '{} is undefined, but its similar to: {}'.format(target, ', '.join(similar)))
 
 
+class UnknownOrientationStateException(Exception):
+    """All sequences were excluded during filtering"""
+    def __init__(self, ori):
+        super(UnknownOrientationStateException, self).__init__('unknown orientation state [{}].'.format(ori))
+
+
 class NoneAcceptedException(Exception):
     """All sequences were excluded during filtering"""
     def __init__(self):
@@ -1244,10 +1250,9 @@ class ContactMap:
         :return: the surrogate ids in optimal order
         """
 
-        # prepare the input sequence map for analysis
-        # m = self.prepare_seq_map(min_len, min_sig, max_fold, norm=norm, bisto=bisto, mean_type=mean_type,
-        #                          external_mask=external_mask, update_mask=True, verbose=verbose)
-        # m = self.get_processed_map()
+        # a minimum of three sequences is required to run LKH
+        if _map.shape[0] < 3:
+            raise TooFewException()
 
         # we'll supply a partially initialized distance function
         dist_func = partial(ordering.similarity_to_distance, method=inverse_method,
@@ -1255,36 +1260,38 @@ class ContactMap:
 
         if seed is None:
             seed = make_random_seed()
+            if verbose:
+                print 'Using random seed: {}'.format(seed)
 
-        if self.is_tipbased():
-            # a minimum of three sequences is required to run LKH
-            if _map.shape[0] < 3:
-                raise TooFewException()
+        with open(os.path.join(work_dir, 'lkh.log'), 'w+') as stdout:
 
-            with open(os.path.join(work_dir, 'lkh.log'), 'w+') as stdout:
-                control_base_name = os.path.join(work_dir, 'lkh_run')
+            control_base_name = os.path.join(work_dir, 'lkh_run')
+
+            if self.is_tipbased():
+
                 lkh_o = ordering.lkh_order(_map, control_base_name, lkh_exe=ext_path('LKH-3.0'), precision=1, seed=seed,
                                            runs=runs, pop_size=50, dist_func=dist_func, special=False, stdout=stdout,
                                            verbose=True, fixed_edges=[(i, i+1) for i in xrange(1, _map.shape[0], 2)])
 
-            # To solve this with TSP, doublet tips use a graph transformation, where each node comes a pair. Pairs
-            # possess fixed inter-connecting edges which must be included in any solution tour.
-            # Eg. node 0 -> (0,1) or node 1 -> (2,3). The fixed paths are undirected, depending on which direction is
-            # traversed, defines the orientation of the sequence.
+                # To solve this with TSP, doublet tips use a graph transformation, where each node comes a pair. Pairs
+                # possess fixed inter-connecting edges which must be included in any solution tour.
+                # Eg. node 0 -> (0,1) or node 1 -> (2,3). The fixed paths are undirected, depending on which direction
+                # is traversed, defines the orientation of the sequence.
 
-            # 1.  pair adjacent nodes by reshape the 1D array into a two-column array of half the length
-            lkh_o = lkh_o.reshape(lkh_o.shape[0]/2, 2)
-            # 2. convert to surrogate ids and infer orientation from paths taken through doublets.
-            #   0->1 forward (+1): 1->0 reverse (-1).
-            lkh_o = np.fromiter(((oi[0]/2, oi[1]-oi[0]) for oi in lkh_o), dtype=SeqOrder.INDEX_TYPE)
+                # 1.  pair adjacent nodes by reshape the 1D array into a two-column array of half the length
+                lkh_o = lkh_o.reshape(lkh_o.shape[0]/2, 2)
+                # 2. convert to surrogate ids and infer orientation from paths taken through doublets.
+                #   0->1 forward (+1): 1->0 reverse (-1).
+                lkh_o = np.fromiter(((oi[0]/2, oi[1]-oi[0]) for oi in lkh_o), dtype=SeqOrder.INDEX_TYPE)
 
-        else:
+            else:
 
-            lkh_o = ordering.lkh_order(_map, 'lkh_run', lkh_exe=ext_path('LKH-3.0'), precision=1, seed=seed, runs=2,
-                                       pop_size=50, dist_func=dist_func, special=False, verbose=True)
+                lkh_o = ordering.lkh_order(_map, control_base_name, lkh_exe=ext_path('LKH-3.0'), precision=1, seed=seed,
+                                           runs=runs, pop_size=50, dist_func=dist_func, special=False, stdout=stdout,
+                                           verbose=True)
 
-            # for singlet tours, no orientation can be inferred.
-            lkh_o = np.fromiter(((oi, 1) for oi in lkh_o), dtype=SeqOrder.INDEX_TYPE)
+                # for singlet tours, no orientation can be inferred.
+                lkh_o = np.fromiter(((oi, 1) for oi in lkh_o), dtype=SeqOrder.INDEX_TYPE)
 
         # lkh ordering references the supplied matrix indices, not the surrogate ids.
         # we must map this consecutive set to the contact map indices.
@@ -1856,6 +1863,12 @@ class ContactMap:
         :param kwargs: additional options passed to plot()
         """
 
+        if verbose:
+            if cl_list is None:
+                print 'Plotting heatmap of complete solution'
+            else:
+                print 'Plotting heatmap of solution to clusters [{}]'.format(cl_list)
+
         # build a list of relevant clusters and setup the associated mask
         cl_list = self._enable_clusters(clustering,  cl_list=cl_list, ordered_only=ordered_only,
                                         min_extent=min_extent, verbose=verbose)
@@ -1931,15 +1944,22 @@ class ContactMap:
         else:
             # a dense array is necessary here
             if block_reduction is not None:
+                if verbose:
+                    print 'Down-sampling map for plotting by a factor of: {}'.format(block_reduction)
+                full_size = _map.shape[0]
                 _map = simple_sparse.downsample(_map, block_reduction)
                 tick_locs = np.floor(tick_locs.astype(np.float) / block_reduction)
                 if verbose:
-                    print 'Down-sampled map before plotting. New size:', _map.shape
+                    print 'Map reduced from {} to {}'.format(full_size, _map.shape)
             _map = _map.toarray()
             if zero_diag:
+                if verbose:
+                    print 'Removing diagonal'
                 np.fill_diagonal(_map, 0)
             _map = np.log(_map + alpha)
 
+            if verbose:
+                print 'Making raster image'
             seaborn.heatmap(_map, robust=robust, square=True, linewidths=0, ax=ax, cbar=False)
 
         if tick_locs is not None:
@@ -1961,6 +1981,8 @@ class ContactMap:
             ax.hlines(tick_locs, *ax.get_xlim(), color='grey', linewidth=0.5, linestyle='-.')
             ax.vlines(tick_locs, *ax.get_ylim(), color='grey', linewidth=0.5, linestyle='-.')
 
+        if verbose:
+            print 'Saving plot'
         fig.tight_layout()
         plt.savefig(fname, dpi=dpi)
         plt.close(fig)
@@ -2430,44 +2452,47 @@ class ContactMap:
                 if not clobber and os.path.exists(cl_path):
                     raise IOError('Output path exists [{}] and overwriting not enabled'.format(cl_path))
 
+                # determine the number of digits required for cluster sequence names
+                try:
+                    num_width = max(1, int(np.ceil(np.log10(len(cl_info['seq_ids'])+1))))
+                except OverflowError:
+                    num_width = 1
+
                 with open(cl_path, 'w') as output_h:
 
-                    try:
-                        num_width = max(1, int(np.ceil(np.log10(len(cl_info['seq_ids'])+1))))
-                    except OverflowError:
-                        num_width = 1
-
                     if verbose:
-                        print 'Writing cluster {} to {}'.format(cl_id, cl_path),
+                        print 'Writing full unordered FASTA for cluster {} to {}'.format(cl_id, cl_path)
 
-                    # no ordering is available for cluster
-                    if 'order' not in cl_info:
+                    # iterate simply over sequence ids, while imposing ascending numerical order
+                    for n, _seq_id in enumerate(np.sort(cl_info['seq_ids']), 1):
+
+                        # get the sequence's external name and length
+                        _name = seq_info[_seq_id].name
+                        _length = seq_info[_seq_id].length
+                        # fetch the SeqRecord object from the input fasta
+                        _seq = seq_db[_name]
+                        # orientations are listed as unknown
+                        _ori_symb = 'UNKNOWN'
+
+                        # add a new name and description
+                        _seq.id = '{0}_{1:0{2}d}'.format(cl_info['name'], n, num_width)
+                        _seq.name = _seq.id
+                        _seq.description = 'contig:{} ori:{} length:{}'.format(_name, _ori_symb, _length)
+                        SeqIO.write(_seq, output_h, 'fasta')
+
+                # write a separate ordered fasta as this is often a subset of all sequences
+                if 'order' in cl_info:
+
+                    # Each cluster produces a multi-fasta. Sequences are not joined
+                    cl_path = os.path.join(parent_dir, '{}.ordered.fna'.format(cl_info['name']))
+
+                    if not clobber and os.path.exists(cl_path):
+                        raise IOError('Output path exists [{}] and overwriting not enabled'.format(cl_path))
+
+                    with open(cl_path, 'w') as output_h:
 
                         if verbose:
-                            print '[unordered]'
-
-                        # iterate simply over sequence ids, while imposing ascending numerical order
-                        for n, _seq_id in enumerate(np.sort(cl_info['seq_ids']), 1):
-
-                            # get the sequence's external name and length
-                            _name = seq_info[_seq_id].name
-                            _length = seq_info[_seq_id].length
-                            # fetch the SeqRecord object from the input fasta
-                            _seq = seq_db[_name]
-                            # orientations are listed as unknown
-                            _ori_symb = 'UNKNOWN'
-
-                            # add a new name and description
-                            _seq.id = '{0}_{1:0{2}d}'.format(cl_info['name'], n, num_width)
-                            _seq.name = _seq.id
-                            _seq.description = 'contig:{} ori:{} length:{}'.format(_name, _ori_symb, _length)
-                            SeqIO.write(_seq, output_h, 'fasta')
-
-                    # ordering will be used when writing sequences
-                    else:
-
-                        if verbose:
-                            print '[ordered]'
+                            print 'Writing ordered FASTA for cluster {} to {}'.format(cl_id, cl_path)
 
                         # iterate over cluster members, in the determined order
                         for n, _oi in enumerate(cl_info['order'], 1):
@@ -2485,8 +2510,7 @@ class ContactMap:
                             elif _oi['ori'] == SeqOrder.FORWARD:
                                 _ori_symb = '+'
                             else:
-                                # TODO convert to an application error
-                                raise RuntimeError('unknown orientation state [{}].'.format(_oi['ori']))
+                                raise UnknownOrientationStateException(_oi['ori'])
 
                             # add a new name and description
                             _seq.id = '{0}_{1:0{2}d}'.format(cl_info['name'], n, num_width)
@@ -2662,6 +2686,10 @@ if __name__ == '__main__':
     parser.add_argument('--pickle', help='Picked contact map')
     parser.add_argument('-e', '--enzymes', required=True, action='append',
                         help='Case-sensitive enzyme name (NEB), use multiple times for multiple enzymes')
+    parser.add_argument('--min-scflen', default=2000,
+                        help='Minimum length of sequence to use in scaffolding [2000]')
+    parser.add_argument('--skip-scaffolding', default=False, action='store_true',
+                        help='Do not attempt to scaffold clusters')
     parser.add_argument('fasta', help='Reference fasta sequence')
     parser.add_argument('bam', help='Input bam file in query order')
     parser.add_argument('out_dir', help='Output directory')
@@ -2712,15 +2740,17 @@ if __name__ == '__main__':
     # write a tabular report
     cm.write_report(os.path.join(args.out_dir, 'cluster_report.csv'), clustering)
 
+    if not args.skip_scaffolding:
+        # order each cluster
+        cm.order_clusters(clustering, min_reflen=args.min_scflen, min_size=args.min_order_size,
+                          min_extent=args.min_order_extent, dist_method=args.dist_method,
+                          work_dir=args.out_dir, verbose=args.verbose)
+        # save the ordered clustering to another file.
+        # TODO remove serialization of highly redundant objects
+        save_object(os.path.join(args.out_dir, 'clustering_ordered.p'), clustering)
+
     # write per-cluster fasta files
     cm.write_fasta(clustering, args.out_dir, verbose=args.verbose)
-
-    # order each cluster
-    cm.order_clusters(clustering, min_len=5000, min_size=args.min_order_size, min_extent=args.min_order_extent,
-                      dist_method=args.dist_method, work_dir=args.out_dir, verbose=args.verbose)
-    # save the ordered clustering to another file.
-    # TODO remove serialization of highly redundant objects
-    save_object(os.path.join(args.out_dir, 'ordered.p'), clustering)
 
     # plot a heatmap, while making sure we don't exceed an maximum pixel size.
     image_size = cm.get_primary_acceptance_mask().sum()
