@@ -109,7 +109,7 @@ def kr_biostochastic(m, tol=1e-6, x0=None, delta=0.1, Delta=3, verbose=False, ma
     m = m.tolil()
     is_zero = m.diagonal() == 0
     if np.any(is_zero):
-        warnings.warn('{} non-zero diagonal element(s) treated as 1 for balancing'.format(is_zero.sum()))
+        warnings.warn('Treating {} zero-value diagonal element(s) as 1 for balancing'.format(is_zero.sum()))
         ix = np.where(is_zero)
         m[ix, ix] = 1
 
