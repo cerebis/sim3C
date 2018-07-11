@@ -60,38 +60,48 @@ P2MU = 13.973247315647466
 SeqInfo = namedtuple('SeqInfo', ['offset', 'refid', 'name', 'length', 'sites'])
 
 
-class UnknownEnzymeException(Exception):
+class ApplicationeException(Exception):
+    def __init__(self, message):
+        super(ApplicationeException, self).__init__(message)
+
+
+class UnknownEnzymeException(ApplicationeException):
     """All sequences were excluded during filtering"""
     def __init__(self, target, similar):
         super(UnknownEnzymeException, self).__init__(
             '{} is undefined, but its similar to: {}'.format(target, ', '.join(similar)))
 
 
-class UnknownOrientationStateException(Exception):
+class UnknownOrientationStateException(ApplicationeException):
     """All sequences were excluded during filtering"""
     def __init__(self, ori):
         super(UnknownOrientationStateException, self).__init__('unknown orientation state [{}].'.format(ori))
 
 
-class NoneAcceptedException(Exception):
+class NoneAcceptedException(ApplicationeException):
     """All sequences were excluded during filtering"""
     def __init__(self):
         super(NoneAcceptedException, self).__init__('all sequences were excluded')
 
 
-class TooFewException(Exception):
+class TooFewException(ApplicationeException):
     """LKH requires a minimum of three nodes"""
     def __init__(self):
         super(TooFewException, self).__init__('LKH requires a minimum of three sequences')
 
 
-class NoReportException(Exception):
+class NoRemainingClustersException(ApplicationeException):
+    def __init__(self, msg):
+        super(NoRemainingClustersException, self).__init__(msg)
+
+
+class NoReportException(ApplicationeException):
     """Clustering does not contain a report"""
     def __init__(self, clid):
-        super(NoReportException, self).__init__('Cluster {} did not contain a report'.format(clid))
+        super(NoReportException, self).__init__('No clusters contained an ordering'.format(clid))
 
 
-class ZeroLengthException(Exception):
+class ZeroLengthException(ApplicationeException):
     """Sequence of zero length"""
     def __init__(self, seq_name):
         super(ZeroLengthException, self).__init__('Sequence [{}] has zero length'.format(seq_name))
@@ -798,9 +808,25 @@ def fast_norm_tipbased_bysite(coords, data, sites):
     :param data:  the COO matrix data member variable (1xN array)
     :param sites: per-element min(sequence_length, tip_size)
     """
-    for ii in xrange(coords.shape[1]):
-        i, j, k, l = coords[:, ii]
-        data[ii] *= 1.0/(sites[i, k] * sites[j, l])
+    for n in xrange(coords.shape[1]):
+        i, j, k, l = coords[:, n]
+        data[n] *= 1.0/(sites[i, k] * sites[j, l])
+
+
+@jit(void(float64[:], float64[:], float64[:], float64[:]))
+def fast_norm_fullseq_bysite(rows, cols, data, sites):
+    """
+    In-place normalisation of the scipy.coo_matrix for full sequences
+
+    :param rows: the COO matrix coordinate member variable (4xN array)
+    :param cols: the COO matrix coordinate member variable (4xN array)
+    :param data:  the COO matrix data member variable (1xN array)
+    :param sites: per-element min(sequence_length, tip_size)
+    """
+    for n in xrange(data.shape[0]):
+        i = rows[n]
+        j = cols[n]
+        data[n] *= 1.0/(sites[i] * sites[j])
 
 
 class IndexedFasta(Mapping):
@@ -1406,7 +1432,7 @@ class ContactMap:
         # make map bistochastic if requested
         if bisto:
             # TODO balancing may be better done after compression
-            _map, scl = self._bisto_seq(_map, self.is_tipbased(), verbose)
+            _map, scl = self._bisto_seq(_map, verbose=verbose)
             # retain the scale factors
             self.bisto_scale = scl
             if verbose:
@@ -1415,16 +1441,19 @@ class ContactMap:
         # cache the results for optional quick access
         self.processed_map = _map
 
-    def get_subspace(self, external_mask=None, marginalise=False, flatten=True, verbose=False):
+    def get_subspace(self, permute=False, external_mask=None, marginalise=False, flatten=True,
+                     dtype=np.float, verbose=False):
         """
         Using an already normalized full seq_map, return a subspace as indicated by an external
         mask or if none is supplied, the full map without filtered elements.
 
         The supplied external mask must refer to all sequences in the map.
 
+        :param permute: reorder the map with the current ordering state
         :param external_mask: an external mask to combine with the existing primary mask
         :param marginalise: Assuming 4D NxNx2x2 tensor, sum 2x2 elements to become a 2D NxN
         :param flatten: convert a NxNx2x2 tensor to a 2Nx2N matrix
+        :param dtype: return map with specific element type
         :param verbose: debug output
         :return: subspace map
         """
@@ -1432,7 +1461,7 @@ class ContactMap:
             'marginalise and flatten are mutually exclusive'
 
         # starting with the normalized map
-        _map = self.get_processed_map()
+        _map = self.processed_map.astype(dtype)
 
         _mask = self.get_primary_acceptance_mask()
         if verbose:
@@ -1468,25 +1497,11 @@ class ContactMap:
                 # convert the 4D map into a 2Nx2N 2D map.
                 _map = simple_sparse.flatten_tensor_4d(_map)
 
-        return _map
-
-    def get_processed_map(self, permute=False, dtype=np.float, verbose=False):
-        """
-        Return a copy of the processed map
-
-        :param permute: reorder with current state
-        :param dtype: cast to another type
-        :param verbose: debug output
-        :return: the processed map
-        """
-        assert self.processed_map is not None, 'processed map has not been prepared!'
-
-        _map = self.processed_map.astype(dtype)
-        # reorder if requested
         if permute:
-            _map = self._reorder_seq(_map, self.is_tipbased())
+            _map = self._reorder_seq(_map, flatten=flatten)
             if verbose:
                 print 'Map reordered'
+
         return _map
 
     def get_extent_map(self, norm=True, bisto=False, permute=False, mean_type='geometric', verbose=False):
@@ -1539,6 +1554,7 @@ class ContactMap:
         is useful when only a tip based seq_map has been produced, and an analysis would be
         better done on a full accounting of mapping interactions across each sequences full
         extent.
+
         :return: a seq_map representing all counts across each sequence
         """
         m = self.extent_map.tocsr()
@@ -1560,17 +1576,18 @@ class ContactMap:
             a0 = a1
         return m_out.get_coo()
 
-    def _reorder_seq(self, _map, tip_based):
+    def _reorder_seq(self, _map, flatten=False):
         """
-        Reorder a simple sequence map using the supplied map
+        Reorder a simple sequence map using the supplied map.
 
         :param _map: the map to reorder
+        :param flatten: tip-based tensor converted to 2Nx2N matrix, otherwise the assumption is marginalisation
         :return: ordered map
         """
         assert sp.isspmatrix(_map), 'reordering expects a sparse matrix type'
 
         _order = self.order.gapless_positions()
-        if tip_based:
+        if self.is_tipbased() and flatten:
             _order = SeqOrder.double_order(_order)
 
         assert _map.shape[0] == _order.shape[0], 'supplied map and unmasked order are different sizes'
@@ -1580,19 +1597,19 @@ class ContactMap:
         p = p.tocsr()
         return p.dot(_map.tocsr()).dot(p.T)
 
-    def _bisto_seq(self, _map, tip_based, verbose=False):
+    def _bisto_seq(self, _map, verbose=False):
         """
         Make a contact map bistochastic. This is another form of normslisation. Automatically
         handles 2D and 4D maps.
+
         :param _map: a map to balance (make bistochastic)
-        :param tip_based: treat the supplied map as a tip-based tensor
         :param verbose: debug output
         :return: the balanced map
         """
         if verbose:
             print 'Balancing contact map'
 
-        if tip_based:
+        if self.is_tipbased():
             print 'Dimension during bisto:', _map.shape
             _map, scl = simple_sparse.kr_biostochastic_4d(_map)
         else:
@@ -1623,15 +1640,15 @@ class ContactMap:
             if verbose:
                 print 'Doing site based normalisation'
 
-            if tip_based:
-                _map = _map.astype(np.float)
+            _sites = self._get_sites()
+            _map = _map.astype(np.float)
+            if verbose:
                 print 'Dimension during norm:', _map.shape
-                _sites = self._get_sites()
-                fast_norm_tipbased_bysite(_map.coords, _map.data, _sites)
 
+            if tip_based:
+                fast_norm_tipbased_bysite(_map.coords, _map.data, _sites)
             else:
-                # TODO implement non-tip version
-                raise RuntimeError('currently unimplemented')
+                fast_norm_fullseq_bysite(_map.row, _map.col, _map.data, _sites)
 
         else:
             if verbose:
@@ -1810,10 +1827,20 @@ class ContactMap:
         # drop clusters that are too small
         if min_extent:
             cl_list = [k for k in cl_list if clustering[k]['extent'] >= min_extent]
+            if verbose:
+                print 'Clusters passing minimum extent: {}'.format(len(cl_list))
+            if len(cl_list) == 0:
+                raise NoRemainingClustersException(
+                    'No clusters passed min_extent criterion of >= {}'.format(min_extent))
 
         if ordered_only:
             # drop any clusters that have not been ordered
             cl_list = [k for k in cl_list if 'order' in clustering[k]]
+            if verbose:
+                print 'Clusters passing ordered-only: {}'.format(len(cl_list))
+            if len(cl_list) == 0:
+                raise NoRemainingClustersException(
+                    'No clusters passed ordered-only criterion')
 
         # impose a consistent order
         cl_list = sorted(cl_list)
@@ -1826,7 +1853,7 @@ class ContactMap:
             cmb_ord = np.hstack([SeqOrder.asindex(clustering[k]['seq_ids']) for k in cl_list])
 
         if len(cmb_ord) == 0:
-            raise RuntimeError('no requested cluster contained ordering information')
+            raise NoRemainingClustersException('No requested cluster contained ordering information')
 
         if verbose:
             print 'The cluster set contains {} sequences'.format(len(cmb_ord))
@@ -1836,14 +1863,14 @@ class ContactMap:
         _mask[cmb_ord['index']] = True
         _mask &= self.get_primary_acceptance_mask()
         if verbose:
-            print 'After masking ordering contains {} sequences'.format(_mask.sum())
+            print 'After masking map contains {} sequences'.format(_mask.sum())
         self.order.set_mask_only(_mask)
         self.order.set_order_and_orientation(cmb_ord, implicit_excl=True)
 
         return cl_list
 
-    def plot_clusters(self, fname, clustering, cl_list=None, simple=True, permute=False, block_reduction=None,
-                      ordered_only=True, min_extent=None, use_taxo=False, verbose=False, **kwargs):
+    def plot_clusters(self, fname, clustering, cl_list=None, simple=True, permute=False, max_image_size=None,
+                      ordered_only=False, min_extent=None, use_taxo=False, flatten=False, verbose=False, **kwargs):
         """
         Plot the contact map, annotating the map with cluster names and boundaries.
 
@@ -1855,10 +1882,11 @@ class ContactMap:
         :param cl_list: the list of cluster ids to include in plot. If none, include all ordered clusters
         :param simple: True plot seq map, False plot the extent map
         :param permute: permute the map with the present order
-        :param block_reduction: specify a reduction factor (>1 integer) to reduce map size for plotting
+        :param max_image_size:  maximum allowable image size before rescale occurs
         :param ordered_only: include only clusters which have been ordered
         :param min_extent: include only clusters whose total extent is greater
         :param use_taxo: use taxonomic information within clustering, assuming it exists
+        :param flatten: for tip-based, flatten matrix rather than marginalise
         :param verbose: debug output
         :param kwargs: additional options passed to plot()
         """
@@ -1873,11 +1901,11 @@ class ContactMap:
         cl_list = self._enable_clusters(clustering,  cl_list=cl_list, ordered_only=ordered_only,
                                         min_extent=min_extent, verbose=verbose)
 
-        if simple:
+        if simple or self.bin_size is None:
             # tick spacing simple the number of sequences in the cluster
             tick_locs = np.cumsum([0] + [len(clustering[k]['seq_ids']) for k in cl_list])
-            if self.is_tipbased():
-                tick_locs *= 2
+            if self.is_tipbased() and flatten:
+               tick_locs *= 2
         else:
             # tick spacing depends on cumulative bins for sequences in cluster
             # cumulative bin count, excluding masked sequences
@@ -1895,11 +1923,11 @@ class ContactMap:
             _labels = [clustering[cl_id]['name'] for cl_id in cl_list]
 
         self.plot(fname, permute=permute, simple=simple, tick_locs=tick_locs, tick_labs=_labels,
-                  block_reduction=block_reduction, verbose=verbose, **kwargs)
+                  max_image_size=max_image_size, flatten=flatten, verbose=verbose, **kwargs)
 
     def plot(self, fname, simple=False, tick_locs=None, tick_labs=None, norm=False, permute=False, pattern_only=False,
-             dpi=180, width=25, height=22, zero_diag=False, alpha=0.01, robust=False, block_reduction=None,
-             verbose=False):
+             dpi=180, width=25, height=22, zero_diag=False, alpha=0.01, robust=False, max_image_size=None,
+             flatten=False, verbose=False):
         """
         Plot the contact map. This can either be as a sparse pattern (requiring much less memory but without visual
         cues about intensity), simple sequence or full binned map and normalized or permuted.
@@ -1917,7 +1945,8 @@ class ContactMap:
         :param zero_diag: set bright self-interactions to zero
         :param alpha: log intensities are log (x + alpha)
         :param robust: use seaborn robust dynamic range feature
-        :param block_reduction: specify a reduction factor (>1 integer) to reduce map size for plotting
+        :param max_image_size: maximum allowable image size before rescale occurs
+        :param flatten: for tip-based, flatten matrix rather than marginalise
         :param verbose: debug output
         """
 
@@ -1928,34 +1957,45 @@ class ContactMap:
         fig.set_figheight(height)
         ax = fig.add_subplot(111)
 
-        if simple:
+        if simple or self.bin_size is None:
             # # assume the map must be remade
             if self.processed_map is None:
                 self.prepare_seq_map(norm=norm)
-            _map = self.get_processed_map(permute=permute, verbose=verbose)
+            _map = self.get_subspace(permute=permute, marginalise=False if flatten else True,
+                                     flatten=flatten, verbose=verbose)
         else:
             _map = self.get_extent_map(norm=norm, permute=permute)
 
         if pattern_only:
+            # sparse matrix plot, does not support pixel intensity
             if zero_diag:
                 _map.setdiag(0)
             ax.spy(_map.tocsr(), markersize=5 if simple else 1)
 
         else:
-            # a dense array is necessary here
-            if block_reduction is not None:
-                if verbose:
-                    print 'Down-sampling map for plotting by a factor of: {}'.format(block_reduction)
-                full_size = _map.shape[0]
-                _map = simple_sparse.downsample(_map, block_reduction)
-                tick_locs = np.floor(tick_locs.astype(np.float) / block_reduction)
-                if verbose:
-                    print 'Map reduced from {} to {}'.format(full_size, _map.shape)
+            # a dense array plot
+
+            # if too large, reduced it while sparse.
+            if max_image_size is not None:
+                full_size = _map.shape
+                if np.max(full_size) > max_image_size:
+                    reduce_factor = int(np.ceil(np.max(full_size) / float(max_image_size)))
+                    if verbose:
+                        print 'Full {} image reduction factor: {}'.format(full_size, reduce_factor)
+                    # downsample the map
+                    _map = simple_sparse.downsample(_map, reduce_factor)
+                    # ticks adjusted to match
+                    tick_locs = np.floor(tick_locs.astype(np.float) / reduce_factor)
+                    if verbose:
+                        print 'Map reduced from {} to {}'.format(full_size, _map.shape)
+
             _map = _map.toarray()
+
             if zero_diag:
                 if verbose:
                     print 'Removing diagonal'
                 np.fill_diagonal(_map, 0)
+
             _map = np.log(_map + alpha)
 
             if verbose:
@@ -2696,69 +2736,78 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
 
-    if not args.seed:
-        args.seed = make_random_seed()
-        logger.info('Generated random seed: {}'.format(args.seed))
-    else:
-        logger.info("User set random seed: {}".format(args.seed))
+    try:
 
-    make_dir(args.out_dir)
+        if not args.seed:
+            args.seed = make_random_seed()
+            logger.info('Generated random seed: {}'.format(args.seed))
+        else:
+            logger.info("User set random seed: {}".format(args.seed))
 
-    if args.pickle:
-        # Load a pre-existing serialized contact map
-        logger.info('Loading existing contact map from: {}'.format(args.pickle))
-        cm = load_object(args.pickle)
-    else:
-        # Create a contact map for analysis
-        cm = ContactMap(args.bam,
-                        args.enzymes,
-                        args.fasta,
-                        args.min_insert,
-                        args.min_mapq,
-                        min_len=args.min_reflen,
-                        min_sig=args.min_signal,
-                        # max_fold=args.max_fold,
-                        strong=args.strong,
-                        bin_size=args.bin_size,
-                        tip_size=args.tip_size,
-                        precount=args.eta,
-                        med_alpha=args.med_alpha)
+        make_dir(args.out_dir)
 
-        if cm.is_empty():
-            logger.info('Stopping as the map is empty')
-            sys.exit(1)
+        if args.pickle:
+            # Load a pre-existing serialized contact map
+            logger.info('Loading existing contact map from: {}'.format(args.pickle))
+            cm = load_object(args.pickle)
+        else:
+            # Create a contact map for analysis
+            cm = ContactMap(args.bam,
+                            args.enzymes,
+                            args.fasta,
+                            args.min_insert,
+                            args.min_mapq,
+                            min_len=args.min_reflen,
+                            min_sig=args.min_signal,
+                            # max_fold=args.max_fold,
+                            strong=args.strong,
+                            bin_size=args.bin_size,
+                            tip_size=args.tip_size,
+                            precount=args.eta,
+                            med_alpha=args.med_alpha)
 
-        logger.info('Saving contact map instance...')
-        save_object(os.path.join(args.out_dir, 'contact_map.p'), cm)
+            if cm.is_empty():
+                logger.info('Stopping as the map is empty')
+                sys.exit(1)
 
-    # cluster the entire map
-    clustering = cm.cluster_map(method='infomap', seed=args.seed, work_dir=args.out_dir, verbose=args.verbose)
-    # generate report per cluster
-    cm.cluster_report(clustering, is_spades=True, verbose=args.verbose)
-    # serialize clustering
-    save_object(os.path.join(args.out_dir, 'clustering.p'), clustering)
-    # write a tabular report
-    cm.write_report(os.path.join(args.out_dir, 'cluster_report.csv'), clustering)
+            logger.info('Saving contact map instance...')
+            save_object(os.path.join(args.out_dir, 'contact_map.p'), cm)
 
-    if not args.skip_scaffolding:
-        # order each cluster
-        cm.order_clusters(clustering, min_reflen=args.min_scflen, min_size=args.min_order_size,
-                          min_extent=args.min_order_extent, dist_method=args.dist_method,
-                          work_dir=args.out_dir, verbose=args.verbose)
-        # save the ordered clustering to another file.
-        # TODO remove serialization of highly redundant objects
-        save_object(os.path.join(args.out_dir, 'clustering_ordered.p'), clustering)
+        # cluster the entire map
+        clustering = cm.cluster_map(method='infomap', seed=args.seed, work_dir=args.out_dir, verbose=args.verbose)
+        # generate report per cluster
+        cm.cluster_report(clustering, is_spades=True, verbose=args.verbose)
+        # serialize clustering
+        save_object(os.path.join(args.out_dir, 'clustering.p'), clustering)
+        # write a tabular report
+        cm.write_report(os.path.join(args.out_dir, 'cluster_report.csv'), clustering)
 
-    # write per-cluster fasta files
-    cm.write_fasta(clustering, args.out_dir, verbose=args.verbose)
+        if not args.skip_scaffolding:
+            # order each cluster
+            cm.order_clusters(clustering, min_len=args.min_scflen, min_size=args.min_order_size,
+                              min_extent=args.min_order_extent, dist_method=args.dist_method,
+                              work_dir=args.out_dir, verbose=args.verbose)
+            # save the ordered clustering to another file.
+            # TODO remove serialization of highly redundant objects
+            save_object(os.path.join(args.out_dir, 'clustering_ordered.p'), clustering)
 
-    # plot a heatmap, while making sure we don't exceed an maximum pixel size.
-    image_size = cm.get_primary_acceptance_mask().sum()
-    reduce_factor = None
-    if image_size > args.max_image:
-        from math import ceil
-        reduce_factor = int(ceil(image_size / float(args.max_image)))
-        logger.info('Reducing image size of {} by {}'.format(image_size, reduce_factor))
+        # write per-cluster fasta files
+        cm.write_fasta(clustering, args.out_dir, clobber=True, verbose=args.verbose)
 
-    cm.plot_clusters(os.path.join(args.out_dir, 'cluster_plot.png'), clustering,
-                     block_reduction=reduce_factor, simple=False, permute=True)
+        # plot heatmaps, while making sure we don't exceed an maximum pixel size.
+
+        if not args.skip_scaffolding:
+            # just the clusters and contigs which were ordered
+            cm.plot_clusters(os.path.join(args.out_dir, 'cluster_scaffolded_plot.png'), clustering,
+                             max_image_size=args.max_image, ordered_only=True, simple=False, permute=True,
+                             verbose=args.verbose)
+
+        # the entire clustering
+        cm.plot_clusters(os.path.join(args.out_dir, 'cluster_plot.png'), clustering,
+                         max_image_size=args.max_image, ordered_only=False, simple=False, permute=True,
+                         verbose=args.verbose)
+
+    except ApplicationeException as ex:
+        import sys
+        print ex.message
+        sys.exit(1)
