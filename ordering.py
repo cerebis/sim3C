@@ -1,3 +1,4 @@
+import logging
 import numpy as np
 import networkx as nx
 import scipy.sparse as sparse
@@ -11,6 +12,8 @@ import subprocess
 from scipy.cluster.hierarchy import ward, complete
 from scipy.cluster.hierarchy import dendrogram
 from scipy.spatial.distance import pdist
+
+logger = logging.getLogger(__name__)
 
 
 def hc_order(g, metric='cityblock', method='ward', use_olo=True):
@@ -255,7 +258,7 @@ def scale_mat(M, _min, _max):
     return M
 
 
-def similarity_to_distance(M, method, alpha=2, beta=1, headroom=1, verbose=False):
+def similarity_to_distance(M, method, alpha=2, beta=1, headroom=1):
     """
     Convert a matrix representing similarity (larger values indicate increasing association)
     to a distance matrix (or dissimilarity matrix) where larger values indicate decreasing
@@ -281,15 +284,13 @@ def similarity_to_distance(M, method, alpha=2, beta=1, headroom=1, verbose=False
     :param alpha: factor to which similarity zeros are set in the distance beyond the largest distance.
     :param beta: an exponent to raise each element (default =1 ie. no effect)
     :param headroom: further factor of constraint to impose on largest integer allowed
-    :param verbose: be verbose
     :return: distance matrix
     """
 
     assert alpha >= 1, 'alpha cannot be less than 1'
     INT_MAX = 2147483647.0
     largest = INT_MAX / 2.0 / len(M) / headroom
-    if verbose:
-        print 'Largest available integer: {:d}'.format(int(largest))
+    logger.debug('Largest available integer: {:d}'.format(int(largest)))
 
     # copy input matrix and remove diagonal
     M = M.astype(np.float)
@@ -297,9 +298,8 @@ def similarity_to_distance(M, method, alpha=2, beta=1, headroom=1, verbose=False
 
     # remember where zeros were
     zeros = (M == 0)
-    if verbose:
-        print 'Zero count:', zeros.sum()
-        print 'Initial non-zero range: {:.3e} {:.3e}'.format(M[np.where(~zeros)].min(), M.max())
+    logger.debug('Zero count:', zeros.sum())
+    logger.debug('Initial non-zero range: {:.3e} {:.3e}'.format(M[np.where(~zeros)].min(), M.max()))
 
     nzix = np.where(~zeros)
 
@@ -321,23 +321,20 @@ def similarity_to_distance(M, method, alpha=2, beta=1, headroom=1, verbose=False
 
     # assign zeros (no observations) as a 'worst-case'
     maxM = M.max()
-    if verbose:
-        print 'Transformed range: {:.3e} {:.3e}'.format(M[np.where(~zeros)].min(), maxM)
+    logger.debug('Transformed range: {:.3e} {:.3e}'.format(M[np.where(~zeros)].min(), maxM))
 
     M[np.where(zeros)] = alpha * maxM
-    if verbose:
-        print 'Zeros assigned worst case of: {:.3e}'.format(alpha * maxM)
+    logger.debug('Zeros assigned worst case of: {:.3e}'.format(alpha * maxM))
 
     # rescale to use available integer range
     M = scale_mat(M, 1, largest)
-    if verbose:
-        print 'Rescaled range: {:.3e} {:.3e}'.format(M.min(), M.max())
+    logger.debug('Rescaled range: {:.3e} {:.3e}'.format(M.min(), M.max()))
 
     return M
 
 
 def lkh_order(m, base_name, precision=1, lkh_exe=None, runs=None, seed=None, dist_func=reciprocal_counts,
-              fixed_edges=None, special=True, pop_size=None, stdout=None, verbose=False):
+              fixed_edges=None, special=True, pop_size=None, stdout=None):
     """
     Employ LKH TSP solver to find the best order through a distance matrix. By default, it is assumed that
     LKH is on the path. A CalledProcessError is raised if execution fails. The input to LKH is an explicit
@@ -355,7 +352,6 @@ def lkh_order(m, base_name, precision=1, lkh_exe=None, runs=None, seed=None, dis
     :param special: use LKH "special" meta-setting
     :param pop_size: population size of tours used in special genetic algorithm component (default: runs/4)
     :param stdout: redirection for stdout of lkh
-    :param verbose: LKH will produce runtime information to stdout
     :return: 0-based order as a numpy array
     """
     if sparse.isspmatrix(m):
@@ -364,7 +360,7 @@ def lkh_order(m, base_name, precision=1, lkh_exe=None, runs=None, seed=None, dis
 
     try:
         write_lkh(base_name, m, len(m), max_trials=2*len(m), runs=runs, seed=seed, fixed_edges=fixed_edges,
-                  pop_size=pop_size, special=special, verbose=verbose, precision=precision)
+                  pop_size=pop_size, special=special, precision=precision)
         if not lkh_exe:
             lkh_exe = 'LKH'
         subprocess.check_call([lkh_exe, '{}.par'.format(base_name)], stdout=stdout, stderr=subprocess.STDOUT)
@@ -376,8 +372,8 @@ def lkh_order(m, base_name, precision=1, lkh_exe=None, runs=None, seed=None, dis
     return tour['path']
 
 
-def write_lkh(base_name, m, dim, max_trials=None, runs=None, verbose=False, seed=None, mat_fmt='upper',
-              fixed_edges=None, pop_size=None, special=True, precision=1):
+def write_lkh(base_name, m, dim, max_trials=None, runs=None, seed=None, mat_fmt='upper',
+              fixed_edges=None, pop_size=None, special=True, lkh_verbose=False, precision=1):
     """
     Create the control (.par) and data file (.dat) for the LKH executable. The implementation
     has many additional control parameters which could be included. Refer to LKH-3 documentation.
@@ -386,11 +382,11 @@ def write_lkh(base_name, m, dim, max_trials=None, runs=None, verbose=False, seed
     :param dim: the number of nodes (cities)
     :param max_trials: maximum number of trials (default = dim)
     :param runs: number of runs (default = 10)
-    :param verbose: enable stdout debug trace
     :param seed: random seed for algorithm (default milliseconds)
     :param mat_fmt: matrix format
     :param fixed_edges: list of edge tuples (u,v) that _must_ occur in the tour
     :param special: use LKH "special" meta-setting
+    :param lkh_verbose: make LKH verbose during runs
     :param precision: scale integer values
     :param pop_size: population size of tours used in special genetic algorithm component (default: runs/4)
     """
@@ -438,7 +434,7 @@ def write_lkh(base_name, m, dim, max_trials=None, runs=None, verbose=False, seed
         out_h.write('SEED = {}\n'.format(seed))
         out_h.write('OUTPUT_TOUR_FILE = {}.tour\n'.format(base_name))
         out_h.write('PRECISION = {}.tour\n'.format(precision))
-        out_h.write('TRACE_LEVEL = {}'.format(int(verbose)))
+        out_h.write('TRACE_LEVEL = {}'.format(int(lkh_verbose)))
 
     with open(data_file, 'w') as out_h:
         out_h.write('NAME: {}\n'.format(nopath))

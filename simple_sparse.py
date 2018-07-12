@@ -2,7 +2,6 @@ import logging
 import numpy as np
 import scipy.sparse as scisp
 import sparse
-import warnings
 from math import ceil
 
 logger = logging.getLogger(__name__)
