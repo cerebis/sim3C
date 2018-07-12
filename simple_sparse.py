@@ -1,8 +1,11 @@
+import logging
 import numpy as np
 import scipy.sparse as scisp
 import sparse
 import warnings
 from math import ceil
+
+logger = logging.getLogger(__name__)
 
 
 def is_hermitian(m, tol=1e-6):
@@ -85,7 +88,7 @@ def downsample(m, block_size, method='mean'):
     return m
 
 
-def kr_biostochastic(m, tol=1e-6, x0=None, delta=0.1, Delta=3, verbose=False, max_iter=1000):
+def kr_biostochastic(m, tol=1e-6, x0=None, delta=0.1, Delta=3, max_iter=1000):
     """
     Normalise a matrix to be bistochastic using Knight-Ruiz algorithm. This method is expected
     to converge more quickly.
@@ -95,7 +98,6 @@ def kr_biostochastic(m, tol=1e-6, x0=None, delta=0.1, Delta=3, verbose=False, ma
     :param x0: an initial guess
     :param delta: how close balancing vector can get
     :param Delta: how far balancing vector can get
-    :param verbose: print debug info
     :param max_iter: maximum number of iterations before abandoning.
     :return: tuple containing the bistochastic matrix and the scale factors
     """
@@ -109,7 +111,7 @@ def kr_biostochastic(m, tol=1e-6, x0=None, delta=0.1, Delta=3, verbose=False, ma
     m = m.tolil()
     is_zero = m.diagonal() == 0
     if np.any(is_zero):
-        warnings.warn('Treating {} zero-value diagonal element(s) as 1 for balancing'.format(is_zero.sum()))
+        logger.warning('treating {} zeros on diagonal as ones'.format(is_zero.sum()))
         ix = np.where(is_zero)
         m[ix, ix] = 1
 
@@ -117,7 +119,7 @@ def kr_biostochastic(m, tol=1e-6, x0=None, delta=0.1, Delta=3, verbose=False, ma
         m = m.tocsr()
 
     if not is_hermitian(m, tol):
-        warnings.warn('input matrix is expected to be fully symmetric')
+        logger.warning('input matrix is expected to be fully symmetric')
 
     n = m.shape[0]
     e = np.ones(n)
@@ -214,11 +216,10 @@ def kr_biostochastic(m, tol=1e-6, x0=None, delta=0.1, Delta=3, verbose=False, ma
 
     del m
 
-    if verbose:
-        print 'It took {} iterations to achieve bistochasticity'.format(n_iter)
+    logger.debug('It took {} iterations to achieve bistochasticity'.format(n_iter))
 
     if n_iter >= max_iter:
-        print 'Warning: maximum number of iterations ({}) reached without convergence'.format(max_iter)
+        logger.warning('Warning: maximum number of iterations ({}) reached without convergence'.format(max_iter))
 
     X = scisp.spdiags(x, 0, n, n, 'csr')
     return X.T.dot(_orig.dot(X)), x
