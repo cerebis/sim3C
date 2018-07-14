@@ -45,16 +45,16 @@ import simple_sparse
 #
 
 logging.basicConfig(level=logging.DEBUG,
-                    format='%(asctime)s %(name)-12s %(levelname)-8s %(message)s',
+                    format='%(asctime)s %(name)-9s %(levelname)-6s %(message)s',
                     datefmt='%m-%d %H:%M',
                     filename='extent_map.log',
                     filemode='w')
 logging.captureWarnings(True)
 console = logging.StreamHandler()
 console.setLevel(logging.INFO)
-formatter = logging.Formatter('%(name)-12s: %(levelname)-8s %(message)s')
+formatter = logging.Formatter('%(name)-9s: %(levelname)-6s %(message)s')
 console.setFormatter(formatter)
-logger = logging.getLogger(__name__)
+logger = logging.getLogger('main')
 logger.addHandler(console)
 
 MIN_FIELD = 2e-8
@@ -252,60 +252,6 @@ def calc_likelihood(cm):
         log_l += poisson_lpmf3(n_ij, q_ij)
 
     return log_l
-
-
-# Cigar codes that are not permitted.
-NOT_ALLOWED = {2, 3, 6, 8}
-
-
-def good_match(cigartuples, min_match=None, match_start=True):
-    """
-    A confident mapped read.
-
-    :param cigartuples: a read's CIGAR in tuple form
-    :param min_match: the minimum number of matched base positions
-    :param match_start: alignment must begin at read's first base position
-    :return:
-    """
-
-    # restrict tuples to a subset of possible conditions
-    if len(NOT_ALLOWED & set([t[0] for t in cigartuples])) != 0:
-        return False
-
-    # match the first N bases if requested
-    elif match_start and cigartuples[0][0] != 0:
-        return False
-
-    # impose minimum number of matches
-    elif min_match:
-        n_matches = sum([t[1] for t in cigartuples if t[0] == 0])
-        if n_matches < min_match:
-            return False
-
-    return True
-
-
-def strong_match(mr, min_match=None, match_start=True, min_mapq=None):
-    """
-    Augment a good_match() by also checking for whether a read is secondary or
-    supplementary.
-
-    :param mr: mapped read to test
-    :param min_match: the minimum number of matched base positions
-    :param match_start: alignment must begin at read's first base position
-    :param min_mapq: the minimum acceptable mapping quality. This can be mapper dependent. For BWA MEM
-    any read which perfectly aligns in two distinct places, as mapq=0.
-    """
-    if min_mapq and mr.mapping_quality < min_mapq:
-        return False
-
-    elif mr.is_secondary or mr.is_supplementary:
-        return False
-
-    # reverse the tuple if this read is reversed, as we're testing from 0-base on read.
-    cigtup = mr.cigartuples[::-1] if mr.is_reverse else mr.cigartuples
-
-    return good_match(cigtup, min_match, match_start)
 
 
 def mean_selector(name):
@@ -511,23 +457,27 @@ class SeqOrder:
         :param gapless_indices: dense list of indices or an ndarray of type INDEX_TYPE
         :return: remappped indices with gaps (of a similar type to input)
         """
-        n = 0
-        shift = []
-        for oi in self.order:
-            if not oi['mask']:
-                n += 1
-            else:
-                shift.append(n)
-        shift = np.array(shift)
+        # not as yet verified but this method is being replaced by the 50x faster numpy
+        # alternative below. The slowless shows for large problems and repeated calls.
+        # we ~could~ go further and maintain the shift array but this will require
+        # consistent and respectful (fragile) use of mutator methods and not direct access on mask
+        # or an observer.
 
+        # the accumulated shifts due to masked sequences (the gaps).
+        # we remove the masked sequences to make this array gapless
+        shift = np.cumsum(~self.order['mask'])[self.order['mask']]
+
+        # now reintroduce the gaps to the gapless representation supplied
+
+        # handle our local type
         if isinstance(gapless_indices, np.ndarray) and gapless_indices.dtype == SeqOrder.INDEX_TYPE:
             remapped = []
             for oi in gapless_indices:
                 remapped.append((oi['index'] + shift[oi['index']], oi['ori']))
             return np.array(remapped, dtype=SeqOrder.INDEX_TYPE)
 
+        # handle plain collection
         else:
-            # assume an iterable collection
             remapped = []
             for oi in gapless_indices:
                 remapped.append(oi + shift[oi])
@@ -918,6 +868,7 @@ class ContactMap:
                  precount=False, med_alpha=10):
 
         self.strong = strong
+        self.bam_file = bam_file
         self.bin_size = bin_size
         self.min_mapq = min_mapq
         self.min_insert = min_insert
@@ -1041,7 +992,10 @@ class ContactMap:
             return not r.is_unmapped and r.mapq >= _mapq
 
         def _strong_match(r):
-            return strong_match(r, self.strong, True, _mapq)
+            cig = r.cigartuples[-1] if r.is_reverse else r.cigartuples[0]
+            return r.mapping_quality >= _mapq and \
+                   not r.is_secondary and not r.is_supplementary and \
+                   cig[0] == 0 and cig[1] >= self.strong
 
         # set-up match call
         _matcher = _strong_match if self.strong else _simple_match
@@ -1365,7 +1319,7 @@ class ContactMap:
 
         # mask for sequences shorter than limit
         _mask = self.order.lengths() >= min_len
-        logger.debug('Minimum length threshold removing:', self.total_seq - _mask.sum())
+        logger.debug('Minimum length threshold removing: {}'.format(self.total_seq - _mask.sum()))
         acceptance_mask &= _mask
 
         # mask for sequences weaker than limit
@@ -1374,13 +1328,13 @@ class ContactMap:
         else:
             signal = simple_sparse.max_offdiag(self.seq_map)
         _mask = signal >= min_sig
-        logger.debug('Minimum signal threshold removing:', self.total_seq - _mask.sum())
+        logger.debug('Minimum signal threshold removing: {}'.format(self.total_seq - _mask.sum()))
         acceptance_mask &= _mask
 
         # retain the union of all masks.
         self.primary_acceptance_mask = acceptance_mask
 
-        logger.debug('Accepted sequences', self.primary_acceptance_mask.sum())
+        logger.debug('Accepted sequences: {}'.format(self.primary_acceptance_mask.sum()))
 
         return self.get_primary_acceptance_mask()
 
@@ -1393,7 +1347,7 @@ class ContactMap:
         :param mean_type: when performing normalisation, use "geometric, harmonic or arithmetic" mean.
         """
 
-        logger.info('Preparing sequence map with full dimensions:', self.seq_map.shape)
+        logger.info('Preparing sequence map with full dimensions: {}'.format(self.seq_map.shape))
 
         _mask = self.get_primary_acceptance_mask()
 
@@ -1444,9 +1398,9 @@ class ContactMap:
         # from a union of the sequence filter and external mask
         if external_mask is not None:
             _mask = self.get_primary_acceptance_mask()
-            logger.info('Beginning with sequences after primary filtering:', _mask.sum())
+            logger.info('Beginning with sequences after primary filtering: {}'.format(_mask.sum()))
             _mask &= external_mask
-            logger.info('Active sequences after applying external mask:', _mask.sum())
+            logger.info('Active sequences after applying external mask: {}'.format(_mask.sum()))
             self.order.set_mask_only(_mask)
 
         # remove masked sequences from the map
@@ -1455,7 +1409,7 @@ class ContactMap:
                 _map = simple_sparse.compress_4d(_map, self.order.mask_vector())
             else:
                 _map = simple_sparse.compress(_map.tocoo(), self.order.mask_vector())
-            logger.info('After removing filtered sequences map dimensions:', _map.shape)
+            logger.info('After removing filtered sequences map dimensions: {}'.format(_map.shape))
 
         # convert tip-based tensor to other forms
         if self.is_tipbased():
@@ -1485,7 +1439,7 @@ class ContactMap:
         :return: processed extent map
         """
 
-        logger.info('Preparing extent map with fill dimensions:', self.extent_map.shape)
+        logger.info('Preparing extent map with fill dimensions: {}'.format(self.extent_map.shape))
 
         _map = self.extent_map.astype(np.float)
 
@@ -1497,7 +1451,7 @@ class ContactMap:
         # if there are sequences to mask, remove them from the map
         if self.order.count_accepted() < self.total_seq:
             _map = self._compress_extent(_map)
-            logger.info('After removing filtered sequences map dimensions:', _map.shape)
+            logger.info('After removing filtered sequences map dimensions: {}'.format(_map.shape))
 
         # make map bistochastic if requested
         if bisto:
@@ -1780,7 +1734,7 @@ class ContactMap:
 
         if min_extent:
             cl_list = [k for k in cl_list if clustering[k]['extent'] >= min_extent]
-            logger.info('Clusters passing minimum extent criterion:', len(cl_list))
+            logger.info('Clusters passing minimum extent criterion: {}'.format(len(cl_list)))
             if len(cl_list) == 0:
                 raise NoRemainingClustersException(
                     'No clusters passed min_extent criterion of >= {}'.format(min_extent))
@@ -1788,7 +1742,7 @@ class ContactMap:
         if ordered_only:
             # drop any clusters that have not been ordered
             cl_list = [k for k in cl_list if 'order' in clustering[k]]
-            logger.info('Clusters passing ordered-only criterion:', len(cl_list))
+            logger.info('Clusters passing ordered-only criterion: {}'.format(len(cl_list)))
             if len(cl_list) == 0:
                 raise NoRemainingClustersException(
                     'No clusters passed ordered-only criterion')
@@ -1806,13 +1760,13 @@ class ContactMap:
         if len(cmb_ord) == 0:
             raise NoRemainingClustersException('No requested cluster contained ordering information')
 
-        logger.info('Total number of sequences in the clustering', len(cmb_ord))
+        logger.info('Total number of sequences in the clustering: {}'.format(len(cmb_ord)))
 
         # prepare the mask
         _mask = np.zeros_like(self.order.mask_vector(), dtype=np.bool)
         _mask[cmb_ord['index']] = True
         _mask &= self.get_primary_acceptance_mask()
-        logger.info('After joining with active sequence mask map:', _mask.sum())
+        logger.info('After joining with active sequence mask map: {}'.format(_mask.sum()))
         self.order.set_mask_only(_mask)
         self.order.set_order_and_orientation(cmb_ord, implicit_excl=True)
 
@@ -2108,7 +2062,7 @@ class ContactMap:
                     else:
                         t = line.split()
                         if len(t) != 2:
-                            logger.warning('invalid line encountered when reading cluster table: [{}]'.format(line))
+                            logger.warning('invalid line encountered when reading cluster table: {}'.format(line))
 
                         seq_id, cl_id = int(t[seq_col]), int(t[cl_col])
                     cl_map.setdefault(cl_id, []).append(seq_id)
@@ -2164,7 +2118,7 @@ class ContactMap:
         g = self.to_graph(min_len=min_len, min_sig=min_sig, norm=True, bisto=True, scale=True)
 
         method = method.lower()
-        logger.info('Clustering contact graph using method:', method)
+        logger.info('Clustering contact graph using method: {}'.format(method))
 
         if method == 'louvain':
             cl_to_ids = louvain_cluster.cluster(g, no_iso=False, ragbag=False)
@@ -2206,7 +2160,7 @@ class ContactMap:
                                       stdout=stdout, stderr=subprocess.STDOUT)
                 cl_to_ids = _read_table(ofile, seq_col=None, cl_col=0)
         else:
-            raise RuntimeError('unimplemented method [{}]'.format(method))
+            raise RuntimeError('unimplemented method: {}'.format(method))
 
         logger.info('Clustering using {} resulted in {} clusters'.format(method, len(cl_to_ids)))
 
@@ -2423,7 +2377,7 @@ class ContactMap:
 
         make_dir(output_dir)
 
-        logger.info('Writing output to the path:', output_dir)
+        logger.info('Writing output to the path: {}'.format(output_dir))
 
         seq_info = self.seq_info
 
@@ -2692,6 +2646,7 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
 
+    logger = logging.getLogger('main')
     if args.verbose:
         console.setLevel(logging.DEBUG)
 
@@ -2709,6 +2664,13 @@ if __name__ == '__main__':
             # Load a pre-existing serialized contact map
             logger.info('Loading existing contact map from: {}'.format(args.load_map))
             cm = load_object(args.load_map)
+            cm.min_extent = args.min_extent
+            # update the mask if the user has changed the thresholds
+            if args.min_signal != cm.min_sig or args.min_reflen != cm.min_len:
+                # pedantically set these and pass to method just in-case of logic oversight
+                cm.min_len = args.min_reflen
+                cm.min_sig = args.min_signal
+                cm.set_primary_acceptance_mask(min_sig=args.min_signal, min_len=cm.args_minreflen, update=True)
         else:
             # Create a contact map for analysis
             cm = ContactMap(args.bam,
@@ -2731,7 +2693,7 @@ if __name__ == '__main__':
                 logger.info('Stopping as the map is empty')
                 sys.exit(1)
 
-            logger.info('Saving contact map instance...')
+            logger.info('Saving contact map instance')
             save_object(os.path.join(args.out_dir, 'contact_map.p'), cm)
 
         # cluster the entire map
@@ -2747,7 +2709,7 @@ if __name__ == '__main__':
 
         if not args.skip_ordering:
             # order
-            cm.order_clusters(clustering, seed=args.seed, min_len=args.min_scflen, dist_method=args.dist_method,
+            cm.order_clusters(clustering, seed=args.seed, min_len=args.min_ordlen, dist_method=args.dist_method,
                               work_dir=args.out_dir)
             # serialize full clustering object again
             save_object(os.path.join(args.out_dir, 'clustering_ordered.p'), clustering)
