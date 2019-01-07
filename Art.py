@@ -20,8 +20,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 import string
 import types
 import os
-from itertools import imap
 
+from numba import jit, int64
 import numpy as np
 import scipy.stats as st
 from Bio.Alphabet import IUPAC
@@ -64,8 +64,8 @@ MODULE_PATH = os.path.dirname(os.path.abspath(__file__))
 ILLUMINA_PROFILES = {
     'Emp100': ('Illumina_profiles/Emp100R1.txt',
                'Illumina_profiles/Emp100R2.txt'),
-    'Emp36':('Illumina_profiles/Emp36R1.txt',
-             'Illumina_profiles/Emp36R2.txt'),
+    'Emp36': ('Illumina_profiles/Emp36R1.txt',
+              'Illumina_profiles/Emp36R2.txt'),
     'Emp44': ('Illumina_profiles/Emp44R1.txt',
               'Illumina_profiles/Emp44R2.txt'),
     'Emp50': ('Illumina_profiles/Emp50R1.txt',
@@ -170,6 +170,7 @@ def ambiguous_base_filter(seq_index):
         # replace the Bio.Seq record within the returned RichSequence
         rseq.seq = convert_seq(rseq.seq)
         return rseq
+
     seq_index.__getitem__ = types.MethodType(filtering_get, seq_index)
     return seq_index
 
@@ -197,6 +198,21 @@ def validator(seq_index):
         return rseq
     seq_index.__getitem__ = types.MethodType(check_get, seq_index)
     return seq_index
+
+
+@jit(int64[:](int64[:, :, :], int64[:]), nopython=True)
+def _random_to_quality_numba(q3d, rv_list):
+    """
+    Translate an array of random values to quality scores using a symbols set of empirical CDFs.
+    :param q3d: the contiguous qCDF 3D array
+    :param rv_list: an array of random values
+    :return: quality score array of equal length to the array of random values
+    """
+    quals = np.zeros(shape=len(rv_list), dtype=np.int64)
+    for i in xrange(len(rv_list)):
+        qcdf = q3d[i]
+        quals[i] = qcdf[np.searchsorted(qcdf[:, 0], rv_list[i]), 1]
+    return quals
 
 
 class EmpDist:
@@ -248,6 +264,33 @@ class EmpDist:
         self.qual_dist_second = dict(zip(EmpDist.ALL_SYMB, [[], [], [], [], [], []]))
         self.dist_max = {EmpDist.FIRST: 0, EmpDist.SECOND: 0}
         self.init_dist(fname_first, fname_second)
+        # create a contiguous datatype for numba calls
+        self.q3d_first = EmpDist.embed_ragged(self.qual_dist_first[self.CMB_SYMB])
+        self.q3d_second = EmpDist.embed_ragged(self.qual_dist_second[self.CMB_SYMB])
+
+    @staticmethod
+    def embed_ragged(qual_dist):
+        """
+        Embed the ragged array of empirically derived Q CDFs into a 3D numpy array, where left over elements are
+        initialized with large values. This datatype is much more efficient to pass to Numba JIT methods.
+        :param qual_dist: the symbol whose set of positional distributions are to be embedded
+        :return: a 3D numpy matrix of qcdfs for a given symbol
+        """
+        # largest counting value used in the set of CDFs
+        qv_max = max(qi.shape[0] for qi in qual_dist)
+
+        # a 3D matrix which can contain all the CDFs, though some can be shorter
+        q3d = np.empty(shape=(len(qual_dist), qv_max, 2), dtype=np.int64)
+
+        # unassigned elements will be one larger than largest defined
+        q3d.fill(int(EmpDist.MAX_DIST_NUMBER)+1)
+
+        for i in xrange(len(qual_dist)):
+            j, k = qual_dist[i].shape
+            # initialise from the left
+            q3d[i, :j, :k] = qual_dist[i]
+
+        return q3d
 
     def init_dist(self, fname_first, fname_second):
         """
@@ -296,9 +339,9 @@ class EmpDist:
         """
         self.verify_length(read_len, is_first)
         if is_first:
-            return self._get_from_dist(self.qual_dist_first[self.CMB_SYMB], read_len)
+            return self._get_from_dist(self.q3d_first, read_len)
         else:
-            return self._get_from_dist(self.qual_dist_second[self.CMB_SYMB], read_len)
+            return self._get_from_dist(self.q3d_second, read_len)
 
     @staticmethod
     def _get_from_dist(qual_dist_for_symb, read_len):
@@ -310,25 +353,15 @@ class EmpDist:
         :param read_len: read length to simulate
         :return: simulated quality scores
         """
+        # draw a set of random values equal to the length of a read
+        rv_list = Art.RANDINT(1, int(EmpDist.MAX_DIST_NUMBER)+1, size=read_len)
 
-        # the most time consuming step when simulating quality scores.
-        # a list comprehension that uses a iterator over the 2 sequences
-        # (the positional Qcdfs and a set of randoms)
-        rv_list = Art.RANDINT(1, EmpDist.MAX_DIST_NUMBER+1, size=read_len)
-        quals = [qi for qi in imap(EmpDist._lookup_qcdf, qual_dist_for_symb, rv_list)]
+        # convert this random rolls to quality scores
+        quals = _random_to_quality_numba(qual_dist_for_symb, rv_list)
+
         assert len(quals) > 0
         assert len(quals) == read_len
         return quals
-
-    @staticmethod
-    def _lookup_qcdf(qcdf, rv):
-        """
-        Look-up the quality corresponding to a randomly drawn integer on a Empirical Q_CDF.
-        :param qcdf: the positional empirical CDF
-        :param rv: randomly drawn value
-        :return: quality score
-        """
-        return qcdf[np.searchsorted(qcdf[:, 0], rv), 1]
 
     def read_emp_dist(self, hndl, is_first):
         """
@@ -386,7 +419,7 @@ class EmpDist:
                         self.qual_dist_first[symb].append(dist)
                     else:
                         self.qual_dist_second[symb].append(dist)
-                except:
+                except Exception:
                     raise IOError('Error: unexpected base symbol [{0}] linked to distribution'.format(symb))
 
         return n != 0

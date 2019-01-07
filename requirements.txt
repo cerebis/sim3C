@@ -1,6 +1,7 @@
 # biopython requires gcc installed
 biopython
 intervaltree
+numba
 numpy
 scipy
 tqdm
