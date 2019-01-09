@@ -10,6 +10,7 @@ Read-pair simulation of 3C-based sequencing methodologies (HiC, Meta3C, DNase-Hi
 
 - biopython
 - intervaltree
+- numba
 - numpy
 - scipy
 - tqdm
