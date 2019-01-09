@@ -113,30 +113,26 @@ def get_profile(name):
     return map(lambda pi: os.path.join(MODULE_PATH, pi), ILLUMINA_PROFILES[name])
 
 
-def parse_error(quals, seq_read):
+def parse_error(qual, seq):
     """
     When analyzed, sequences are potentially modified by the simulated quality scores.
-    :return: number of modified bases.
+    Beginning with the basic transcription from Art C/C++ code, this method has been reimplemented to use
+    Numpy for speed improvements, but does not employ Numba as we must respect the existing random state.
+    :param qual: quality scores, modified in place
+    :param seq: DNA sequence, modified in place
     """
 
-    num_seq = len(quals)
+    rint = Art.RANDINT
+    runif = Art.UNIFORM
+    perr = np.array(EmpDist.PROB_ERR)
+    subs_table = EmpDist.KO_SUBS_LOOKUP
 
-    random_base = Art.random_base
-    n_symb = EmpDist.N_SYMB
-    prob_err = EmpDist.PROB_ERR
+    # unknown bases have quality 1
+    qual[seq == EmpDist.N_SYMB] = 1
 
-    # random values to test against, this is faster than invoking
-    # the method each iteration.
-    rvals = Art.UNIFORM(size=num_seq)
-
-    for i in xrange(num_seq):
-        # if we encounter an undefined base, its quality score goes to 1.
-        if seq_read[i] == n_symb:
-            quals[i] = 1
-            continue
-        # if we draw a number less than prob_err for a base, a substitution occurs there.
-        if rvals[i] < prob_err[quals[i]]:
-            seq_read[i] = random_base(seq_read[i])
+    # mutate non-N bases randomly depending on quality
+    ix = np.where((seq != EmpDist.N_SYMB) & (runif(size=len(qual)) < perr[qual]))
+    seq[ix] = np.array([subs_table[base][rint(0, 3)] for base in seq[ix]], dtype='|S1')
 
 
 # IUPAC ambiguous symbols are converted to N, preserving case.
