@@ -298,7 +298,7 @@ def similarity_to_distance(M, method, alpha=2, beta=1, headroom=1):
 
     # remember where zeros were
     zeros = (M == 0)
-    logger.debug('Zero count:', zeros.sum())
+    logger.debug('Zero count: {}'.format(zeros.sum()))
     logger.debug('Initial non-zero range: {:.3e} {:.3e}'.format(M[np.where(~zeros)].min(), M.max()))
 
     nzix = np.where(~zeros)

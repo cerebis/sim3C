@@ -2292,7 +2292,6 @@ class ContactMap:
                 continue
             except TooFewException as e:
                 logger.warning('{} : ordering not possible for cluster {}'.format(e.message, cl_info['name']))
-                _ord = self.order.accepted_order()
 
             clustering[cl_id]['order'] = _ord
 
@@ -2318,6 +2317,15 @@ class ContactMap:
             wsum = float(w.sum())
             return np.sum(w * x) / wsum
 
+        def _n50(x):
+            """
+            Calculate N50 for the given list of sequence lengths.
+            :param x: a list of sequence lengths
+            :return: the N50 value
+            """
+            x = np.sort(x)[::-1]
+            return x[x.cumsum() > x.sum() / 2][0]
+
         df = []
         for k, v in clustering.iteritems():
             try:
@@ -2327,13 +2335,14 @@ class ContactMap:
                            v['name'],
                            len(v['seq_ids']),
                            v['extent'],
+                           _n50(sr['length']),
                            _expect(sr['length'], sr['gc']), sr['gc'].mean(), np.median(sr['gc']), sr['gc'].std(),
                            _expect(sr['length'], sr['cov']), sr['cov'].mean(), np.median(sr['cov']), sr['cov'].std()])
 
             except KeyError:
                 raise NoReportException(k)
 
-        df = pandas.DataFrame(df, columns=['id', 'name', 'size', 'extent',
+        df = pandas.DataFrame(df, columns=['id', 'name', 'size', 'extent', 'n50',
                                            'gc_expect', 'gc_mean', 'gc_median', 'gc_std',
                                            'cov_expect', 'cov_mean', 'cov_median', 'cov_std'])
         df.set_index('id', inplace=True)
@@ -2608,7 +2617,7 @@ if __name__ == '__main__':
 
     parser = argparse.ArgumentParser(description='Create a 3C fragment map from a BAM file')
 
-    parser.add_argument('-s', '--seed', default=None, help='Random seed')
+    parser.add_argument('-s', '--seed', default=None, type=int, help='Random integer seed')
     parser.add_argument('-v', '--verbose', default=False, action='store_true', help='Verbose output')
     parser.add_argument('-f', '--format', choices=['csv', 'h5'], default='csv',
                         help='Input contact map format')
@@ -2670,7 +2679,7 @@ if __name__ == '__main__':
                 # pedantically set these and pass to method just in-case of logic oversight
                 cm.min_len = args.min_reflen
                 cm.min_sig = args.min_signal
-                cm.set_primary_acceptance_mask(min_sig=args.min_signal, min_len=cm.args_minreflen, update=True)
+                cm.set_primary_acceptance_mask(min_sig=args.min_signal, min_len=args.min_reflen, update=True)
         else:
             # Create a contact map for analysis
             cm = ContactMap(args.bam,
