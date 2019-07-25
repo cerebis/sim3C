@@ -1591,6 +1591,9 @@ if __name__ == '__main__':
         # extract these parameters from the parsed arguments
         kw_args = {k: v for k, v in vars(args).items() if k in kw_names}
 
+        if kw_args["linear"]:
+	    kw_args["anti_rate"] = 0
+
         # initialise a sequencing strategy for this community
         # and the given experimental parameters
         strategy = SequencingStrategy(args.seed, args.profile_in, args.genome_seq, args.enzyme_name,
