@@ -340,7 +340,13 @@ class Replicon:
         self.name = name
         self.copy_number = cn
         self.seq = seq
-        self.anti_rate = anti_rate
+
+        if self.linear:
+            if anti_rate > 0:
+                print 'Warning: replicon {} is linear, anti_rate of {} has been set to zero'.format(name, anti_rate)
+            self.anti_rate = 0
+        else:
+            self.anti_rate = anti_rate
 
         # cut-site related properties. These are pre-calculated as a simple
         # means of avoiding performance penalties with repeated calls.
@@ -1202,7 +1208,7 @@ class SequencingStrategy:
         # initialise the community for the reference data
         self.community = Community(seq_index, self.profile, self.enzyme, self.random_state, anti_rate=anti_rate,
                                    spurious_rate=spurious_rate, trans_rate=trans_rate,
-                                   create_cids=create_cids, linear=linear,)
+                                   create_cids=create_cids, linear=linear)
 
         # preparate the read simulator for output
         self.read_generator = ReadGenerator(method, self.enzyme, seed, self.random_state,
@@ -1590,9 +1596,6 @@ if __name__ == '__main__':
 
         # extract these parameters from the parsed arguments
         kw_args = {k: v for k, v in vars(args).items() if k in kw_names}
-
-        if kw_args["linear"]:
-	    kw_args["anti_rate"] = 0
 
         # initialise a sequencing strategy for this community
         # and the given experimental parameters
