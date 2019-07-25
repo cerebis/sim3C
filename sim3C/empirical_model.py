@@ -17,6 +17,7 @@ You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """
 import numpy as np
+
 from intervaltree import Interval, IntervalTree
 
 
@@ -73,8 +74,9 @@ class EmpiricalDistribution:
 
     def __init__(self, random_state, length, bins, cdf, **coeffs):
         """
-        Initialise an empirical distribution using the supplied CDF and for() the range [0..length]. The CDF is normalized
-        by 1 / max[CDF(x)].
+        Initialise an empirical distribution using the supplied CDF and for() the range [0..length].
+        The CDF is normalized by 1 / max[CDF(x)].
+
         :param random_state: random state from which to draw numbers. If None, then this will be initialized at
         :param shape: distribution shape parameter
         :param length: distribution will be defined over 0..length
@@ -155,6 +157,7 @@ def generate_random_cids(random_state, chr_length, chr_prob=0.5, chr_bins=1000, 
     :param num_cid: number of CIDs to generate for chromosome
     :param cid_bins: number of sampling bins used in empirical distribution of CID.
     :param cid_shape: geometric distribution shape parameter for CIDs
+    :param cdf_alpha: mixture coefficient
     :param merge_overlaps: if true, overlapping CID are merged. This can result in CID exceeding max_cid_len.
     :return: an intervaltree representing range of effect of each CID, as well as the full chromosome.
     """

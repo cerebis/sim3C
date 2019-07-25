@@ -18,20 +18,23 @@ You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """
 import logging
+import numpy as np
+import os
+import scipy.stats as st
 import string
 import types
-import os
 
 from numba import jit, int64
-import numpy as np
-import scipy.stats as st
 from Bio.Alphabet import IUPAC
 from Bio.File import _IndexedSeqFileDict
 from Bio.Seq import Seq
 from Bio.SeqRecord import SeqRecord
 
+from .exceptions import Sim3CException
+
 
 logger = logging.getLogger(__name__)
+
 
 """
 The following module was transcribed and adapted from the original project's C++ code:
@@ -42,7 +45,7 @@ License: GPL v3
 """
 
 
-class ArtException(Exception):
+class ArtException(Sim3CException):
     """Module base exception class"""
     def __init__(self, message):
         super(ArtException, self).__init__(message)

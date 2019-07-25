@@ -2,25 +2,31 @@
 
 Read-pair simulation of 3C-based sequencing methodologies (HiC, Meta3C, DNase-HiC)
 
-## Dependencies
+## Recent changes
 
-**Python 2.7**
+The codebase has been refactored into an installable package format. Users will now find it much easier to get sim3C running on their systems. This work is also in preparation for updating sim3C to Python3.
 
-**Required python modules**
+### Changes
 
-- biopython
-- intervaltree
-- numba
-- numpy
-- scipy
-- tqdm
-- PyYAML
+- Version incremented to 0.2
+- sim3C is now installed as an executable package and run as `sim3C`
+- Logging is now used for simultaneous console and file logs.
+- The monolithic sim3C.py has been broken into smaller concerns.
 
-Dependencies can be satisfied through pip, using the supplied requirements file.
+
+## Installation
+
+To install and run sim3C you will require Python 2.7 and LLVM. We recommend that users employ runtime environments such as virtualenv or conda. In particular, conda will make it easy to satisfy the runtime requirement of LLVM. 
+
+The sim3C can be installed directly from Github using Pip as follows.
 
 ```bash
-pip install -U -r requirements.txt
+pip install git+https://github.com/cerebis/sim3C
 ```
+
+Python dependencies will automatically be satisfied during installation. 
+
+If you encounter problems please visit and log an issue at the [project site on Github](https://github.com/cerebis/sim3C/issues). 
 
 ## Usage
 
@@ -88,18 +94,18 @@ Relative abundances are defined per-cell, therefore this value will be repeated 
 
 Copy number is most often set to 1, but gives the user the freedom to increase the abundance of chromosomes independent of the cellular abundance.
 
-### Runtime
+### Running sim3C
 
 The simplest runtime scenario would be a strictly mono-chromosomal community, which requires only reference FASTA.
 
 Simulate 500k 150bp read-pairs using traditional HiC, NlaIII as an enzyme and uniformly random abundance across all sequences.
 ```bash
-> sim3C.py --dist uniform -n 500000 -l 150 -e NlaIII -m hic myref.fasta sim.fastq
+> sim3C --dist uniform -n 500000 -l 150 -e NlaIII -m hic myref.fasta sim.fastq
 ```
 
 If a community profile has been prepared and we wish to simulate Meta3C.
 ```bash
-> sim3C.py --profile mycom.txt -n 500000 -l 150 -e HpyCH4IV -m meta3c myref.fasta sim.fastq
+> sim3C --profile mycom.txt -n 500000 -l 150 -e HpyCH4IV -m meta3c myref.fasta sim.fastq
 ```
 
 Both a random seed and a output profile name can be specified at runtime. These make reducibility possible. The random seed is used to initialise all number generators within the simulation and, if given, the profile name will allow Sim3C to save the state of the profile when drawn at random from a distribution. Though saving the profile state is not necessary to reproducibly rerun Sim3C, it assists downstream analyses which may wish to know the true state.

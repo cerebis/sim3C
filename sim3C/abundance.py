@@ -227,7 +227,7 @@ def read_profile(hndl, normalise=False):
             if line.startswith('#'):
                 continue
             try:
-                chrom, cell, abn, cn = re.split('[\s,]+', line)
+                chrom, cell, abn, cn = re.split(r'[\s,]+', line)
                 profile.add(chrom, abn, cn, cell)
             except Exception:
                 raise IOError('Error: invalid table at line {} [{}]'.format(n, line))

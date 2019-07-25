@@ -57,7 +57,7 @@ def multicopy_tostream(fname, *ostreams, **kwargs):
     """
     Copy an input file to multiple output streams.
     :param fname: input file name
-    :param oname: output streams
+    :param ostreams: output streams
     :param kwargs: optional parameters: write_mode (default 'w'), compress [gzip, bzip2] default: None
     :return:
     """
