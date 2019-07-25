@@ -98,7 +98,7 @@ class EmpiricalDistribution:
         :param x: position at which to evaulate
         :return: CDF value at x
         """
-        assert x <= self.length, 'out of bounds {0} > {1}'.format(x, self.length)
+        assert x <= self.length, 'out of bounds {} > {}'.format(x, self.length)
         return self.cdf(x, self.length, **self.coeffs)
 
     def __add__(self, other):

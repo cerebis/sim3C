@@ -345,7 +345,7 @@ class Replicon:
 
     # Formatting string for sequence descriptions of a part (subsequence) of a replicon.
     # Used in insert/read creation.
-    PART_DESC_FMT = '{0:d}:{1}:{2}'
+    PART_DESC_FMT = '{:d}:{}:{}'
 
     # Empirical distribution parameters. These might eventually be exposed to users.
     BACKBONE_PROB = 0.25
@@ -385,7 +385,7 @@ class Replicon:
 
         if self.linear:
             if anti_rate > 0:
-                logger.warning('replicon {} is linear, anti_rate of {} has been set to zero'
+                logger.warning('Replicon {} is linear, anti_rate of {} has been set to zero'
                                .format(name, anti_rate))
             self.anti_rate = 0
         else:
@@ -426,7 +426,7 @@ class Replicon:
         cell.register_replicon(self)
 
     def __repr__(self):
-        return '{0} {1} {2} {3}'.format(self.name, self.parent_cell, self.sites.size, self.length)
+        return '{} {} {} {}'.format(self.name, self.parent_cell, self.sites.size, self.length)
 
     def covers_site(self, x, length):
         """
@@ -1022,10 +1022,10 @@ class ReadGenerator:
         assert insert_min < insert_mean, 'Minimum insert size must be less than expected mean'
         assert insert_mean > 0 and insert_sd > 0, 'Insert mean and stddev must be greater than 0'
         if insert_mean < insert_sd:
-            logger.warning('specified insert mean ({0}) less than stddev ({1})'.format(insert_mean, insert_sd))
+            logger.warning('Specified insert mean ({}) is less than stddev ({})'.format(insert_mean, insert_sd))
         if insert_mean - insert_sd < insert_min:
-            logger.warning('specified insert mean ({0}) and stddev ({1}) will produce many inserts below '
-                           'the minimum allowable insert length ({2})'.format(insert_mean, insert_sd, insert_min))
+            logger.warning('Specified insert mean ({}) and stddev ({}) will produce many inserts below '
+                           'the minimum allowable insert length ({})'.format(insert_mean, insert_sd, insert_min))
 
         if enzyme:
             self.cut_site = enzyme.ovhgseq * 2
@@ -1060,7 +1060,7 @@ class ReadGenerator:
             }
             self._part_joiner = method_switcher[self.method.lower()]
         except Exception:
-            raise Sim3CException('unknown library preparation method ({0}) Either: \'3c\' or \'hic\']'.format(method))
+            raise Sim3CException('unknown library preparation method ({}) Either: \'3c\' or \'hic\']'.format(method))
 
     def get_report(self):
         """
@@ -1270,7 +1270,7 @@ class SequencingStrategy:
             }
             self._selected_strat = self.Strategy(method, strategy_switcher[method.lower()])
         except Exception:
-            raise Sim3CException('unknown library preparation method ({0}) Either: \'3c\' or \'hic\']'.format(method))
+            raise Sim3CException('unknown library preparation method ({}) Either: \'3c\' or \'hic\']'.format(method))
 
     def run(self, ostream):
         """
@@ -1278,10 +1278,10 @@ class SequencingStrategy:
         :param ostream: the output stream for reads
         """
         logger.info('Starting sequencing simulation')
-        logger.info('Library method: {0}'.format(self._selected_strat.method))
+        logger.info('Library method: {}'.format(self._selected_strat.method))
         info = self._selected_strat.run(ostream)
         logger.info('Finished simulation')
-        logger.info('Read counts: WGS reads = {wgs_count}, Ligation products = {lig_count}'.format(**info))
+        logger.info('Read counts: WGS reads = {wgs_count}, ligation products = {lig_count}'.format(**info))
         logger.info(self.read_generator.get_report())
 
     def _simulate_meta3c(self, ostream):
@@ -1350,7 +1350,7 @@ class SequencingStrategy:
             read_gen.write_readpair(ostream, pair, n)
 
         assert self.number_pairs - n_wgs == n_3c, 'Error: WGS and 3C pairs did not sum to ' \
-                                                  '{0} was did not add'.format(self.number_pairs)
+                                                  '{} was did not add'.format(self.number_pairs)
 
         return {'wgs_count': n_wgs, 'lig_count': self.number_pairs - n_wgs}
 
@@ -1414,7 +1414,7 @@ class SequencingStrategy:
             read_gen.write_readpair(ostream, pair, n)
 
         assert self.number_pairs - n_wgs == n_3c, 'Error: WGS and 3C pairs did not sum to ' \
-                                                  '{0} was did not add'.format(self.number_pairs)
+                                                  '{} was did not add'.format(self.number_pairs)
 
         return {'wgs_count': n_wgs, 'lig_count': n_3c}
 
@@ -1477,7 +1477,7 @@ class SequencingStrategy:
             read_gen.write_readpair(ostream, pair, n)
 
         assert self.number_pairs - n_wgs == n_3c, 'Error: WGS and 3C pairs did not sum to ' \
-                                                  '{0} was did not add'.format(self.number_pairs)
+                                                  '{} was did not add'.format(self.number_pairs)
 
         return {'wgs_count': n_wgs, 'lig_count': n_3c}
 
@@ -1594,7 +1594,7 @@ if __name__ == '__main__':
 
             profile_path = os.path.join(os.path.dirname(args.output_file), args.profile_name)
             if os.path.exists(profile_path):
-                logger.error('Delete or move previous procedural abundance profile: {0}'.format(profile_path))
+                logger.error('Delete or move previous procedural abundance profile: {}'.format(profile_path))
                 sys.exit(1)
 
             seq_index = None

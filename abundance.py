@@ -43,7 +43,7 @@ def generate_profile(seed, taxa, mode, **kwargs):
         ntax = taxa
     elif isinstance(taxa, (list, tuple)):
         ntax = len(taxa)
-        logger.info('Profile will be over {0} taxa'.format(ntax))
+        logger.info('Profile will be over {} taxa'.format(ntax))
         # use the first element to determine if we've been passed a list of scalars
         if not isinstance(taxa[0], (list, tuple)):
             # convert single chrom names to (chrom, None) explicit tuples with no cell name.
@@ -54,7 +54,7 @@ def generate_profile(seed, taxa, mode, **kwargs):
         is_named = True
     else:
         raise RuntimeError('taxa parameter must be a integer or '
-                           'a list/tuple of names. was [{0}]'.format(taxa.__class__))
+                           'a list/tuple of names. was [{}]'.format(taxa.__class__))
 
     # obtain the set of values from the chosen distribution
     if mode == 'equal':
@@ -66,7 +66,7 @@ def generate_profile(seed, taxa, mode, **kwargs):
         abn_val = random_state.lognormal(kwargs['lognorm_mu'], kwargs['lognorm_sigma'], size=ntax)
         abn_val /= abn_val.sum()
     else:
-        raise RuntimeError('unsupported mode [{0}]'.format(mode))
+        raise RuntimeError('unsupported mode [{}]'.format(mode))
 
     if is_named:
         # names to be inserted in alphabetical order
@@ -117,7 +117,7 @@ class ChromAbundance:
 
     @property
     def long_name(self):
-        return '{0}-{1}'.format(self.cell, self.name)
+        return '{}-{}'.format(self.cell, self.name)
     
     def __hash__(self):
         return hash(self.name)
@@ -169,7 +169,7 @@ class Profile(OrderedDict):
         :param abn: abundance object to add
         """
         if abn in self:
-            raise RuntimeError('Error: duplicate abundances with identity [{0}] in profile'.format(abn))
+            raise RuntimeError('Error: duplicate abundances with identity [{}] in profile'.format(abn))
         self[abn] = abn
 
     def to_table(self, sort=True):
@@ -193,7 +193,7 @@ class Profile(OrderedDict):
         t = self.to_table(sort)
         hndl.write('#chrom\tcell\tabundance\tcopy_number\n')
         for row in t:
-            hndl.write('{0}\t{1}\t{2:f}\t{3:d}\n'.format(row[0], row[1], row[2], row[3]))
+            hndl.write('{}\t{}\t{:f}\t{:d}\n'.format(row[0], row[1], row[2], row[3]))
 
     def normalize(self):
         """
@@ -229,8 +229,8 @@ def read_profile(hndl, normalise=False):
             try:
                 chrom, cell, abn, cn = re.split('[\s,]+', line)
                 profile.add(chrom, abn, cn, cell)
-            except:
-                raise IOError('Error: invalid table at line {0} [{0}]'.format(n, line))
+            except Exception:
+                raise IOError('Error: invalid table at line {} [{}]'.format(n, line))
             n += 1
 
         if normalise:
