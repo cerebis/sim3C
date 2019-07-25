@@ -2,11 +2,11 @@
 
 Read-pair simulation of 3C-based sequencing methodologies (HiC, Meta3C, DNase-HiC)
 
-## Recent changes
+## Recent Updates
 
 The codebase has been refactored into an installable package format. Users will now find it much easier to get sim3C running on their systems. This work is also in preparation for updating sim3C to Python3.
 
-### Changes
+**Changes**
 
 - Version incremented to 0.2
 - sim3C is now installed as an executable package and run as `sim3C`
@@ -18,7 +18,7 @@ The codebase has been refactored into an installable package format. Users will 
 
 To install and run sim3C you will require Python 2.7 and LLVM. We recommend that users employ runtime environments such as virtualenv or conda. In particular, conda will make it easy to satisfy the runtime requirement of LLVM. 
 
-The sim3C can be installed directly from Github using Pip as follows.
+The sim3C executable can be installed directly from Github using Pip as follows.
 
 ```bash
 pip install git+https://github.com/cerebis/sim3C
