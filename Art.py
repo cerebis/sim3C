@@ -17,6 +17,7 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """
+import logging
 import string
 import types
 import os
@@ -28,6 +29,9 @@ from Bio.Alphabet import IUPAC
 from Bio.File import _IndexedSeqFileDict
 from Bio.Seq import Seq
 from Bio.SeqRecord import SeqRecord
+
+
+logger = logging.getLogger(__name__)
 
 """
 The following module was transcribed and adapted from the original project's C++ code:
@@ -684,7 +688,7 @@ class Art:
             self.ref_seq_cmp = list(Art.revcomp(ref_seq))
             self.valid_region = len(ref_seq) - read_len
         else:
-            print 'Warning: no reference supplied, calls will have to supply a template'
+            logger.warning('no reference supplied, calls will have to supply a template')
             self.ref_seq = None
             self.ref_seq_cmp = None
 
@@ -921,7 +925,7 @@ if __name__ == '__main__':
             else:
                 num_seq = args.num_reads
 
-            print 'Generating {0} reads for {1}'.format(num_seq, input_record.id)
+            logger.info('Generating {0} reads for {1}'.format(num_seq, input_record.id))
 
             print_rate = int(num_seq*100./10)
 
@@ -945,5 +949,5 @@ if __name__ == '__main__':
                 SeqIO.write(pair['rev'].read_record(SeqRead.read_id(input_record.id, n)), r2_h, 'fastq')
 
                 if ((n+1)*100) % print_rate == 0:
-                    print '\tWrote {0} pairs'.format(n+1)
+                    logger.info('wrote {0} pairs'.format(n+1))
             break

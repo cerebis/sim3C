@@ -18,8 +18,11 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """
 from collections import OrderedDict
 
+import logging
 import numpy as np
 import re
+
+logger = logging.getLogger(__name__)
 
 
 def generate_profile(seed, taxa, mode, **kwargs):
@@ -40,7 +43,7 @@ def generate_profile(seed, taxa, mode, **kwargs):
         ntax = taxa
     elif isinstance(taxa, (list, tuple)):
         ntax = len(taxa)
-        print 'Profile will be over {0} taxa'.format(ntax)
+        logger.info('Profile will be over {0} taxa'.format(ntax))
         # use the first element to determine if we've been passed a list of scalars
         if not isinstance(taxa[0], (list, tuple)):
             # convert single chrom names to (chrom, None) explicit tuples with no cell name.

@@ -21,6 +21,7 @@ from collections import OrderedDict, namedtuple
 
 import numpy as np
 import tqdm
+import logging
 from Bio import Alphabet
 from Bio import SeqIO
 from Bio.Restriction import Restriction
@@ -29,6 +30,47 @@ from Bio.Restriction.Restriction_Dictionary import rest_dict, typedict
 import Art
 import abundance as abn
 import empirical_model as em
+
+
+__log_name__ = 'sim3C.log'
+
+
+def init_log(verbose):
+    """
+    Initialise the runtime logger for both console and file output.
+
+    :param verbose: set console verbosity level.
+    :return: logger
+    """
+    logging.captureWarnings(True)
+    logger = logging.getLogger('main')
+
+    # root log listens to everything
+    root = logging.getLogger('')
+    root.setLevel(logging.DEBUG)
+
+    # log message format
+    formatter = logging.Formatter(fmt='%(levelname)-8s | %(asctime)s | %(name)7s | %(message)s')
+
+    # Runtime console listens to INFO by default
+    ch = logging.StreamHandler()
+    if verbose:
+        ch.setLevel(logging.DEBUG)
+    else:
+        ch.setLevel(logging.INFO)
+    ch.setFormatter(formatter)
+    root.addHandler(ch)
+
+    # # create the output folder if it did not exist
+    # if not os.path.exists(args.output_path):
+    #     os.mkdir(args.output_path)
+
+    fh = logging.FileHandler(__log_name__, mode='a')
+    fh.setLevel(logging.DEBUG)
+    fh.setFormatter(formatter)
+    root.addHandler(fh)
+
+    return logger
 
 
 class Sim3CException(Exception):
@@ -343,7 +385,8 @@ class Replicon:
 
         if self.linear:
             if anti_rate > 0:
-                print 'Warning: replicon {} is linear, anti_rate of {} has been set to zero'.format(name, anti_rate)
+                logger.warning('replicon {} is linear, anti_rate of {} has been set to zero'
+                               .format(name, anti_rate))
             self.anti_rate = 0
         else:
             self.anti_rate = anti_rate
@@ -979,10 +1022,10 @@ class ReadGenerator:
         assert insert_min < insert_mean, 'Minimum insert size must be less than expected mean'
         assert insert_mean > 0 and insert_sd > 0, 'Insert mean and stddev must be greater than 0'
         if insert_mean < insert_sd:
-            print 'Warning: specified insert mean ({0}) less than stddev ({1})'.format(insert_mean, insert_sd)
+            logger.warning('specified insert mean ({0}) less than stddev ({1})'.format(insert_mean, insert_sd))
         if insert_mean - insert_sd < insert_min:
-            print 'Warning: specified insert mean ({0}) and stddev ({1}) will produce many inserts below ' \
-                  'the minimum allowable insert length ({2})'.format(insert_mean, insert_sd, insert_min)
+            logger.warning('specified insert mean ({0}) and stddev ({1}) will produce many inserts below '
+                           'the minimum allowable insert length ({2})'.format(insert_mean, insert_sd, insert_min))
 
         if enzyme:
             self.cut_site = enzyme.ovhgseq * 2
@@ -1234,14 +1277,12 @@ class SequencingStrategy:
         Add some pre and post detail to the selected strategy.
         :param ostream: the output stream for reads
         """
-        print 'Starting sequencing simulation'
-        print 'Library method: {0}'.format(self._selected_strat.method)
-        print 'Progress:'
+        logger.info('Starting sequencing simulation')
+        logger.info('Library method: {0}'.format(self._selected_strat.method))
         info = self._selected_strat.run(ostream)
-        print 'Finished simulation'
-        print 'Run Report:'
-        print 'Read counts: WGS reads = {wgs_count}, Ligation products = {lig_count}'.format(**info)
-        print '{0}'.format(self.read_generator.get_report())
+        logger.info('Finished simulation')
+        logger.info('Read counts: WGS reads = {wgs_count}, Ligation products = {lig_count}'.format(**info))
+        logger.info(self.read_generator.get_report())
 
     def _simulate_meta3c(self, ostream):
         """
@@ -1454,8 +1495,7 @@ if __name__ == '__main__':
     # Commandline interface
     #
     parser = argparse.ArgumentParser(description='Simulate HiC read pairs')
-
-    parser.add_argument('--debug', default=False, action='store_true', help='Print debug trace on exception')
+    parser.add_argument('-v', '--verbose', default=False, action='store_true', help='Verbose output')
 
     parser.add_argument('--convert', dest='convert_symbols', default=False, action='store_true',
                         help='Convert unsupported symbols in sequence to N (required by Art)')
@@ -1522,6 +1562,7 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     try:
+        logger = init_log(args.verbose)
 
         if 'community_table' in args and args.dist:
             raise RuntimeError('Cannot define abundance both explicitly as a table (-t) and a distribution (--dist).')
@@ -1539,7 +1580,7 @@ if __name__ == '__main__':
         #   treated equally.
         #
         if not args.profile_in and not args.dist:
-            print 'An abundance profile must be supplied either as a file or procedurally'
+            logger.error('An abundance profile must be supplied either as a file or procedurally')
             sys.exit(1)
 
         profile = None
@@ -1548,13 +1589,12 @@ if __name__ == '__main__':
             # the number of taxa is defined by number of sequences. i.e. monochromosomal organisms
 
             if os.path.basename(args.profile_name) != args.profile_name:
-                print 'Arguments to profile-name should not contain path information'
+                logger.error('Arguments to profile-name should not contain path information')
                 sys.exit(1)
 
             profile_path = os.path.join(os.path.dirname(args.output_file), args.profile_name)
             if os.path.exists(profile_path):
-                print 'A previous procedural abundance profile already exists'
-                print 'Please delete or move away: {0}'.format(profile_path)
+                logger.error('Delete or move previous procedural abundance profile: {0}'.format(profile_path))
                 sys.exit(1)
 
             seq_index = None
@@ -1606,11 +1646,12 @@ if __name__ == '__main__':
         with io_utils.open_output(args.output_file, mode='w', compress=args.compress) as out_stream:
             strategy.run(out_stream)
 
+    except Sim3CException as ex:
+        logger.error(str(ex))
+        sys.exit(1)
+
     except Exception as ex:
-            if args.debug:
-                import traceback
-                type, value, tb = sys.exc_info()
-                traceback.print_exc()
-            print 'Error: {0}'.format(ex)
+        logger.exception(ex)
+        sys.exit(1)
 
 
