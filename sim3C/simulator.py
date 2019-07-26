@@ -291,7 +291,7 @@ class SequencingStrategy:
         # reference sequences will be accessed via an SeqIO index. Optionally
         # overriding getter for validation and base filtering
         try:
-            seq_index = SeqIO.index(seq_filename, 'fasta', alphabet=Alphabet.generic_dna)
+            seq_index = SeqIO.index(seq_filename, 'fasta')
             if convert_symbols:
                 # remove IUPAC ambiguity symbols
                 seq_index = ambiguous_base_filter(seq_index)
