@@ -5,23 +5,27 @@ from collections import OrderedDict
 
 from .empirical_model import EmpiricalDistribution, generate_nested_cids, cids_to_blocks, cdf_geom_unif_ratio
 from .exceptions import *
+from .random import randint, uniform, choice
 from .site_analysis import AllSites, CutSites
 
 logger = logging.getLogger(__name__)
 
 
-def choice(rs, vals, cdf):
+def cdf_choice(vals, cdf):
     """
     Random selection of an element from an array, biased by the supplied CDF.
-    :param rs: a numpy RandomState object for random number generation
+
+    TODO this function should be compared for performance against just using random.choice or np.random.choice.
+       I expect this has been done, but I do not remember. Otherwise, this may be a candidate for numba.
+
     :param vals: the array of potential choices
     :param cdf: the CDF describing each elements probability of selection
     :return: the selected element
     """
-    return vals[np.searchsorted(cdf, rs.uniform())]
+    return vals[np.searchsorted(cdf, uniform())]
 
 
-class Replicon:
+class Replicon(object):
     """
     A DNA molecule which will be digested. This may be a chromosome, plasmid, etc.
     """
@@ -41,7 +45,7 @@ class Replicon:
     CID_MAX = 6
     CID_DEPTH = 2
 
-    def __init__(self, name, cell, cn, seq, enzyme, anti_rate, random_state, create_cids=True, linear=False):
+    def __init__(self, name, cell, cn, seq, enzyme, anti_rate, create_cids=True, linear=False):
         """
         The definition of a replicon (chromosome, plasmid, etc).
         :param name: a unique name for this replicon
@@ -50,18 +54,11 @@ class Replicon:
         :param seq: the genomic sequence of this replicon as a Bio.Seq object
         :param enzyme: the enzyme used to digest this replicon as a Bio.Restriction RestrictionType
         :param anti_rate: the rate of anti-diagonal interactions
-        :param random_state: a numpy RandomState object for random number generation
         :param create_cids: when true, simulate chromosome-interacting-domains
         :param linear: treat replicon as linear
         """
 
-        # if random state not supplied, initialise one
-        self.random_state = random_state
-        self.choice = random_state.choice
-        self.uniform = random_state.uniform
-        self.randint = random_state.randint
         self.linear = linear
-
         self.name = name
         self.copy_number = cn
         self.seq = seq
@@ -77,19 +74,19 @@ class Replicon:
         # cut-site related properties. These are pre-calculated as a simple
         # means of avoiding performance penalties with repeated calls.
         if not enzyme:
-            self.sites = AllSites(len(seq.seq), self.random_state)
+            self.sites = AllSites(len(seq.seq))
         else:
-            self.sites = CutSites(enzyme, seq.seq, self.random_state, linear=linear)
+            self.sites = CutSites(enzyme, seq.seq, linear=linear)
 
         self.length = len(self.seq)
         self.num_sites = self.sites.size
-        self.site_density = self.num_sites / float(self.length)
+        self.site_density = self.num_sites / self.length
 
         if create_cids:
             # setup for more complex simulated CID model
             self.draw_constrained_site = self._draw_cid_constrained_site
             self.cid_blocks = cids_to_blocks(
-                generate_nested_cids(self.random_state, self.length, Replicon.BACKBONE_PROB,
+                generate_nested_cids(self.length, Replicon.BACKBONE_PROB,
                                      Replicon.GLOBAL_EMPDIST_BINS, Replicon.GLOBAL_SHAPE_FACTOR,
                                      Replicon.CID_EMPDIST_BINS, Replicon.CID_SHAPE_FACTOR,
                                      cdf_alpha=Replicon.CDF_ALPHA,
@@ -99,7 +96,7 @@ class Replicon:
         else:
             # setup for simple model
             self.draw_constrained_site = self._draw_simple_constrained_site
-            self.empdist = EmpiricalDistribution(self.random_state, self.length,
+            self.empdist = EmpiricalDistribution(self.length,
                                                  Replicon.GLOBAL_EMPDIST_BINS, cdf_geom_unif_ratio,
                                                  cdf_alpha=Replicon.CDF_ALPHA,
                                                  shape=Replicon.GLOBAL_SHAPE_FACTOR)
@@ -133,7 +130,7 @@ class Replicon:
         Uniform selection of any genomic coordinate for this replicon
         :return: a genomic coord (zero based)
         """
-        return self.randint(0, self.length)
+        return randint(0, self.length)
 
     @staticmethod
     def get_loc_3c(emp_dist, x1, length):
@@ -141,11 +138,12 @@ class Replicon:
         Get a second genomic location (x2) on this replicon, where the separation |x2-x1|
         is constrained by the experimentally determined distribution for 3C/HiC ligation
         products.
-        Note TODO: this method does not explicitly treat linear replicons. To do so, we must
-        handle the edge case of drawing beyond first and last positions. Simple approaches
-        using redraw are potentially computationally terrible if the first position is
-        very close to the end of the replicon. For now, we accept the modulo solution
-        for both linear and circular.
+
+        TODO: this method does not explicitly treat linear replicons. To do so, we must
+           handle the edge case of drawing beyond first and last positions. Simple approaches
+           using redraw are potentially computationally terrible if the first position is
+           very close to the end of the replicon. For now, we accept the modulo solution
+           for both linear and circular.
 
         :param emp_dist: empirical distribution of separation
         :param x1: the first position
@@ -156,7 +154,7 @@ class Replicon:
         delta = int(emp_dist.rand())
 
         # pve or nve shift, modulo length
-        if emp_dist.uniform() < 0.5:
+        if uniform() < 0.5:
             x2 = (x1 - delta) % length
         else:
             x2 = (x1 + delta) % length
@@ -172,7 +170,7 @@ class Replicon:
         x2 = Replicon.get_loc_3c(self.empdist, x1, self.length)
 
         # anti-diagonal
-        if self.uniform() < self.anti_rate:
+        if uniform() < self.anti_rate:
             x2 = self.length - x2
 
         # return nearest site
@@ -203,13 +201,13 @@ class Replicon:
             x2 = Replicon.get_loc_3c(chosen_inv.data['empdist'], x1, chosen_inv.length())
 
             # anti-diagonal
-            if self.uniform() < self.anti_rate:
+            if uniform() < self.anti_rate:
                 x2 = self.length - x2
 
         else:
             # pick a cid or background from those defined for this block
             # note, numpy will not accept the list of intervals here
-            ix = self.choice(len(ovl_invs), p=block.data['prob_list'])
+            ix = choice(len(ovl_invs), p=block.data['prob_list'])
             chosen_inv = ovl_invs[ix]
 
             x2 = Replicon.get_loc_3c(chosen_inv.data['empdist'], x1 - chosen_inv.begin, chosen_inv.length())
@@ -218,7 +216,7 @@ class Replicon:
             # main backbone gets anti-diagonal treatment
             if chosen_inv.data['depth'] == 0:
                 # antidiagonal
-                if self.uniform() < self.anti_rate:
+                if uniform() < self.anti_rate:
                     x2 = self.length - x2
 
         return self.sites.find_nn(x2)
@@ -259,24 +257,21 @@ class Replicon:
         return ss
 
 
-class Cell:
+class Cell(object):
     """
     A cell acts as the container of one or more replicons, where each may have its
     own copy-number in addition to the relative abundance of their containing cell.
     """
 
-    def __init__(self, name, abundance, random_state, trans_rate=0.1):
+    def __init__(self, name, abundance, trans_rate=0.1):
         """
         The definition of a cell.
         :param name: a unique name for this cell.
         :param abundance: the relative abundance of this cell in the community.
-        :param random_state: a numpy RandomState object for random number generation
         :param trans_rate: the rate of inter-replicon (trans) ligation products
         """
 
         # if no object supplied, initialise one.
-        self.random_state = random_state
-        self.uniform = random_state.uniform
         self.name = name
         self.abundance = abundance
         # replicons are kept in the order they are registered
@@ -327,7 +322,7 @@ class Cell:
             self.pdf_sites[i] = cn * repl.num_sites
 
         # normalise the PDFs
-        self.replicon_names = np.array(self.replicon_registry.keys())
+        self.replicon_names = np.array([*self.replicon_registry])
         self.pdf_cn /= self.pdf_cn.sum()
         self.pdf_extent /= self.pdf_extent.sum()
         self.pdf_sites /= self.pdf_sites.sum()
@@ -384,7 +379,7 @@ class Cell:
         Draw any replicon from this cell, biased only by copy number.
         :return: any replicon from this cell
         """
-        return self.get_replicon(choice(self.random_state, self.replicon_names, self.cdf_cn))
+        return self.get_replicon(cdf_choice(self.replicon_names, self.cdf_cn))
 
     def draw_any_replicon_by_extents(self):
         """
@@ -392,7 +387,7 @@ class Cell:
         genomic extent and copy number.
         :return: any replicon from this cell
         """
-        return self.get_replicon(choice(self.random_state, self.replicon_names, self.cdf_extent))
+        return self.get_replicon(cdf_choice(self.replicon_names, self.cdf_extent))
 
     def draw_any_replicon_by_sites(self):
         """
@@ -400,7 +395,7 @@ class Cell:
         number of sites and copy number.
         :return: any replicon from this cell
         """
-        return self.get_replicon(choice(self.random_state, self.replicon_names, self.cdf_sites))
+        return self.get_replicon(cdf_choice(self.replicon_names, self.cdf_sites))
 
     def draw_other_replicon_by_sites(self, skip_repl):
         """
@@ -413,9 +408,8 @@ class Cell:
         if self.num_replicons() <= 1:
             raise MonochromosomalException('inter-replicon events are not possible for monochromosomal cells')
 
-        return self.get_replicon(choice(self.random_state,
-                                        self.cdf_sites_inter[skip_repl]['names'],
-                                        self.cdf_sites_inter[skip_repl]['prob']))
+        return self.get_replicon(cdf_choice(self.cdf_sites_inter[skip_repl]['names'],
+                                            self.cdf_sites_inter[skip_repl]['prob']))
 
     def draw_other_replicon_by_extents(self, skip_repl):
         """
@@ -428,9 +422,8 @@ class Cell:
         if self.num_replicons() <= 1:
             raise MonochromosomalException('inter-replicon events are not possible for monochromosomal cells')
 
-        return self.get_replicon(choice(self.random_state,
-                                        self.cdf_extents_inter[skip_repl]['names'],
-                                        self.cdf_extents_inter[skip_repl]['prob']))
+        return self.get_replicon(cdf_choice(self.cdf_extents_inter[skip_repl]['names'],
+                                            self.cdf_extents_inter[skip_repl]['prob']))
 
     def draw_any_site(self):
         """
@@ -446,10 +439,10 @@ class Cell:
         """
         Print a simple report about this cell.
         """
-        print 'names', self.replicon_names
-        print 'p_rep', self.pdf_cn
-        print 'p_ext', self.pdf_extent
-        print 'p_sit', self.pdf_sites
+        print(f'names {self.replicon_names}')
+        print(f'p_rep {self.pdf_cn}')
+        print(f'p_ext {self.pdf_extent}')
+        print(f'p_sit {self.pdf_sites}')
 
     def is_trans(self):
         """
@@ -457,10 +450,10 @@ class Cell:
         is dictated by the rate supplied at instantiation time (trans_rate).
         :return: True -- treat this as a trans event
         """
-        return self.num_replicons() > 1 and self.uniform() < self.trans_rate
+        return self.num_replicons() > 1 and uniform() < self.trans_rate
 
 
-class Community:
+class Community(object):
     """
     A community represents the entire collection and organisation of DNA molecules (replicons) in a simulation.
     This may be the approximation of an environmental sample, a multi-chromosomal or even monochromosomal
@@ -471,7 +464,7 @@ class Community:
     of simulation parameters are exposed.
     """
 
-    def __init__(self, seq_index, profile, enzyme, random_state, anti_rate=0.2, spurious_rate=0.02,
+    def __init__(self, seq_index, profile, enzyme, anti_rate=0.2, spurious_rate=0.02,
                  trans_rate=0.1, create_cids=True, linear=False):
         """
         Initialise a community.
@@ -480,17 +473,11 @@ class Community:
         :param profile: the accompanying abundance profile of all replicons in the community
         :param enzyme: the enzyme used to digest DNA in the 3C/HiC library preparation
         :param anti_rate: the rate of anti-diagonal interactions
-        :param random_state: a numpy random state used for random number generation
         :param spurious_rate: the rate of spurious ligation products
         :param trans_rate: the rate of inter-replicon (trans) ligation products within a cell
         :param create_cids: when true, simulate chromosome-interacting-domains
         :param linear: treat replicons as linear
         """
-
-        # init a random state if one was not supplied.
-        # keep a reference to uniform handy
-        self.random_state = random_state
-        self.uniform = random_state.uniform
 
         # global replicon and cell registries
         self.repl_registry = OrderedDict()
@@ -499,12 +486,12 @@ class Community:
         # initialise the registries using the community profile
         for ri in profile.values():
             # register the cell
-            cell = self._register_cell(Cell(ri.cell, ri.abundance, self.random_state, trans_rate))
+            cell = self._register_cell(Cell(ri.cell, ri.abundance, trans_rate))
             # fetch the sequence from file
             rseq = seq_index[ri.name].upper()
             # community-wide replicon registry
-            self._register_replicon(Replicon(ri.name, cell, ri.copy_number, rseq, enzyme, anti_rate,
-                                             random_state, create_cids, linear))
+            self._register_replicon(Replicon(ri.name, cell, ri.copy_number, rseq, enzyme,
+                                             anti_rate, create_cids, linear))
 
         # now we're finished reading replicons, initialise the probs for each cell
         for cell in self.cell_registry.values():
@@ -536,7 +523,7 @@ class Community:
         self.cdf_sites = np.cumsum(self.pdf_sites)
 
         # keep a list of chr names in numpy format
-        self.repl_names = np.array(self.repl_registry.keys())
+        self.repl_names = np.array([*self.repl_registry])
 
         # setup pdfs and cdfs for inter-cellular events
         # each represents a deletion of one chr and renormalisation
@@ -602,7 +589,7 @@ class Community:
         Draw any replicon from this community, biased relative abundance and copy number.
         :return: any replicon from this community
         """
-        return self.get_repl(choice(self.random_state, self.repl_names, self.cdf_repl))
+        return self.get_repl(cdf_choice(self.repl_names, self.cdf_repl))
 
     def draw_any_repl_by_extent(self):
         """
@@ -610,7 +597,7 @@ class Community:
         and per-replicon genomic extent and copy number.
         :return: any replicon from this community
         """
-        return self.get_repl(choice(self.random_state, self.repl_names, self.cdf_extent))
+        return self.get_repl(cdf_choice(self.repl_names, self.cdf_extent))
 
     def draw_any_repl_by_sites(self):
         """
@@ -618,7 +605,7 @@ class Community:
         and per-replicon number of cut-sites and copy number.
         :return: any replicon from this community
         """
-        return self.get_repl(choice(self.random_state, self.repl_names, self.cdf_sites))
+        return self.get_repl(cdf_choice(self.repl_names, self.cdf_sites))
 
     def draw_other_repl_by_sites(self, skip_repl):
         """
@@ -628,9 +615,8 @@ class Community:
         :param skip_repl: the replicon to exclude
         :return: another replicon from this cell
         """
-        return self.get_repl(choice(self.random_state,
-                                    self.cdf_sites_inter[skip_repl]['names'],
-                                    self.cdf_sites_inter[skip_repl]['prob']))
+        return self.get_repl(cdf_choice(self.cdf_sites_inter[skip_repl]['names'],
+                                        self.cdf_sites_inter[skip_repl]['prob']))
 
     def draw_any_by_site(self):
         """
@@ -649,10 +635,10 @@ class Community:
         return repl, repl.draw_any_location()
 
     def print_report(self):
-        print 'names', self.repl_names
-        print 'p_rep', self.pdf_repl
-        print 'p_ext', self.pdf_extent
-        print 'p_sit', self.pdf_sites
+        print(f'names {self.repl_names}')
+        print(f'p_rep {self.pdf_repl}')
+        print(f'p_ext {self.pdf_extent}')
+        print(f'p_sit {self.pdf_sites}')
 
     def is_spurious(self):
         """
@@ -660,4 +646,4 @@ class Community:
         dictated by the rate supplied at instantiation time (spurious_rate).
         :return: True -- treat this as a spurious event
         """
-        return self.uniform() < self.spurious_rate
+        return uniform() < self.spurious_rate

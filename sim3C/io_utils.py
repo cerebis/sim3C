@@ -19,7 +19,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 import bz2
 import gzip
 import json
-import io
 
 import yaml
 
@@ -44,13 +43,13 @@ def open_output(fname, mode, compress=None, gzlevel=6):
             fname += '.bz2'
         # bz2 missing method to be wrapped by BufferedWriter. Just directly
         # supply a buffer size
-        return bz2.BZ2File(fname, mode, buffering=65536)
+        return bz2.open(fname, mode)
     elif compress == 'gzip':
         if not fname.endswith('.gz'):
             fname += '.gz'
-        return io.BufferedWriter(gzip.GzipFile(fname, mode, compresslevel=gzlevel))
+        return gzip.open(fname, mode, compresslevel=gzlevel)
     else:
-        return io.BufferedWriter(io.FileIO(fname, mode))
+        return open(fname, mode)
 
 
 def multicopy_tostream(fname, *ostreams, **kwargs):
@@ -71,37 +70,6 @@ def multicopy_tostream(fname, *ostreams, **kwargs):
                 done = True
             for oi in ostreams:
                 oi.write(buf)
-
-
-def multicopy_tofile(fname, *onames, **kwargs):
-    """
-    Copy an input file to multiple output files.
-    :param fname: input file name
-    :param onames: output file names
-    :param kwargs: optional parameters: write_mode (default 'w'), compress [gzip, bzip2] default: None
-    :return:
-    """
-    bufsize = DEF_BUFFER if 'bufsize' not in kwargs else kwargs['bufsize']
-    write_mode = "w" if 'write_mode' not in kwargs else kwargs['write_mode']
-    compress = None if 'compress' not in kwargs else kwargs['compress']
-
-    out_h = None
-    try:
-        in_h = open(fname, 'r')
-        out_h = [open_output(oi, write_mode, compress) for oi in onames]
-
-        done = False
-        while not done:
-            buf = in_h.read(bufsize)
-            if not buf:
-                done = True
-            for oi in out_h:
-                oi.write(buf)
-    finally:
-        if out_h:
-            for oi in out_h:
-                if oi:
-                    oi.close()
 
 
 def write_to_stream(stream, data, fmt='plain'):
@@ -168,7 +136,7 @@ def json_load_byteified(file_handle):
 
 def _byteify(data, ignore_dicts=False):
     # if this is a unicode string, return its string representation
-    if isinstance(data, unicode):
+    if isinstance(data, str):
         return data.encode('utf-8')
     # if this is a list of values, return list of byteified values
     if isinstance(data, list):
@@ -176,9 +144,6 @@ def _byteify(data, ignore_dicts=False):
     # if this is a dictionary, return dictionary of byteified keys and values
     # but only if we haven't already byteified it
     if isinstance(data, dict) and not ignore_dicts:
-        return {
-            _byteify(key, ignore_dicts=True): _byteify(value, ignore_dicts=True)
-            for key, value in data.iteritems()
-            }
+        return {_byteify(key, ignore_dicts=True): _byteify(value, ignore_dicts=True) for key, value in data.items()}
     # if it's anything else, return it in its original form
     return data

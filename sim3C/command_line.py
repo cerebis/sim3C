@@ -9,6 +9,7 @@ from sim3C.abundance import generate_profile
 from sim3C.art import ILLUMINA_PROFILES
 from sim3C.exceptions import Sim3CException, FastaException
 from sim3C.io_utils import open_output
+from sim3C.random import init_random_state
 from sim3C.simulator import SequencingStrategy
 
 __log_name__ = 'sim3C.log'
@@ -114,7 +115,7 @@ def main():
 
     parser.add_argument('--simple-reads', default=False, action='store_true', help='Do not simulate sequencing errors')
     parser.add_argument('--machine-profile', help='An ART sequencing machine profile [EmpMiSeq250]',
-                        default='EmpMiSeq250', choices=ILLUMINA_PROFILES.keys())
+                        default='EmpMiSeq250', choices=[*ILLUMINA_PROFILES])
     parser.add_argument('--ins-rate', type=float, default=9.e-5, help='Insert rate [9e-5]')
     parser.add_argument('--del-rate', type=float, default=1.1e-4, help='Deletion rate [1.1e-4]')
 
@@ -173,14 +174,14 @@ def main():
                 if seq_index:
                     seq_index.close()
 
-            profile = generate_profile(args.seed, seq_names, mode=args.dist,
-                                       lognorm_mu=args.lognorm_mu, lognorm_sigma=args.lognorm_sigma)
+            profile = generate_profile(seq_names, mode=args.dist, lognorm_mu=args.lognorm_mu,
+                                       lognorm_sigma=args.lognorm_sigma)
 
             # present result to console
             profile.write_table(sys.stdout)
 
             # save result to file
-            with open(profile_path, 'w') as h_out:
+            with open(profile_path, 'wt') as h_out:
                 profile.write_table(h_out)
 
             # generated profile will be used downstream
@@ -191,6 +192,10 @@ def main():
                 args.efficiency = 0.5
             elif args.method == 'meta3c':
                 args.efficiency = 0.02
+            elif args.method == 'dnase':
+                args.efficiency = 0.5
+            else:
+                raise RuntimeError('BUG: missing efficiency for method {}'.format(args.method))
 
         # list of CLI arguments to pass as parameters to the simulation
         kw_names = ['prefix', 'machine_profile', 'insert_mean', 'insert_sd', 'insert_min', 'insert_max',
@@ -202,13 +207,16 @@ def main():
         # extract these parameters from the parsed arguments
         kw_args = {k: v for k, v in vars(args).items() if k in kw_names}
 
+        if args.seed:
+            init_random_state(args.seed)
+
         # initialise a sequencing strategy for this community
         # and the given experimental parameters
-        strategy = SequencingStrategy(args.seed, args.profile_in, args.genome_seq, args.enzyme_name,
+        strategy = SequencingStrategy(args.profile_in, args.genome_seq, args.enzyme_name,
                                       args.num_pairs, args.method, args.read_length, **kw_args)
 
         # Run the simulation
-        with open_output(args.output_file, mode='w', compress=args.compress) as out_stream:
+        with open_output(args.output_file, mode='wt', compress=args.compress) as out_stream:
             strategy.run(out_stream)
 
     except Sim3CException as ex:

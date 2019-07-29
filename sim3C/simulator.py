@@ -17,10 +17,8 @@ You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """
 import logging
-import numpy as np
 import tqdm
 
-from Bio import Alphabet
 from Bio import SeqIO
 from collections import namedtuple
 
@@ -28,12 +26,13 @@ from .abundance import read_profile
 from .art import Art, EmpDist, ambiguous_base_filter, validator
 from .community import Community
 from .exceptions import *
+from .random import uniform, randint, normal
 from .site_analysis import get_enzyme_instance
 
 logger = logging.getLogger(__name__)
 
 
-class ReadGenerator:
+class ReadGenerator(object):
     """
     Generate inserts and subsequent read-pairs for a particular library preparation method. Primarily,
     3C does not generate a duplication of the cut-site, whereas HiC's enriching for ligation products by
@@ -43,16 +42,13 @@ class ReadGenerator:
 
     Other sequencing read simulation parameters are supplied here initialise ART.
     """
-    def __init__(self, method, enzyme, seed, random_state,
-                 prefix='SIM3C', simple=False, machine_profile='EmpMiSeq250',
+    def __init__(self, method, enzyme, prefix='SIM3C', simple=False, machine_profile='EmpMiSeq250',
                  read_length=250, ins_rate=9.e-5, del_rate=1.1e-4,
                  insert_mean=500, insert_sd=100, insert_min=100, insert_max=None):
         """
         Initialise a read generator.
         :param method: The two library preparation methods are: 'meta3c' or 'hic'.
         :param enzyme: The employed restriction enzyme
-        :param seed: a random seed - required to initial Art.
-        :param random_state: additionally the random state object
         :param prefix: leading string for read names
         :param simple: True: do not simulate sequencing errors (faster), False: fully simulation sequencing
         :param machine_profile: ART Illumina error profile for a particular machine type. Default EmpMiSeq250
@@ -67,7 +63,7 @@ class ReadGenerator:
 
         self.method = method
         self.prefix = prefix
-        self.seq_id_fmt = prefix + ':{seed}:{mode}:1:1:1:{idx} {r1r2}:Y:18:1'
+        self.seq_id_fmt = prefix + ':{mode}:1:1:1:{idx} {r1r2}:Y:18:1'
         self.wgs_desc_fmt = 'WGS {repl.name}:{x1}..{x2}:{dir}'
         self._3c_desc_fmt = method.upper() + ' {repl1.name}:{x1} {repl2.name}:{x2}'
 
@@ -90,14 +86,8 @@ class ReadGenerator:
         self.too_short = 0
         self.too_long = 0
 
-        self.seed = seed
-        self.random_state = random_state
-        self.uniform = random_state.uniform
-        self.normal = random_state.normal
-        self.randint = random_state.randint
-
         # initialise ART read simulator
-        self.art = Art(read_length, EmpDist.create(machine_profile), ins_rate, del_rate, seed=self.seed)
+        self.art = Art(read_length, EmpDist.create(machine_profile), ins_rate, del_rate)
 
         # set the method used to generate reads
         if simple:
@@ -161,15 +151,15 @@ class ReadGenerator:
         length.
         :return: length, midpoint and direction tuple. Eg. (100, 56, True)
         """
-        length = int(self.normal(self.insert_mean, self.insert_sd))
+        length = int(normal(self.insert_mean, self.insert_sd))
         if length < self.insert_min:
             self.too_short += 1
             length = self.insert_min
         elif self.insert_max and length > self.insert_max:
             self.too_long += 1
             length = self.insert_max
-        midpoint = self.randint(0, length)
-        is_fwd = self.uniform() < 0.5
+        midpoint = randint(0, length)
+        is_fwd = uniform() < 0.5
         return length, midpoint, is_fwd
 
     def make_wgs_readpair(self, repl, x1, ins_len, is_fwd):
@@ -218,15 +208,15 @@ class ReadGenerator:
         """
 
         # create Bio.Seq objects for read1 (fwd) and read2 (rev)
-        read1 = pair['fwd'].read_record(self.seq_id_fmt.format(seed=self.seed, mode=pair['mode'], idx=index, r1r2=1),
+        read1 = pair['fwd'].read_record(self.seq_id_fmt.format(mode=pair['mode'], idx=index, r1r2=1),
                                         desc=pair['desc'])
-        read2 = pair['rev'].read_record(self.seq_id_fmt.format(seed=self.seed, mode=pair['mode'], idx=index, r1r2=2),
+        read2 = pair['rev'].read_record(self.seq_id_fmt.format(mode=pair['mode'], idx=index, r1r2=2),
                                         desc=pair['desc'])
         # write to interleaved file
         SeqIO.write([read1, read2], h_out, fmt)
 
 
-class SequencingStrategy:
+class SequencingStrategy(object):
     """
     A SequencingStrategy represents the whole experiment. This includes the reference data from which
     WGS and ligation products are generated, and the simulation of Illumina sequencing reads.
@@ -236,7 +226,7 @@ class SequencingStrategy:
 
     Strategy = namedtuple('Strategy', 'method run')
 
-    def __init__(self, seed, prof_filename, seq_filename, enz_name, number_pairs,
+    def __init__(self, prof_filename, seq_filename, enz_name, number_pairs,
                  method, read_length, prefix, machine_profile,
                  insert_mean=400, insert_sd=50, insert_min=50, insert_max=None,
                  anti_rate=0.25, spurious_rate=0.02, trans_rate=0.1,
@@ -246,7 +236,6 @@ class SequencingStrategy:
         """
         Initialise a SequencingStrategy.
 
-        :param seed: the random seed for all subsequent calls to numpy.random methods.
         :param prof_filename: the abundance profile for the community
         :param seq_filename: the matching sequence of replicon sequences in Fasta format
         :param enz_name: the restriction enzyme name (case sensitive)
@@ -270,7 +259,6 @@ class SequencingStrategy:
         :param linear: treat replicons as linear
         :param convert_symbols: if true, unsupported (by Art) symbols in the input sequences are converted to N
         """
-        self.seed = seed
         self.prof_filename = prof_filename
         self.seq_filename = seq_filename
         self.enz_name = enz_name
@@ -281,9 +269,6 @@ class SequencingStrategy:
         self.insert_min = insert_min
         self.insert_max = insert_max
         self.efficiency = efficiency
-
-        # initialise the random state for the simulation
-        self.random_state = np.random.RandomState(seed)
 
         self.enzyme = None if not enz_name else get_enzyme_instance(enz_name)
         self.profile = read_profile(prof_filename, True)
@@ -302,12 +287,12 @@ class SequencingStrategy:
             raise FastaException(seq_filename)
 
         # initialise the community for the reference data
-        self.community = Community(seq_index, self.profile, self.enzyme, self.random_state, anti_rate=anti_rate,
+        self.community = Community(seq_index, self.profile, self.enzyme, anti_rate=anti_rate,
                                    spurious_rate=spurious_rate, trans_rate=trans_rate,
                                    create_cids=create_cids, linear=linear)
 
         # preparate the read simulator for output
-        self.read_generator = ReadGenerator(method, self.enzyme, seed, self.random_state,
+        self.read_generator = ReadGenerator(method, self.enzyme,
                                             prefix=prefix, simple=simple_reads, machine_profile=machine_profile,
                                             read_length=read_length, insert_mean=insert_mean,
                                             insert_sd=insert_sd, insert_min=insert_min, insert_max=insert_max,
@@ -348,14 +333,13 @@ class SequencingStrategy:
         """
 
         comm = self.community
-        uniform = self.random_state.uniform
         read_gen = self.read_generator
         efficiency = self.efficiency
 
         n_wgs = 0
         n_3c = 0
 
-        for n in tqdm.tqdm(xrange(1, self.number_pairs+1)):
+        for n in tqdm.tqdm(range(1, self.number_pairs+1)):
 
             # pick an replicon, position and insert size
             r1, x1 = comm.draw_any_by_extent()
@@ -414,14 +398,13 @@ class SequencingStrategy:
         """
 
         comm = self.community
-        uniform = self.random_state.uniform
         read_gen = self.read_generator
         efficiency = self.efficiency
 
         n_wgs = 0
         n_3c = 0
 
-        for n in tqdm.tqdm(xrange(1, self.number_pairs+1)):
+        for n in tqdm.tqdm(range(1, self.number_pairs+1)):
 
             ins_len, midpoint, is_fwd = read_gen.draw_insert()
 
@@ -477,19 +460,18 @@ class SequencingStrategy:
         :param ostream: the output stream for reads
         """
         comm = self.community
-        uniform = self.random_state.uniform
         read_gen = self.read_generator
         efficiency = self.efficiency
 
         n_wgs = 0
         n_3c = 0
 
-        for n in tqdm.tqdm(xrange(1, self.number_pairs+1)):
+        for n in tqdm.tqdm(range(1, self.number_pairs+1)):
 
             ins_len, midpoint, is_fwd = read_gen.draw_insert()
 
             # is PLP?
-            if uniform() >= efficiency:
+            if uniform() <= efficiency:
 
                 n_3c += 1
 

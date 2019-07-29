@@ -22,21 +22,20 @@ import logging
 import numpy as np
 import re
 
+from .random import uniform, lognormal
+
 logger = logging.getLogger(__name__)
 
 
-def generate_profile(seed, taxa, mode, **kwargs):
+def generate_profile(taxa, mode, **kwargs):
     """
     Generate a relative abundance profile.
 
-    :param seed: random state initialisation seed
     :param taxa: the number of taxa in the profile or a list of names (chrom) or tuples (chrom, cell)
     :param mode: selected mode [equal, uniform or lognormal]
     :param kwargs: additional options for mode. Log-normal requires lognorm_mu, lognorm_sigma
     :return: array of abundance values
     """
-
-    random_state = np.random.RandomState(seed)
 
     is_named = False
     if isinstance(taxa, int):
@@ -58,12 +57,12 @@ def generate_profile(seed, taxa, mode, **kwargs):
 
     # obtain the set of values from the chosen distribution
     if mode == 'equal':
-        abn_val = np.full(ntax, 1.0/ntax, dtype=np.float64)
+        abn_val = np.full(ntax, 1 / ntax, dtype=np.float64)
     elif mode == 'uniform':
-        abn_val = random_state.uniform(size=ntax)
+        abn_val = uniform(size=ntax)
         abn_val /= abn_val.sum()
     elif mode == 'lognormal':
-        abn_val = random_state.lognormal(kwargs['lognorm_mu'], kwargs['lognorm_sigma'], size=ntax)
+        abn_val = lognormal(kwargs['lognorm_mu'], kwargs['lognorm_sigma'], size=ntax)
         abn_val /= abn_val.sum()
     else:
         raise RuntimeError('unsupported mode [{}]'.format(mode))
@@ -80,7 +79,7 @@ def generate_profile(seed, taxa, mode, **kwargs):
         return abn_val.tolist()
 
 
-class ChromAbundance:
+class ChromAbundance(object):
     """
     An entry in a profile, where object identity is keyed by both chromosome and cell name. Cell names are explicit
     and important for supporting multi-chromosomal genome definitions in simulations of 3C read-pairs, where inter
@@ -179,7 +178,7 @@ class Profile(OrderedDict):
         :return: table representation of profile
         """
         t = []
-        keys = sorted(self.keys()) if sort else self.keys()
+        keys = sorted([*self]) if sort else [*self]
         for n, k in enumerate(keys):
             t.append([self[k].name, self[k].cell, self[k].abundance, self[k].copy_number])
         return t
@@ -214,8 +213,8 @@ def read_profile(hndl, normalise=False):
 
     close_handle = False
     try:
-        if isinstance(hndl, basestring):
-            hndl = open(hndl, 'r')
+        if isinstance(hndl, str):
+            hndl = open(hndl, 'rt')
             close_handle = True
 
         profile = Profile()

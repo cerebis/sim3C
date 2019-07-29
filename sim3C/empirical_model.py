@@ -20,6 +20,8 @@ import numpy as np
 
 from intervaltree import Interval, IntervalTree
 
+from .random import uniform, randint
+
 
 def cdf_geom(x, shape):
     return 1. - (1. - shape) ** x
@@ -36,7 +38,7 @@ def cdf_geom_unif_ratio(x, length, alpha=0.333, **kwargs):
     :param kwargs: 'shape' geometric distribution coeff
     :return: float from 0..length
     """
-    return (1.0 - alpha) * (1.0 - (1.0 - kwargs['shape']) ** x) + alpha/length * x
+    return (1.0 - alpha) * (1.0 - (1.0 - kwargs['shape']) ** x) + alpha / length * x
 
 
 def cdf_geom_unif(x, length, **kwargs):
@@ -49,7 +51,7 @@ def cdf_geom_unif(x, length, **kwargs):
     :param kwargs: 'shape' geometric distribution coeff.
     :return: float from 0..length
     """
-    return 0.5 * (1.0 - (1.0 - kwargs['shape']) ** x + 1.0/length * x)
+    return 0.5 * (1.0 - (1.0 - kwargs['shape']) ** x + 1.0 / length * x)
 
 
 def pmf_geom_unif(x, length, **kwargs):
@@ -63,7 +65,7 @@ def pmf_geom_unif(x, length, **kwargs):
     return 0.5 * (kwargs['shape'] * (1. - kwargs['shape'])**x + 1./length)
 
 
-class EmpiricalDistribution:
+class EmpiricalDistribution(object):
     """
     Defining an empirical distribution, we can then use it to draw random numbers. A user need
     only supply a definition for the CDF for the desired distribution. This will in turn by sampled
@@ -72,19 +74,17 @@ class EmpiricalDistribution:
     nearest two bins.
     """
 
-    def __init__(self, random_state, length, bins, cdf, **coeffs):
+    def __init__(self, length, bins, cdf, **coeffs):
         """
         Initialise an empirical distribution using the supplied CDF and for() the range [0..length].
         The CDF is normalized by 1 / max[CDF(x)].
 
-        :param random_state: random state from which to draw numbers. If None, then this will be initialized at
-        :param shape: distribution shape parameter
         :param length: distribution will be defined over 0..length
         :param bins: number of bins to sample distribution
         :param cdf: cdf from which to generate sampled distribution
+        :param coeffs: coefficients to cdf function
         runtime.
         """
-        self.random_state = random_state
         self.bins = bins
         self.coeffs = coeffs
         self.cdf = cdf
@@ -92,7 +92,6 @@ class EmpiricalDistribution:
         self.xsample = np.linspace(0, length, bins, endpoint=True, dtype=np.float64)
         self.ysample = self.cdf(self.xsample, length, **self.coeffs)
         self.ysample /= self.ysample.max()
-        self.uniform = self.random_state.uniform
 
     def eval_cdf(self, x):
         """
@@ -125,7 +124,7 @@ class EmpiricalDistribution:
 
         :return: random value following distribution
         """
-        return np.interp(self.uniform(), self.ysample, self.xsample)
+        return np.interp(uniform(), self.ysample, self.xsample)
 
 
 def _reducer_cid_data(acc, x):
@@ -140,14 +139,13 @@ def _reducer_cid_data(acc, x):
     return {'prob': 0.5*(acc['prob'] + x['prob']), 'empdist': acc['empdist'] + x['empdist']}
 
 
-def generate_random_cids(random_state, chr_length, chr_prob=0.5, chr_bins=1000, chr_shape=8.0e-6, cdf_alpha=0.333,
+def generate_random_cids(chr_length, chr_prob=0.5, chr_bins=1000, chr_shape=8.0e-6, cdf_alpha=0.333,
                          min_cid_len=20000, max_cid_len=250000, num_cid=10, cid_bins=100, cid_shape=6.0e-6,
                          merge_overlaps=False):
     """
     Generate a random set of CID intervals for a given genome size. Default values have been set for most
     parameters.
 
-    :param random_state: numpy RandomState to be used for all random number generation
     :param chr_length: length of chromosome
     :param chr_prob: probability of chromosome selection
     :param chr_bins: number of sampling bins used in empirical distribution for chromosome
@@ -167,21 +165,21 @@ def generate_random_cids(random_state, chr_length, chr_prob=0.5, chr_bins=1000, 
     assert num_cid > 0, 'number of CIDs must be greater than 0'
 
     # Create the list of CID intervals as (cid_begin, cid_length) pairs.
-    data = map(lambda _: (random_state.randint(chr_length),
-                          random_state.randint(min_cid_len, max_cid_len)), range(num_cid))
+    data = map(lambda _: (randint(chr_length),
+                          randint(min_cid_len, max_cid_len)), range(num_cid))
 
     # Draw a set of independent probabilities and normalise these along with chr_prob to 1.
     # The closer chr_prob is to 1, the greater its precedence and the less role CIDs will
     # play in determining locations.
-    cid_probs = np.array(random_state.uniform(size=num_cid))
+    cid_probs = np.array(uniform(size=num_cid))
     cid_probs *= (1.0 - chr_prob) / cid_probs.sum()
     cid_probs_iter = np.nditer(cid_probs)
 
     # Initialise the interval-tree, and associate a random interaction probability for each CID interval.
     # We assume their distributions are of the same form as the full genome.
     cid_tree = IntervalTree(Interval(x, x+y,
-                                     {'prob': cid_probs_iter.next(),
-                                      'empdist': EmpiricalDistribution(random_state, y, cid_bins, cdf_geom_unif_ratio,
+                                     {'prob': next(cid_probs_iter),
+                                      'empdist': EmpiricalDistribution(y, cid_bins, cdf_geom_unif_ratio,
                                                                        shape=cid_shape, alpha=cdf_alpha)}
                                      ) for x, y in data if y < chr_length)
 
@@ -191,17 +189,16 @@ def generate_random_cids(random_state, chr_length, chr_prob=0.5, chr_bins=1000, 
 
     # Add the interval governing the whole genome -- call it the genome-wide CID. mother of all CID? heh
     cid_tree[0:chr_length] = {'prob': chr_prob,
-                              'empdist': EmpiricalDistribution(random_state, chr_length, chr_bins, cdf_geom_unif_ratio,
+                              'empdist': EmpiricalDistribution(chr_length, chr_bins, cdf_geom_unif_ratio,
                                                                shape=chr_shape, alpha=cdf_alpha)}
 
     return cid_tree
 
 
-def _random_nested_intervals(random_state, result, inv, min_len, max_len, min_num, max_num, max_depth, depth=0):
+def _random_nested_intervals(result, inv, min_len, max_len, min_num, max_num, max_depth, depth=0):
     """
     Recursively divide an interval until we reach 'depth' levels of recursion. An interval is divided
     into a set of smaller intervals, constrained by a proportional min/max length and min/max number.
-    :param random_state: a random state for drawing values
     :param result: the final list of lists of intervals.
     :param inv: the interval to divide
     :param min_len: the smallest proportional size of an interval [0..1]
@@ -213,11 +210,11 @@ def _random_nested_intervals(random_state, result, inv, min_len, max_len, min_nu
     """
     if depth < max_depth:
         # draw a set of random points
-        x = random_state.uniform(min_len * inv.length(), max_len * inv.length(),
-                                 size=random_state.randint(min_num, max_num + 1))
+        x = uniform(min_len * inv.length(), max_len * inv.length(),
+                                 size=randint(min_num, max_num + 1))
         # from a sequence from these points and the begin/end of interval
         subseq = np.hstack([[inv.begin],
-                            inv.begin + np.cumsum((x/x.sum()*inv.length()).astype(int))[:-1],
+                            inv.begin + np.cumsum((x / x.sum() * inv.length()).astype(int))[:-1],
                             [inv.end]])
         # adjacent elements become the next level of intervals
         subinvs = [Interval(pi[0], pi[1], data={'depth': depth+1}) for pi in zip(subseq[:-1:1], subseq[1::1])]
@@ -225,11 +222,11 @@ def _random_nested_intervals(random_state, result, inv, min_len, max_len, min_nu
         result.append(subinvs)
         # continue to divide these new intervals
         for ii in subinvs:
-            _random_nested_intervals(random_state, result, ii, min_len, max_len,
+            _random_nested_intervals(result, ii, min_len, max_len,
                                      min_num, max_num, max_depth, depth + 1)
 
 
-def generate_nested_cids(random_state, chr_length, chr_prob, chr_bins, chr_shape, cid_bins, cid_shape,
+def generate_nested_cids(chr_length, chr_prob, chr_bins, chr_shape, cid_bins, cid_shape,
                          cdf_alpha=0.333, min_len=0.05, max_len=0.2, min_num=5, max_num=5, recur_depth=2):
     """cdf
     Generate a set of nested CID intervals for the given genome size. This method better approximates the
@@ -237,7 +234,6 @@ def generate_nested_cids(random_state, chr_length, chr_prob, chr_bins, chr_shape
     create intervals within themselves which interact. Default values to the method appear to produce
     reasonable outcomes.
 
-    :param random_state:  a random state for drawing values
     :param chr_length: the length of the chromsome
     :param chr_prob: the probability of a regular backbone interaction vs CID interaction
     :param chr_bins: the number of bins over which to sample the backbone CDF
@@ -256,14 +252,14 @@ def generate_nested_cids(random_state, chr_length, chr_prob, chr_bins, chr_shape
     # recursively create a list of nested intervals
     cid_list = []
     top_inv = Interval(0, chr_length)
-    _random_nested_intervals(random_state, cid_list, top_inv, min_len, max_len, min_num, max_num, recur_depth)
+    _random_nested_intervals(cid_list, top_inv, min_len, max_len, min_num, max_num, recur_depth)
 
     # flatten returned list of intervals
     cid_list = [inv for level in cid_list for inv in level]
 
     # create random probs to assign to each interval, then normalise
     # so that: sum{P_cids} + P_backbone = 1.
-    cid_probs = np.array(random_state.uniform(size=len(cid_list)))
+    cid_probs = np.array(uniform(size=len(cid_list)))
     cid_probs *= (1.0 - chr_prob) / cid_probs.sum()
 
     # initialise the tree, where each interval now gets a
@@ -272,16 +268,16 @@ def generate_nested_cids(random_state, chr_length, chr_prob, chr_bins, chr_shape
     cid_tree = IntervalTree()
     for inv in cid_list:
         # explicitly cast, avoiding a 1-element np array
-        inv.data['prob'] = float(cid_probs_iter.next())
-        inv.data['empdist'] = EmpiricalDistribution(random_state, inv.length(), cid_bins,
-                                                    cdf_geom_unif_ratio, shape=cid_shape, alpha=cdf_alpha)
+        inv.data['prob'] = float(next(cid_probs_iter))
+        inv.data['empdist'] = EmpiricalDistribution(inv.length(), cid_bins, cdf_geom_unif_ratio,
+                                                    shape=cid_shape, alpha=cdf_alpha)
         cid_tree.add(inv)
 
     # Add the interval governing the whole genome
     data = {'depth': 0,
             'prob': chr_prob,
-            'empdist': EmpiricalDistribution(random_state, chr_length, chr_bins,
-                                             cdf_geom_unif_ratio, shape=chr_shape, alpha=cdf_alpha)}
+            'empdist': EmpiricalDistribution(chr_length, chr_bins, cdf_geom_unif_ratio,
+                                             shape=chr_shape, alpha=cdf_alpha)}
     cid_tree.addi(0, chr_length, data=data)
 
     return cid_tree
@@ -310,11 +306,11 @@ def cids_to_blocks(cid_tree):
 
     # interate over the CID coords, making all the block intervals.
     block_tree = IntervalTree()
-    for i in xrange(len(x)-1):
+    for i in range(len(x)-1):
         ovl_invs = sorted(cid_tree[x[i]:x[i+1]])  # the CIDs involved in this range
 
         # normalize probs for the block.
-        p = np.fromiter((inv.data['prob'] for inv in ovl_invs), dtype=float)
+        p = np.fromiter((inv.data['prob'] for inv in ovl_invs), dtype=np.float)
         p /= p.sum()
 
         # a block stores the normalized probabilities and originating CID intervals for quick lookup.

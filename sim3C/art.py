@@ -21,16 +21,17 @@ import logging
 import numpy as np
 import os
 import scipy.stats as st
-import string
 import types
 
-from numba import jit, int64
 from Bio.Alphabet import IUPAC
 from Bio.File import _IndexedSeqFileDict
 from Bio.Seq import Seq
 from Bio.SeqRecord import SeqRecord
+from collections import OrderedDict
+from numba import jit, int64
 
 from .exceptions import Sim3CException
+from .random import uniform, randint, normal
 
 
 logger = logging.getLogger(__name__)
@@ -68,7 +69,7 @@ MODULE_PATH = os.path.dirname(os.path.abspath(__file__))
 
 
 # A catalog of empirical profiles for Illumina machine types.
-ILLUMINA_PROFILES = {
+ILLUMINA_PROFILES = OrderedDict({
     'Emp100': ('Illumina_profiles/Emp100R1.txt',
                'Illumina_profiles/Emp100R2.txt'),
     'Emp36': ('Illumina_profiles/Emp36R1.txt',
@@ -104,8 +105,7 @@ ILLUMINA_PROFILES = {
     'MiSeqv3L250': ('Illumina_profiles/MiSeqv3L250R1.txt',
                     'Illumina_profiles/MiSeqv3L250R2.txt'),
     'NextSeq500v2L75': ('Illumina_profiles/NextSeq500v2L75R1.txt',
-                        'Illumina_profiles/NextSeq500v2L75R2.txt')
-}
+                        'Illumina_profiles/NextSeq500v2L75R2.txt')})
 
 
 def get_profile(name):
@@ -115,36 +115,13 @@ def get_profile(name):
     :return: absolute (full) path
     """
     assert name in ILLUMINA_PROFILES, 'Unknown profile name. Try one of: {}'.format(
-        ', '.join(ILLUMINA_PROFILES.keys()))
+        ', '.join([*ILLUMINA_PROFILES]))
 
     return map(lambda pi: os.path.join(MODULE_PATH, pi), ILLUMINA_PROFILES[name])
 
-
-def parse_error(qual, seq):
-    """
-    When analyzed, sequences are potentially modified by the simulated quality scores.
-    Beginning with the basic transcription from Art C/C++ code, this method has been reimplemented to use
-    Numpy for speed improvements, but does not employ Numba as we must respect the existing random state.
-    :param qual: quality scores, modified in place
-    :param seq: DNA sequence, modified in place
-    """
-
-    rint = Art.RANDINT
-    runif = Art.UNIFORM
-    perr = np.array(EmpDist.PROB_ERR)
-    subs_table = EmpDist.KO_SUBS_LOOKUP
-
-    # unknown bases have quality 1
-    qual[seq == EmpDist.N_SYMB] = 1
-
-    # mutate non-N bases randomly depending on quality
-    ix = np.where((seq != EmpDist.N_SYMB) & (runif(size=len(qual)) < perr[qual]))
-    seq[ix] = np.array([subs_table[base][rint(0, 3)] for base in seq[ix]], dtype='|S1')
-
-
 # IUPAC ambiguous symbols are converted to N, preserving case.
-AMBIGUOUS_CONVERSION_TABLE = string.maketrans('mrwsykvhdbMRWSYKVHDB',
-                                              'nnnnnnnnnnNNNNNNNNNN')
+AMBIGUOUS_CONVERSION_TABLE = str.maketrans('mrwsykvhdbMRWSYKVHDB',
+                                           'nnnnnnnnnnNNNNNNNNNN')
 
 
 def convert_seq(seq):
@@ -154,7 +131,7 @@ def convert_seq(seq):
     :return: a copy of the input, potentially with conversions.
     """
     assert isinstance(seq, Seq), 'Error: supplied sequence must be instance of Bio.Seq.Seq'
-    return Seq(string.translate(str(seq), AMBIGUOUS_CONVERSION_TABLE), seq.alphabet)
+    return Seq(str.translate(str(seq), AMBIGUOUS_CONVERSION_TABLE), seq.alphabet)
 
 
 def ambiguous_base_filter(seq_index):
@@ -212,13 +189,13 @@ def _random_to_quality_numba(q3d, rv_list):
     :return: quality score array of equal length to the array of random values
     """
     quals = np.zeros(shape=len(rv_list), dtype=np.int64)
-    for i in xrange(len(rv_list)):
+    for i in range(len(rv_list)):
         qcdf = q3d[i]
         quals[i] = qcdf[np.searchsorted(qcdf[:, 0], rv_list[i]), 1]
     return quals
 
 
-class EmpDist:
+class EmpDist(object):
 
     FIRST = True
     SECOND = False
@@ -237,12 +214,15 @@ class EmpDist:
     PROB_ERR = np.apply_along_axis(
         lambda xi: 10.0**(-xi*0.1), 0, np.arange(HIGHEST_QUAL)).tolist()
 
-    # create a map of all combinations of single-symbol knockouts
-    # used in random not-symb-si substitutions
-    KO_SUBS_LOOKUP = dict([(si, list(PRIMARY_SYMB - set(si))) for si in PRIMARY_SYMB])
+    # a dictionary of all combinations of single-symbol
+    # knockouts used in random substitutions
+    KO_SUBS_LOOKUP = OrderedDict({'A': ['C', 'G', 'T'],
+                                  'C': ['A', 'G', 'T'],
+                                  'G': ['A', 'C', 'T'],
+                                  'T': ['A', 'C', 'G']})
 
     # alternatively, the list of all symbols for uniform random selection
-    ALL_SUBS = list(PRIMARY_SYMB)
+    ALL_SUBS = sorted(PRIMARY_SYMB)
 
     @staticmethod
     def create(name, sep_quals=False):
@@ -288,7 +268,7 @@ class EmpDist:
         # unassigned elements will be one larger than largest defined
         q3d.fill(int(EmpDist.MAX_DIST_NUMBER)+1)
 
-        for i in xrange(len(qual_dist)):
+        for i in range(len(qual_dist)):
             j, k = qual_dist[i].shape
             # initialise from the left
             q3d[i, :j, :k] = qual_dist[i]
@@ -304,10 +284,10 @@ class EmpDist:
         map(_clear_list, self.qual_dist_first.values())
         map(_clear_list, self.qual_dist_second.values())
 
-        with open(fname_first, 'r') as hndl:
+        with open(fname_first, 'rt') as hndl:
             self.read_emp_dist(hndl, True)
 
-        with open(fname_second, 'r') as hndl:
+        with open(fname_second, 'rt') as hndl:
             self.read_emp_dist(hndl, False)
 
         if not self.sep_quals:
@@ -357,13 +337,14 @@ class EmpDist:
         :return: simulated quality scores
         """
         # draw a set of random values equal to the length of a read
-        rv_list = Art.RANDINT(1, int(EmpDist.MAX_DIST_NUMBER)+1, size=read_len)
+        rv_list = randint(1, int(EmpDist.MAX_DIST_NUMBER)+1, size=read_len)
 
         # convert this random rolls to quality scores
         quals = _random_to_quality_numba(qual_dist_for_symb, rv_list)
 
         assert len(quals) > 0
         assert len(quals) == read_len
+
         return quals
 
     def read_emp_dist(self, hndl, is_first):
@@ -413,7 +394,7 @@ class EmpDist:
                 raise IOError('Error: invalid format in profile at [{}]'.format(line))
 
             dist = np.array([(cc, values[i]) for i, cc in
-                             enumerate(np.ceil(counts * EmpDist.MAX_DIST_NUMBER/counts[-1]).astype(int))])
+                             enumerate(np.ceil(counts * EmpDist.MAX_DIST_NUMBER // counts[-1]).astype(int))])
 
             if dist.size > 0:
                 n += 1
@@ -428,7 +409,7 @@ class EmpDist:
         return n != 0
 
 
-class SeqRead:
+class SeqRead(object):
 
     def __init__(self, read_len, ins_rate, del_rate, max_num=2, plus_strand=None):
         self.max_num = max_num
@@ -497,7 +478,7 @@ class SeqRead:
         the sequence is handled as a list -- since strings are immutable in Python.
         :return:
         """
-        return self.seq_read.tostring()
+        return ''.join(self.seq_read)
 
     # def parse_error(self):
     #     """
@@ -538,13 +519,13 @@ class SeqRead:
         del_len = 0
 
         # deletion
-        for i in xrange(len(self.del_rate)-1, -1, -1):
-            if self.del_rate[i] >= Art.UNIFORM():
+        for i in range(len(self.del_rate)-1, -1, -1):
+            if self.del_rate[i] >= uniform():
                 del_len = i+1
                 j = i
                 while j >= 0:
                     # invalid deletion positions: 0 or read_len-1
-                    pos = Art.RANDINT(0, self.read_len)
+                    pos = randint(0, self.read_len)
                     if pos == 0:
                         continue
                     if pos not in self.indel:
@@ -553,15 +534,15 @@ class SeqRead:
                 break
 
         # insertion
-        for i in xrange(len(self.ins_rate)-1, -1, -1):
+        for i in range(len(self.ins_rate)-1, -1, -1):
             # ensure that enough unchanged position for mutation
             if self.read_len - del_len - ins_len < i+1:
                 continue
-            if self.ins_rate[i] >= Art.UNIFORM():
+            if self.ins_rate[i] >= uniform():
                 ins_len = i+1
                 j = i
                 while j >= 0:
-                    pos = Art.RANDINT(0, self.read_len)
+                    pos = randint(0, self.read_len)
                     if pos not in self.indel:
                         self.indel[pos] = Art.random_base()
                         j -= 1
@@ -582,19 +563,19 @@ class SeqRead:
         ins_len = 0
         del_len = 0
 
-        for i in xrange(len(self.ins_rate)-1, -1, -1):
-            if self.ins_rate[i] >= Art.UNIFORM():
+        for i in range(len(self.ins_rate)-1, -1, -1):
+            if self.ins_rate[i] >= uniform():
                 ins_len = i+1
                 j = i
                 while j >= 0:
-                    pos = Art.RANDINT(0, self.read_len)
+                    pos = randint(0, self.read_len)
                     if pos not in self.indel:
                         self.indel[pos] = Art.random_base()
                         j -= 1
                 break
 
         # deletion
-        for i in xrange(len(self.del_rate)-1, -1, -1):
+        for i in range(len(self.del_rate)-1, -1, -1):
             if del_len == ins_len:
                 break
 
@@ -602,11 +583,11 @@ class SeqRead:
             if self.read_len - del_len - ins_len < i+1:
                 continue
 
-            if self.del_rate[i] >= Art.UNIFORM():
+            if self.del_rate[i] >= uniform():
                 del_len = i+1
                 j = i
                 while j >= 0:
-                    pos = Art.RANDINT(0, self.read_len)
+                    pos = randint(0, self.read_len)
                     if pos == 0:
                         continue
                     if pos not in self.indel:
@@ -663,27 +644,42 @@ class SeqRead:
         return self.seq_read.shape[0]
 
 
-class Art:
-    RANDOM_STATE = np.random.RandomState()
-    RANDINT = RANDOM_STATE.randint
-    UNIFORM = RANDOM_STATE.uniform
+def parse_error(qual, seq):
+    """
+    When analyzed, sequences are potentially modified by the simulated quality scores.
+    Beginning with the basic transcription from Art C/C++ code, this method has been reimplemented to use
+    Numpy for speed improvements, but does not employ Numba as we must respect the existing random state.
+
+    :param qual: quality scores, modified in place
+    :param seq: DNA sequence, modified in place
+    """
+
+    perr = np.array(EmpDist.PROB_ERR)
+    subs_table = EmpDist.KO_SUBS_LOOKUP
+
+    # unknown bases have quality 1
+    qual[seq == EmpDist.N_SYMB] = 1
+
+    # mutate sites randomly depending on quality
+    to_mutate = uniform(size=len(qual)) < perr[qual]
+    # sites to muate, avoiding Ns
+    ix = np.where((seq != EmpDist.N_SYMB) & to_mutate)
+    # random choice of substitution
+    seq[ix] = np.array([subs_table[base][randint(0, 3)] for base in seq[ix]], dtype='U1')
+
+
+class Art(object):
 
     # translation table, non-standard bases become N
-    COMPLEMENT_TABLE = string.maketrans('acgtumrwsykvhdbnACGTUMRWSYKVHDBN',
-                                        'TGCAAnnnnnnnnnnnTGCAANNNNNNNNNNN')
+    COMPLEMENT_TABLE = str.maketrans('acgtumrwsykvhdbnACGTUMRWSYKVHDBN',
+                                     'TGCAAnnnnnnnnnnnTGCAANNNNNNNNNNN')
 
-    def __init__(self, read_len, emp_dist, ins_prob, del_prob, max_num=2, seed=None, ref_seq=None):
+    def __init__(self, read_len, emp_dist, ins_prob, del_prob, max_num=2, ref_seq=None):
 
         # check immediately that read lengths are possible for profile
         emp_dist.verify_length(read_len, True)
         emp_dist.verify_length(read_len, False)
         self.emp_dist = emp_dist
-
-        # initialise random state
-        if seed:
-            Art.RANDOM_STATE = np.random.RandomState(seed)
-            Art.RANDINT = Art.RANDOM_STATE.randint
-            Art.UNIFORM = Art.RANDOM_STATE.uniform
 
         # convert immutable string to list
         if ref_seq:
@@ -709,7 +705,7 @@ class Art:
         rates = []
         if self.max_num > self.read_len:
             self.max_num = self.read_len
-        for i in xrange(1, self.max_num+1):
+        for i in range(1, self.max_num+1):
             rates.append(1 - st.binom.cdf(i, self.read_len, prob))
         return rates
 
@@ -767,10 +763,10 @@ class Art:
             read.read_len = len(template)
 
         if read.is_plus_strand:
-            read.seq_ref = np.fromstring(template[:self.read_len], dtype='|S1')
+            read.seq_ref = np.array([*template[:self.read_len]])
         else:
             rc_temp = Art.revcomp(template)
-            read.seq_ref = np.fromstring(rc_temp[:self.read_len], dtype='|S1')
+            read.seq_ref = np.array([*rc_temp[:self.read_len]])
         read.bpos = 0
         read.ref2read()
 
@@ -809,10 +805,10 @@ class Art:
             slen = read.get_indel_2()
 
         if read.is_plus_strand:
-            read.seq_ref = np.fromiter(mut_temp[:self.read_len - slen], dtype='|S1')
+            read.seq_ref = np.array([*mut_temp[:self.read_len - slen]])
         else:
             rc_temp = Art.revcomp(template)
-            read.seq_ref = np.fromstring(rc_temp[:self.read_len - slen], dtype='|S1')
+            read.seq_ref = np.array([*rc_temp[:self.read_len - slen]])
 
         read.bpos = 0
         read.ref2read()
@@ -820,7 +816,6 @@ class Art:
         # simulated quality scores from profiles
         read.quals = self.emp_dist.get_read_qual(read.length(), read.is_plus_strand)
         # the returned quality scores can spawn sequencing errors
-        # read.parse_error()
         parse_error(read.quals, read.seq_read)
 
         return read
@@ -843,9 +838,9 @@ class Art:
             slen = read.get_indel_2()
 
         if read.is_plus_strand:
-            read.seq_ref = np.fromstring(self.ref_seq[pos: pos + self.read_len - slen], dtype='|S1')
+            read.seq_ref = np.array([*self.ref_seq[pos: pos + self.read_len - slen]])
         else:
-            read.seq_ref = np.fromstring(self.ref_seq_cmp[pos: pos + self.read_len - slen], dtype='|S1')
+            read.seq_ref = np.array([*self.ref_seq_cmp[pos: pos + self.read_len - slen]])
 
         read.bpos = pos
         read.ref2read()
@@ -853,7 +848,6 @@ class Art:
         # simulated quality scores from profiles
         read.quals = self.emp_dist.get_read_qual(read.length(), True)
         # the returned quality scores can spawn sequencing errors
-        # read.parse_error()
         parse_error(read.quals, read.seq_read)
 
         return read
@@ -866,10 +860,10 @@ class Art:
         :return: SeqRead
         """
         # random position anywhere in valid range
-        pos = Art.RANDINT(0, self.valid_region)
+        pos = randint(0, self.valid_region)
 
         # is it the forward strand?
-        plus_strand = Art.UNIFORM() < 0.5
+        plus_strand = uniform() < 0.5
 
         return self.next_read_indel_at(pos, plus_strand)
 
@@ -881,9 +875,9 @@ class Art:
         :return: a random base.
         """
         if not excl:
-            return EmpDist.ALL_SUBS[Art.RANDINT(0, 4)]
+            return EmpDist.ALL_SUBS[randint(0, 4)]
         else:
-            return EmpDist.KO_SUBS_LOOKUP[excl][Art.RANDINT(0, 3)]
+            return EmpDist.KO_SUBS_LOOKUP[excl][randint(0, 3)]
 
 
 if __name__ == '__main__':
@@ -908,8 +902,8 @@ if __name__ == '__main__':
     if args.xfold and args.num_reads:
         raise RuntimeError('xfold and num-reads are mutually exclusive options')
 
-    with open('{}.r1.fq'.format(args.outbase), 'w', buffering=262144) as r1_h, \
-            open('{}.r2.fq'.format(args.outbase), 'w', buffering=262144) as r2_h:
+    with open('{}.r1.fq'.format(args.outbase), 'wt', buffering=262144) as r1_h, \
+            open('{}.r2.fq'.format(args.outbase), 'wt', buffering=262144) as r2_h:
 
         for input_record in SeqIO.parse(args.fasta, 'fasta'):
 
@@ -920,8 +914,7 @@ if __name__ == '__main__':
             emp_dist = EmpDist(args.profile1, args.profile2)
 
             # init Art
-            art = Art(args.read_length, emp_dist,
-                      args.ins_rate, args.del_rate, seed=args.seed)
+            art = Art(args.read_length, emp_dist, args.ins_rate, args.del_rate)
 
             if args.xfold:
                 num_seq = int(math.ceil(len(art.ref_seq) / args.read_length * args.xfold))
@@ -930,22 +923,22 @@ if __name__ == '__main__':
 
             logger.info('Generating {} reads for {}'.format(num_seq, input_record.id))
 
-            print_rate = int(num_seq*100./10)
+            print_rate = num_seq // 10
 
-            for n in xrange(num_seq):
+            for n in range(num_seq):
 
                 ins_len = None
                 while True:
-                    ins_len = int(np.ceil(np.random.normal(500, 50)))
+                    ins_len = int(np.ceil(normal(500, 50)))
                     if ins_len > 200:
                         break
 
                 # pick a random position on the chromosome, but we're lazy and don't
                 # handle the edge case of crossing the origin
-                pos = Art.RANDINT(0, len(ref_seq)-ins_len)
+                pos = randint(0, len(ref_seq)-ins_len)
 
                 # get next read and quals
-                pair = art.next_pair_indel_seq(list(ref_seq[pos: pos + ins_len]))
+                pair = art.next_pair_indel_seq(ref_seq[pos: pos + ins_len])
 
                 # create file records
                 SeqIO.write(pair['fwd'].read_record(SeqRead.read_id(input_record.id, n)), r1_h, 'fastq')
