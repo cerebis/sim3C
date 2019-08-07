@@ -42,6 +42,8 @@ def generate_profile(taxa, mode, **kwargs):
         ntax = taxa
     elif isinstance(taxa, (list, tuple)):
         ntax = len(taxa)
+        if ntax == 0:
+            logger.error('The supplied list of taxa was empty')
         logger.info('Profile will be over {} taxa'.format(ntax))
         # use the first element to determine if we've been passed a list of scalars
         if not isinstance(taxa[0], (list, tuple)):
@@ -132,6 +134,9 @@ class ChromAbundance(object):
     def __cmp__(self, other):
         return self.cell + self.name > other.cell + other.name
 
+    def __lt__(self, other):
+        return self.cell + self.name < other.cell + other.name
+
     def __str__(self):
         return repr(self)
 
@@ -156,7 +161,8 @@ class Profile(OrderedDict):
         Convenience method adding an entry to the profile. The Abundance object
         is created internally.
         :param chr_name: chromosome name
-        :param abundance: cellular abundance float: [0..1]
+        :param abundance: cellula            if len(line) <= 0:
+r abundance float: [0..1]
         :param copy_number: chromosome/replicon copy number int:[>0]
         :param cell: cell/species name, defaults to chrom if not specified
         """

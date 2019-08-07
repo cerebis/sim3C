@@ -168,6 +168,9 @@ def main():
             try:
                 seq_index = SeqIO.index(args.genome_seq, 'fasta')
                 seq_names = list(seq_index)
+                if len(seq_names) == 0:
+                    logger.error('No valid records were found while scanning supplied fasta file {}'
+                                 .format(args.genome_seq))
             except Exception:
                 raise FastaException(args.genome_seq)
             finally:
