@@ -161,8 +161,7 @@ class Profile(OrderedDict):
         Convenience method adding an entry to the profile. The Abundance object
         is created internally.
         :param chr_name: chromosome name
-        :param abundance: cellula            if len(line) <= 0:
-r abundance float: [0..1]
+        :param abundance: cellular abundance float: [0..1]
         :param copy_number: chromosome/replicon copy number int:[>0]
         :param cell: cell/species name, defaults to chrom if not specified
         """
