@@ -31,13 +31,14 @@ setup(
     zip_safe=False,
 
     install_requires=[
-        'biopython',
-        'intervaltree',
-        'numba',
-        'numpy',
-        'scipy',
-        'pyyaml',
-        'tqdm'
+        'biopython==1.76',
+        'intervaltree==3.0.2',
+        'llvmlite==0.31',
+        'numba==0.47.0',
+        'numpy==1.14.6',
+        'pyyaml==5.3.1',
+        'scipy==1.2.3',
+        'tqdm==4.45.0'
     ],
 
     classifiers=[
