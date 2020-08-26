@@ -564,7 +564,11 @@ class Community:
         self.num_cells = len(self.cell_registry)
 
         # we must have at least one cell defined
-        assert self.num_cells > 0, 'Community appears to be empty'
+        if self.num_cells <= 0:
+            logger.error('Community did not contain any useful cells. '
+                         'Check that your reference sequence(s) were '
+                         'valid and that they each contain at least one cut-site.')
+            raise Sim3CException('Community is empty')
 
     def _register_cell(self, cell):
         """
