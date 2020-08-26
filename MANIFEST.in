@@ -1,1 +1,2 @@
 include sim3C/Illumina_profiles/*
+include README.md

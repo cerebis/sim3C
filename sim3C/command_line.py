@@ -1,3 +1,8 @@
+import sys
+if not (sys.version_info.major == 2 and sys.version_info.minor == 7):
+    print('Python {0.major}.{0.minor} is incompatible with sim3C, please use Python 2.7'.format(sys.version_info))
+    sys.exit(1)
+
 import logging
 import time
 import os
@@ -51,7 +56,7 @@ def init_log(verbose):
 def main():
     import argparse
     import sys
-
+    
     #
     # Commandline interface
     #
