@@ -687,7 +687,7 @@ class Art(object):
             self.ref_seq_cmp = list(Art.revcomp(ref_seq))
             self.valid_region = len(ref_seq) - read_len
         else:
-            logger.warning('No reference supplied, calls will have to supply a template')
+            logger.debug('No reference supplied, calls will have to supply a template')
             self.ref_seq = None
             self.ref_seq_cmp = None
 

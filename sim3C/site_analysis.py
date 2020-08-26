@@ -56,7 +56,7 @@ class CutSites(object):
         self.sites = np.array(enzyme.search(template_seq, linear)) - 1
         self.size = self.sites.shape[0]
         if self.size == 0:
-            raise NoCutSitesException(template_seq.id, str(enzyme))
+            raise NoCutSitesException(str(enzyme))
 
         # method setup
         if linear:

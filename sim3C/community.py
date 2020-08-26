@@ -306,7 +306,8 @@ class Cell(object):
         Initialise the selection probabilities. This method should be called after all replicons are
         registered or when a new replicon is added.
         """
-        assert self.num_replicons() > 0, 'group contained no registered replicons'
+        if self.num_replicons() <= 0:
+            raise NoRepliconsException(self.name)
 
         # begin with some empty PDFs
         self.pdf_cn = np.zeros(self.num_replicons())
@@ -489,13 +490,21 @@ class Community(object):
             cell = self._register_cell(Cell(ri.cell, ri.abundance, trans_rate))
             # fetch the sequence from file
             rseq = seq_index[ri.name].upper()
-            # community-wide replicon registry
-            self._register_replicon(Replicon(ri.name, cell, ri.copy_number, rseq, enzyme,
-                                             anti_rate, create_cids, linear))
+            try:
+                # community-wide replicon registry
+                self._register_replicon(Replicon(ri.name, cell, ri.copy_number, rseq, enzyme,
+                                                 anti_rate, create_cids, linear))
+            except NoCutSitesException as ex:
+                logger.warning('Sequence "{}" had no cut-sites for the enzyme {} and will be ignored'.format(
+                    ri.name, str(enzyme)))
 
         # now we're finished reading replicons, initialise the probs for each cell
         for cell in self.cell_registry.values():
-            cell.init_prob()
+            try:
+                cell.init_prob()
+            except NoRepliconsException as ex:
+                logger.warning('Cell "{}" had no usable replicons and will be ignored'.format(cell.name))
+                del self.cell_registry[cell.name]
 
         # now initialise the probs for the whole community
         self.pdf_repl = np.zeros(len(self.repl_registry))
