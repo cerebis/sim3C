@@ -45,7 +45,7 @@ class CutSites:
         when requesting the nearest site to a given genomic location.
 
         :param enzyme: the restriction enzyme (Bio.Restriction RestrictionType object)
-        :param template_seq: the template sequence to digest (Bio.Seq object)
+        :param template_seq: the template sequence to digest (Bio.SeqRecord object)
         :param random_state: the random state used for draws
         :param linear: treat sequence as linear
         """
@@ -60,7 +60,7 @@ class CutSites:
         self.sites = np.array(enzyme.search(template_seq, linear)) - 1
         self.size = self.sites.shape[0]
         if self.size == 0:
-            raise NoCutSitesException(template_seq.id, str(enzyme))
+            raise NoCutSitesException(str(enzyme))
 
         # method setup
         if linear:

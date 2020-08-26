@@ -6,9 +6,15 @@ class Sim3CException(Exception):
 
 class NoCutSitesException(Sim3CException):
     """Occurs when a target template contains no cutsites for a specified restriction enzyme"""
-    def __init__(self, seq_name, enz_name):
-        super(NoCutSitesException, self).__init__(
-            'sequence [{}] had no cutsites for enzyme [{}]'.format(seq_name, enz_name))
+    def __init__(self, enzyme_name):
+        super(NoCutSitesException, self).__init__("no restriction sites were found for {}".format(enzyme_name))
+
+
+class NoRepliconsException(Sim3CException):
+    """Occurs when a target cell contains no replicons. This can be caused by supply references
+    which contain no cut-sites """
+    def __init__(self, cell_name):
+        super(NoRepliconsException, self).__init__("cell {} contained no replicons".format(cell_name))
 
 
 class FastaException(Sim3CException):
