@@ -36,7 +36,7 @@ setup(
         'llvmlite==0.31',
         'numba==0.47.0',
         'numpy==1.14.6',
-        'pyyaml==5.3.1',
+        'pyyaml==5.4',
         'scipy==1.2.3',
         'tqdm==4.45.0'
     ],
