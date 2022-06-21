@@ -35,7 +35,7 @@ setup(
         'intervaltree==3.0.2',
         'llvmlite==0.31',
         'numba==0.47.0',
-        'numpy==1.14.6',
+        'numpy==1.22.0',
         'pyyaml==5.3.1',
         'scipy==1.2.3',
         'tqdm==4.45.0'
