@@ -56,7 +56,7 @@ def init_log(verbose):
 def main():
     import argparse
     import sys
-    
+
     #
     # Commandline interface
     #
@@ -97,7 +97,7 @@ def main():
     parser.add_argument('--linear', default=False, action='store_true',
                         help='Treat all replicons as linear molecules')
     parser.add_argument('--efficiency', metavar='FLOAT', type=float,
-                        help='HiC/Meta3C efficiency factor [hic: 0.5 or meta3c: 0.02]')
+                        help='HiC/Meta3C efficiency factor [hic, dnase: 0.5 or meta3c: 0.02]')
     parser.add_argument('--anti-rate', metavar='FLOAT', type=float, default=0.2,
                         help='Rate of anti-diagonal fragments [0.2]')
     parser.add_argument('--trans-rate', metavar='FLOAT', type=float, default=0.1,
@@ -123,6 +123,12 @@ def main():
     parser.add_argument('--ins-rate', type=float, default=9.e-5, help='Insert rate [9e-5]')
     parser.add_argument('--del-rate', type=float, default=1.1e-4, help='Deletion rate [1.1e-4]')
 
+    parser.add_argument('--bridge-adapter', dest='bridge_seq', default='',
+                        help='bridge adapter sequence (for dnase mode)')
+
+    parser.add_argument('--sam', dest='sam_out', default='',
+                        help='Output file name for sam file. No output sam file if not specified.')
+
     parser.add_argument(dest='genome_seq', metavar='FASTA',
                         help='Genome sequences for the community')
     parser.add_argument(dest='output_file', metavar='OUTPUT',
@@ -144,6 +150,14 @@ def main():
                 raise RuntimeError('The dnase method does not accept an enyzme specification.')
         elif not args.enzyme_name:
             raise RuntimeError('No enzyme was specified')
+
+        # bridge adapter settings
+        if args.method == 'dnase':
+            if args.bridge_seq == '':
+                logger.warning('Bridge adapter seq is not set. sim3C creates reads without bridge adapter seq.')
+        else:
+            if args.bridge_seq != '':
+                raise RuntimeError('Bridge adapter seq is valid only in the dnase method.')
 
         #
         # Prepare community abundance profile, either procedurally or from a file
@@ -196,13 +210,15 @@ def main():
                 args.efficiency = 0.5
             elif args.method == 'meta3c':
                 args.efficiency = 0.02
+            elif args.method == 'dnase':
+                args.efficiency = 0.5
 
         # list of CLI arguments to pass as parameters to the simulation
         kw_names = ['prefix', 'machine_profile', 'insert_mean', 'insert_sd', 'insert_min', 'insert_max',
                     'anti_rate', 'spurious_rate', 'trans_rate',
                     'efficiency',
                     'ins_rate', 'del_rate',
-                    'create_cids', 'simple_reads', 'linear', 'convert_symbols']
+                    'create_cids', 'simple_reads', 'linear', 'convert_symbols', 'bridge_seq', 'sam_out']
 
         # extract these parameters from the parsed arguments
         kw_args = {k: v for k, v in vars(args).items() if k in kw_names}
@@ -215,6 +231,7 @@ def main():
         # Run the simulation
         with open_output(args.output_file, mode='w', compress=args.compress) as out_stream:
             strategy.run(out_stream)
+
 
     except Sim3CException as ex:
         logger.error(str(ex))

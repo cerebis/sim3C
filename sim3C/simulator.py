@@ -24,6 +24,8 @@ from Bio import Alphabet
 from Bio import SeqIO
 from collections import namedtuple
 
+import pysam
+
 from .abundance import read_profile
 from .art import Art, EmpDist, ambiguous_base_filter, validator
 from .community import Community
@@ -46,7 +48,7 @@ class ReadGenerator:
     def __init__(self, method, enzyme, seed, random_state,
                  prefix='SIM3C', simple=False, machine_profile='EmpMiSeq250',
                  read_length=250, ins_rate=9.e-5, del_rate=1.1e-4,
-                 insert_mean=500, insert_sd=100, insert_min=100, insert_max=None):
+                 insert_mean=500, insert_sd=100, insert_min=100, insert_max=None, bridge_seq=''):
         """
         Initialise a read generator.
         :param method: The two library preparation methods are: 'meta3c' or 'hic'.
@@ -63,6 +65,7 @@ class ReadGenerator:
         :param insert_sd: standard deviation of insert length  (must be < mean)
         :param insert_min: minimum allowable insert length (must be > 50)
         :param insert_max: maximum allowable insert length (must be > mean)
+        :param bridge_seq: bridge adapter seq
         """
 
         self.method = method
@@ -81,7 +84,7 @@ class ReadGenerator:
                            'the minimum allowable insert length ({})'.format(insert_mean, insert_sd, insert_min))
 
         if enzyme:
-            self.cut_site = enzyme.ovhgseq * 2
+            self.cut_site = enzyme.ovhgseq #* 2 bug fix
 
         self.insert_mean = insert_mean
         self.insert_sd = insert_sd
@@ -96,6 +99,9 @@ class ReadGenerator:
         self.normal = random_state.normal
         self.randint = random_state.randint
 
+        # add bridge seq
+        self.bridge_seq = bridge_seq
+
         # initialise ART read simulator
         self.art = Art(read_length, EmpDist.create(machine_profile), ins_rate, del_rate, seed=self.seed)
 
@@ -109,7 +115,7 @@ class ReadGenerator:
             method_switcher = {
                 'hic': self._part_joiner_sitedup,
                 'meta3c': self._part_joiner_simple,
-                'dnase': self._part_joiner_simple
+                'dnase': self._part_joiner_bridge
             }
             self._part_joiner = method_switcher[self.method.lower()]
         except Exception:
@@ -128,7 +134,7 @@ class ReadGenerator:
             msg += ', [no max limit]'
         return msg
 
-    def _part_joiner_simple(self, a, b):
+    def _part_joiner_simple(self, a, b, is_fwd, if_fwd2):
         """
         Join two fragments end to end without any site duplication. The new
         fragment will begin at a_0 and end at b_max. Used when no end fills are
@@ -140,7 +146,7 @@ class ReadGenerator:
         """
         return a + b
 
-    def _part_joiner_sitedup(self, a, b):
+    def _part_joiner_sitedup(self, a, b, is_fwd, is_fwd2):
         """
         Join two fragments end to end where the cut-site is duplicated. The new
         fragment will begin at a_0 end at b_max. Used when end-fill is applied
@@ -150,7 +156,29 @@ class ReadGenerator:
         :param b: fragment b
         :return: a + b
         """
-        return a + self.cut_site + b
+        if is_fwd:
+            if is_fwd2:
+                return a + self.cut_site + b
+            else:
+                return a + self.cut_site * 2 + b
+        else:
+            if is_fwd2:
+                return a + b
+            else:
+                return a + self.cut_site + b
+
+
+    def _part_joiner_bridge(self, a, b, is_fwd, is_fwd2):
+        """
+        Join two fragments end to end with bridge adapter seq. The new
+        fragment will begin at a_0 end at b_max. Used when bridge adapter is applied
+        before further steps in library preparation (Eg. Dnase)
+        Altogether [a_0..a_max] + [bs_0..bs_max] + [b_0..b_max]
+        :param a: fragment a
+        :param b: fragment b
+        :return: a + b
+        """
+        return a + self.bridge_seq + b
 
     def draw_insert(self):
         """
@@ -181,13 +209,13 @@ class ReadGenerator:
         :param is_fwd: will the insert be off the fwd strand
         :return: a read-pair dict
         """
-        frag = repl.subseq(x1, ins_len, is_fwd)
+        frag, x1 = repl.subseq(x1, ins_len, not is_fwd)
         pair = self.next_pair(str(frag.seq))
         pair['mode'] = 'WGS'
         pair['desc'] = self.wgs_desc_fmt.format(repl=repl, x1=x1, x2=x1+ins_len, dir='F' if is_fwd else 'R')
-        return pair
+        return pair, x1
 
-    def make_ligation_readpair(self, repl1, x1, repl2, x2, ins_len, ins_junc):
+    def make_ligation_readpair(self, repl1, x1, repl2, x2, ins_len, ins_junc, is_fwd, is_fwd2):
         """
         Create a fwd/rev read-pair simulating a ligation product (Eg. the outcome of
         HiC or meta3C library prep). As repl1 and repl2 can be the same, these ligation
@@ -200,13 +228,21 @@ class ReadGenerator:
         :param ins_junc: junction point on insert
         :return: a read-pair dict
         """
-        part_a = repl1.subseq(x1 - ins_junc, ins_junc)
-        part_b = repl2.subseq(x2, ins_len - ins_junc)
+        if is_fwd:
+            part_a, x1 = repl1.subseq(x1 - ins_junc, ins_junc, not is_fwd)
+            x1 += ins_junc
+        else:
+            part_a, x1 = repl1.subseq(x1, ins_junc, not is_fwd)
+        if is_fwd2:
+            part_b, x2 = repl2.subseq(x2, ins_len - ins_junc, not is_fwd2)
+        else:
+            part_b, x2 = repl2.subseq(x2 - (ins_len - ins_junc), ins_len - ins_junc, not is_fwd2)
+            x2 += ins_len - ins_junc
 
-        pair = self.next_pair(str(self._part_joiner(part_a, part_b).seq))
+        pair = self.next_pair(str(self._part_joiner(part_a, part_b, is_fwd, is_fwd2).seq))
         pair['mode'] = '3C'
         pair['desc'] = self._3c_desc_fmt.format(repl1=repl1, x1=x1, repl2=repl2, x2=x2)
-        return pair
+        return pair, x1, x2
 
     def write_readpair(self, h_out, pair, index, fmt='fastq'):
         """
@@ -226,6 +262,7 @@ class ReadGenerator:
         SeqIO.write([read1, read2], h_out, fmt)
 
 
+
 class SequencingStrategy:
     """
     A SequencingStrategy represents the whole experiment. This includes the reference data from which
@@ -242,7 +279,7 @@ class SequencingStrategy:
                  anti_rate=0.25, spurious_rate=0.02, trans_rate=0.1,
                  efficiency=0.02,
                  ins_rate=9.e-5, del_rate=1.1e-4,
-                 create_cids=True, simple_reads=True, linear=False, convert_symbols=False):
+                 create_cids=True, simple_reads=True, linear=False, convert_symbols=False, bridge_seq='', sam_out=''):
         """
         Initialise a SequencingStrategy.
 
@@ -269,6 +306,8 @@ class SequencingStrategy:
         :param simple_reads: True: sequencing reads do not simulate error (faster), False: full simulation of sequencing
         :param linear: treat replicons as linear
         :param convert_symbols: if true, unsupported (by Art) symbols in the input sequences are converted to N
+        :param bridge_seq: bridge adapter seq
+        :param sam_out: output sam file name
         """
         self.seed = seed
         self.prof_filename = prof_filename
@@ -311,7 +350,20 @@ class SequencingStrategy:
                                             prefix=prefix, simple=simple_reads, machine_profile=machine_profile,
                                             read_length=read_length, insert_mean=insert_mean,
                                             insert_sd=insert_sd, insert_min=insert_min, insert_max=insert_max,
-                                            del_rate=del_rate, ins_rate=ins_rate)
+                                            del_rate=del_rate, ins_rate=ins_rate, bridge_seq=bridge_seq)
+
+        # generate header for sam file
+        self.sam_out = sam_out
+        SQ = []
+        self.seq_dir = {}
+        for ri in self.profile:
+            self.seq_dir[ri.name] = len(SQ)
+            SQ.append({'LN': len(seq_index[ri.name]), 'SN': ri.name})
+        self.header = { 'HD': {'VN': '1.0'}, 'SQ': SQ}
+        if sam_out != '':
+            self.sam = pysam.AlignmentFile(sam_out, "w", header=self.header)
+        else:
+            self.sam = None
 
         # the method determines the strategy governing the creation of
         # ligation products and WGS reads.
@@ -324,6 +376,168 @@ class SequencingStrategy:
             self._selected_strat = self.Strategy(method, strategy_switcher[method.lower()])
         except Exception:
             raise Sim3CException('unknown library preparation method ({}) Either: \'3c\' or \'hic\']'.format(method))
+
+    def write_wgsPair_samfile(self, pair, index, r1, x1, ins_len, is_fwd):
+        """
+        Write a ligation read-pair alignment to sam file.
+        :param pair: the read-pair to write
+        :param index: a unique identifier for the read-pair. (Eg. an integer)
+        :param r1: read1 site replicon
+        :param x1: read1 site position
+        :param ins_len: insertion length
+        :param is_fwd: read1 strand
+        """
+        if (self.sam):
+            # create Bio.Seq objects for read1 and read2
+            read1 = pair['fwd'].read_record(self.read_generator.seq_id_fmt.format(seed=self.read_generator.seed, mode=pair['mode'], idx=index, r1r2=1), desc=pair['desc'])
+            read2 = pair['rev'].read_record(self.read_generator.seq_id_fmt.format(seed=self.read_generator.seed, mode=pair['mode'], idx=index, r1r2=2), desc=pair['desc'])
+            a = pysam.AlignedSegment()
+            a2 = pysam.AlignedSegment()
+            a.query_name = read1.id
+            a2.query_name = read2.id
+            if is_fwd:
+                a.query_sequence = str(read1.seq)
+                a2.query_sequence = str(read2.seq.reverse_complement())
+                a.query_qualities = pair['fwd'].quals
+                a2.query_qualities = list(reversed(pair['rev'].quals))
+                a.cigar = tuple(pair['fwd'].cigar)
+                a2.cigar = tuple(reversed(pair['rev'].cigar))
+            else:
+                a.query_sequence = str(read1.seq.reverse_complement())
+                a2.query_sequence = str(read2.seq)
+                a.query_qualities = list(reversed(pair['fwd'].quals))
+                a2.query_qualities = pair['rev'].quals
+                a.cigar = tuple(reversed(pair['fwd'].cigar))
+                a2.cigar = tuple(pair['rev'].cigar)
+            a.flag = 65
+            a2.flag = 129
+            if is_fwd:
+                a2.flag += 16
+                a.flag += 32
+            else:
+                a.flag += 16
+                a2.flag += 32
+            a.mapping_quality = 99
+            a2.mapping_quality = 99
+            a.reference_id = self.seq_dir[r1.name]
+            a2.next_reference_id = self.seq_dir[r1.name]
+            a2.reference_id = self.seq_dir[r1.name]
+            a.next_reference_id = self.seq_dir[r1.name]
+            if is_fwd:
+                a.reference_start = x1
+                a2.next_reference_start = x1
+                a2.reference_start = x1 + ins_len - len(read2)
+                a.next_reference_start = x1 + ins_len - len(read2)
+            else:
+                a.reference_start = x1 + ins_len - len(read1)
+                a2.next_reference_start = x1 + ins_len - len(read1)
+                a2.reference_start = x1
+                a.next_reference_start = x1
+            a.template_length = ins_len
+            a2.template_length = ins_len
+            self.sam.write(a)
+            self.sam.write(a2)
+
+    def write_ligationPair_samfile(self, pair, index, r1, x1, r2, x2, ins_len, midpoint, is_fwd, is_fwd2):
+        """
+        Write a ligation read-pair alignment to sam file.
+        :param pair: the read-pair to write
+        :param index: a unique identifier for the read-pair. (Eg. an integer)
+        :param r1: read1 site replicon
+        :param x1: read1 site position
+        :param r2: read2 site replicon
+        :param x2: read2 site position
+        :param ins_len: insertion length
+        :param midpoint: minpoint
+        :param is_fwd: read1 strand
+        :param is_fwd2: read2 strand
+        """
+        if (self.sam):
+            # create Bio.Seq objects for read1 and read2
+            read1 = pair['fwd'].read_record(self.read_generator.seq_id_fmt.format(seed=self.read_generator.seed, mode=pair['mode'], idx=index, r1r2=1), desc=pair['desc'])
+            read2 = pair['rev'].read_record(self.read_generator.seq_id_fmt.format(seed=self.read_generator.seed, mode=pair['mode'], idx=index, r1r2=2), desc=pair['desc'])
+            a = pysam.AlignedSegment()
+            a2 = pysam.AlignedSegment()
+            a.query_name = read1.id
+            a2.query_name = read2.id
+            if is_fwd:
+                a.query_sequence = str(read1.seq)
+                a.query_qualities = pair['fwd'].quals
+            else:
+                a.query_sequence = str(read1.seq.reverse_complement())
+                a.query_qualities = list(reversed(pair['fwd'].quals))
+            if not is_fwd2:
+                a2.query_sequence = str(read2.seq)
+                a2.query_qualities = pair['rev'].quals
+            else:
+                a2.query_sequence = str(read2.seq.reverse_complement())
+                a2.query_qualities = list(reversed(pair['rev'].quals))
+            tmp_loc = 0
+            cigar1 = []
+            for ct in pair['fwd'].cigar:
+                if ct[0] != 2:
+                    if tmp_loc + ct[1] <= midpoint:
+                        cigar1.append(tuple(ct))
+                    else:
+                        cigar1.append((ct[0], midpoint - tmp_loc))
+                        break
+                    tmp_loc += ct[1]
+                else:
+                    cigar1.append(tuple(ct))
+            if midpoint < len(read1):
+                cigar1.append((4, len(read1)-midpoint))
+            if is_fwd:
+                a.cigar = tuple(cigar1)
+            else:
+                a.cigar = tuple(reversed(cigar1))
+            tmp_loc = 0
+            cigar2 = []
+            for ct in pair['rev'].cigar:
+                if ct[0] != 2:
+                    if tmp_loc + ct[1] <= ins_len - midpoint:
+                        cigar2.append(tuple(ct))
+                    else:
+                        cigar2.append((ct[0], (ins_len - midpoint) - tmp_loc))
+                        break
+                    tmp_loc += ct[1]
+                else:
+                    cigar2.append(tuple(ct))
+            if ins_len - midpoint < len(read2):
+                cigar2.append((4, len(read2) - (ins_len - midpoint)))
+            if not is_fwd2:
+                a2.cigar = tuple(cigar2)
+            else:
+                a2.cigar = tuple(reversed(cigar2))
+            a.flag = 65
+            a2.flag = 129
+            if not is_fwd:
+                a.flag += 16
+                a2.flag += 32
+            if is_fwd2:
+                a2.flag += 16
+                a.flag += 32
+            a.mapping_quality = 99
+            a2.mapping_quality = 99
+            a.reference_id = self.seq_dir[r1.name]
+            a2.next_reference_id = self.seq_dir[r1.name]
+            if is_fwd:
+                a.reference_start = x1 - midpoint
+                a2.next_reference_start = x1 - midpoint
+            else:
+                a.reference_start = max(x1, x1 + midpoint - len(read1))
+                a2.next_reference_start = max(x1, x1 + midpoint - len(read1))
+            a2.reference_id = self.seq_dir[r2.name]
+            a.next_reference_id = self.seq_dir[r2.name]
+            if is_fwd2:
+                a2.reference_start = max(x2, x2 + (ins_len - midpoint) - len(read2))
+                a.next_reference_start = max(x2, x2 + (ins_len - midpoint) - len(read2))
+            else:
+                a2.reference_start = x2 - (ins_len - midpoint)
+                a.next_reference_start = x2 - (ins_len - midpoint)
+            a.template_length = ins_len
+            a2.template_length = ins_len
+            self.sam.write(a)
+            self.sam.write(a2)
 
     def run(self, ostream):
         """
@@ -360,6 +574,7 @@ class SequencingStrategy:
             # pick an replicon, position and insert size
             r1, x1 = comm.draw_any_by_extent()
             ins_len, midpoint, is_fwd = read_gen.draw_insert()
+            is_fwd2 = uniform() < 0.5
 
             if uniform() < efficiency and r1.covers_site(x1, midpoint):
 
@@ -392,13 +607,18 @@ class SequencingStrategy:
                     x1, x2 = x2, x1
                     r1, r2 = r2, r1
 
-                pair = read_gen.make_ligation_readpair(r1, x1, r2, x2, ins_len, midpoint)
+                # with coordinates, make hic read-pair
+                pair, x1, x2 = read_gen.make_ligation_readpair(r1, x1, r2, x2, ins_len, midpoint, is_fwd, is_fwd2)
+                #print("meta3C: ", r1, x1, r2, x2, ins_len, midpoint, is_fwd, is_fwd2)
+                self.write_ligationPair_samfile(pair, n, r1, x1, r2, x2, ins_len, midpoint, is_fwd, is_fwd2)
 
             # otherwise WGS
             else:
                 n_wgs += 1
                 # take the already drawn coordinates
-                pair = read_gen.make_wgs_readpair(r1, x1, ins_len, is_fwd)
+                pair, x1 = read_gen.make_wgs_readpair(r1, x1, ins_len, is_fwd)
+                #print("WGS: ", r1, x1, ins_len, is_fwd)
+                self.write_wgsPair_samfile(pair, n, r1, x1, ins_len, is_fwd)
 
             read_gen.write_readpair(ostream, pair, n)
 
@@ -421,9 +641,11 @@ class SequencingStrategy:
         n_wgs = 0
         n_3c = 0
 
+
         for n in tqdm.tqdm(xrange(1, self.number_pairs+1)):
 
             ins_len, midpoint, is_fwd = read_gen.draw_insert()
+            is_fwd2 = uniform() < 0.5
 
             # is HIC pair?
             if uniform() <= efficiency:
@@ -456,15 +678,22 @@ class SequencingStrategy:
                     r1, r2 = r2, r1
 
                 # with coordinates, make hic read-pair
-                pair = read_gen.make_ligation_readpair(r1, x1, r2, x2, ins_len, midpoint)
+                pair, x1, x2 = read_gen.make_ligation_readpair(r1, x1, r2, x2, ins_len, midpoint, is_fwd, is_fwd2)
+                #print("HIC: ", r1, x1, r2, x2, ins_len, midpoint, is_fwd, is_fwd2)
+                self.write_ligationPair_samfile(pair, n, r1, x1, r2, x2, ins_len, midpoint, is_fwd, is_fwd2)
 
             # otherwise WGS
             else:
                 n_wgs += 1
                 r1, x1 = comm.draw_any_by_extent()
-                pair = read_gen.make_wgs_readpair(r1, x1, ins_len, is_fwd)
+                pair, x1 = read_gen.make_wgs_readpair(r1, x1, ins_len, is_fwd)
+                #print("WGS: ", r1, x1, ins_len, is_fwd)
+                self.write_wgsPair_samfile(pair, n, r1, x1, ins_len, is_fwd)
 
             read_gen.write_readpair(ostream, pair, n)
+
+        if (self.sam):
+            self.sam.close()
 
         assert self.number_pairs - n_wgs == n_3c, 'Error: WGS and 3C pairs did not sum to ' \
                                                   '{} was did not add'.format(self.number_pairs)
@@ -487,9 +716,10 @@ class SequencingStrategy:
         for n in tqdm.tqdm(xrange(1, self.number_pairs+1)):
 
             ins_len, midpoint, is_fwd = read_gen.draw_insert()
+            is_fwd2 = uniform() < 0.5
 
             # is PLP?
-            if uniform() >= efficiency:
+            if uniform() <= efficiency:
 
                 n_3c += 1
 
@@ -519,15 +749,22 @@ class SequencingStrategy:
                     r1, r2 = r2, r1
 
                 # with coordinates, make hic read-pair
-                pair = read_gen.make_ligation_readpair(r1, x1, r2, x2, ins_len, midpoint)
+                pair, x1, x2 = read_gen.make_ligation_readpair(r1, x1, r2, x2, ins_len, midpoint, is_fwd, is_fwd2)
+                #print("DNASE: ", r1, x1, r2, x2, ins_len, midpoint, is_fwd, is_fwd2)
+                self.write_ligationPair_samfile(pair, n, r1, x1, r2, x2, ins_len, midpoint, is_fwd, is_fwd2)
 
             # otherwise WGS
             else:
                 n_wgs += 1
                 r1, x1 = comm.draw_any_by_extent()
-                pair = read_gen.make_wgs_readpair(r1, x1, ins_len, is_fwd)
+                pair, x1 = read_gen.make_wgs_readpair(r1, x1, ins_len, is_fwd)
+                #print("WGS: ", r1, x1, ins_len, is_fwd)
+                self.write_wgsPair_samfile(pair, n, r1, x1, ins_len, is_fwd)
 
             read_gen.write_readpair(ostream, pair, n)
+
+        if (self.sam):
+            self.sam.close()
 
         assert self.number_pairs - n_wgs == n_3c, 'Error: WGS and 3C pairs did not sum to ' \
                                                   '{} was did not add'.format(self.number_pairs)

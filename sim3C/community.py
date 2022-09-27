@@ -232,7 +232,6 @@ class Replicon:
         :param rev: reverse complement this sequence.
         :return: subseq Seq object
         """
-
         # handle negative starts as wrapping around or,
         # in linear cases, terminates at first position
         if x1 < 0:
@@ -243,7 +242,8 @@ class Replicon:
         if diff > 0:
             if self.linear:
                 # sequence terminates early
-                ss = self.seq[x1:-1]
+                x1 = max(0, self.length - length)
+                ss = self.seq[x1:]
                 ss.description = Replicon.PART_DESC_FMT.format(rev, x1+1, self.length)
             else:
                 # sequence will wrap around
@@ -254,9 +254,9 @@ class Replicon:
             ss.description = Replicon.PART_DESC_FMT.format(rev, x1+1, x2)
 
         if rev:
-            ss.reverse_complement(id=True, description=True)
+            ss = ss.reverse_complement(id=True, description=True)
 
-        return ss
+        return ss, x1
 
 
 class Cell:

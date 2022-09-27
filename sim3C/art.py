@@ -441,6 +441,7 @@ class SeqRead:
         self.indel = {}
         self.del_rate = del_rate
         self.ins_rate = ins_rate
+        self.cigar = []
 
     def _new_read(self, rlen=None, plus_strand=True):
         """
@@ -625,6 +626,7 @@ class SeqRead:
             # straight to an result if no indels, where here seq_ref
             # has already been chopped to the read length.
             self.seq_read = self.seq_ref
+            self.cigar.append([0, self.read_len])
 
         else:
             # otherwise, we gotta a little more work to do.
@@ -639,20 +641,36 @@ class SeqRead:
                     n += 1
                     i += 1
                     k += 1
+                    if len(self.cigar)> 0 and self.cigar[-1][0] == 0:
+                        self.cigar[-1][1] += 1
+                    else:
+                        self.cigar.append([0, 1])
                 elif self.indel[k] == '-':
                     # deletion
                     i += 1
                     k += 1
+                    if len(self.cigar)> 0 and self.cigar[-1][0] == 2:
+                        self.cigar[-1][1] += 1
+                    else:
+                        self.cigar.append([2, 1])
                 else:
                     # insertion
                     self.seq_read[n] = self.indel[k]
                     n += 1
                     k += 1
+                    if len(self.cigar)> 0 and self.cigar[-1][0] == 1:
+                        self.cigar[-1][1] += 1
+                    else:
+                        self.cigar.append([1, 1])
 
             while k in self.indel:
                 self.seq_read[n] = self.indel[k]
                 n += 1
                 k += 1
+                if len(self.cigar)> 0 and self.cigar[-1][0] == 1:
+                    self.cigar[-1][1] += 1
+                else:
+                    self.cigar.append([1, 1])
 
     def length(self):
         """
