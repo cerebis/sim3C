@@ -60,8 +60,8 @@ class IllegalSymbolException(ArtException):
             'Ambiguous IUPAC symbols are not supported.'.format(symb))
 
 
-def _clear_list(l):
-    del l[:]
+def _clear_list(_list):
+    del _list[:]
 
 
 # path of this (Art.py) source file. It is expected that profiles are co-located with Art.
@@ -119,6 +119,7 @@ def get_profile(name):
 
     return map(lambda pi: os.path.join(MODULE_PATH, pi), ILLUMINA_PROFILES[name])
 
+
 # IUPAC ambiguous symbols are converted to N, preserving case.
 AMBIGUOUS_CONVERSION_TABLE = str.maketrans('mrwsykvhdbMRWSYKVHDB',
                                            'nnnnnnnnnnNNNNNNNNNN')
@@ -137,7 +138,7 @@ def convert_seq(seq):
 def ambiguous_base_filter(seq_index):
     """
     Art only supports the standard code (ACGT + N) and will throw an exception when encountering
-    IUPAC ambiguity codes (Eg. MRSWYK/BDHV).
+    IUPAC ambiguity codes (E.g. MRSWYK/BDHV).
     Method patch of sequence indexed returned by methods such as Bio.SeqIO.index.
     :param seq_index: instance of _IndexedSeqFileDict
     :return: patched instance of _IndexedSeqFileDict
@@ -145,7 +146,7 @@ def ambiguous_base_filter(seq_index):
     assert isinstance(seq_index, _IndexedSeqFileDict), 'Filter supports _IndexedSeqFileDict only'
     old_get = seq_index.__getitem__
 
-    def filtering_get(self, k):
+    def filtering_get(k):
         rseq = old_get(k)
         # replace the Bio.Seq record within the returned RichSequence
         rseq.seq = convert_seq(rseq.seq)
@@ -157,13 +158,13 @@ def ambiguous_base_filter(seq_index):
 
 def validate_seq(input_seq):
     """
-    Validate an given sequence. An exception is raised if the sequence
+    Validate a given sequence. An exception is raised if the sequence
     contains illegal characters.
     :param input_seq: the input sequencce as a string
     """
     for ch in input_seq:
         if ch not in 'ACGTNacgtn':
-            # if we're not converting, its an exception
+            # if we're not converting, it's an exception
             raise IllegalSymbolException(ch)
 
 
@@ -171,7 +172,7 @@ def validator(seq_index):
     assert isinstance(seq_index, _IndexedSeqFileDict), 'Validator supports _IndexedSeqFileDict only'
     old_get = seq_index.__getitem__
 
-    def check_get(self, k):
+    def check_get(k):
         rseq = old_get(k)
         # replace the Bio.Seq record within the returned RichSequence
         validate_seq(rseq)
@@ -415,8 +416,8 @@ class SeqRead(object):
         self.max_num = max_num
         self.read_len = read_len
         self.is_plus_strand = plus_strand
-        self.seq_ref = np.zeros(read_len, dtype=np.str)
-        self.seq_read = np.zeros(read_len, dtype=np.str)
+        self.seq_ref = np.zeros(read_len, dtype=np.str_)
+        self.seq_read = np.zeros(read_len, dtype=np.str_)
         self.quals = None
         self.bpos = None
         self.indel = {}
@@ -479,27 +480,6 @@ class SeqRead(object):
         :return:
         """
         return ''.join(self.seq_read)
-
-    # def parse_error(self):
-    #     """
-    #     When analyzed, sequences are potentially modified by the simulated quality scores.
-    #     :return: number of modified bases.
-    #     """
-    #     assert self.quals, 'Quality scores have not been initialized for the read'
-    #     assert len(self.quals) == self.length(), \
-    #         "The number of bases is not equal to the number of quality scores!\n" \
-    #         "qual size: {},  read len: {}".format(len(self.quals), self.length())
-    #
-    #     for i in xrange(len(self.quals)):
-    #         # if we encounter an undefined base, its quality score goes to 1.
-    #         if self.seq_read[i] == EmpDist.N_SYMB:
-    #             self.quals[i] = 1
-    #             continue
-    #
-    #         # if we draw a number less than prob_err for a base, a substitution occurs there.
-    #         if Art.UNIFORM() < EmpDist.PROB_ERR[self.quals[i]]:
-    #             sub_ch = Art.random_base(self.seq_read[i])
-    #             self.seq_read[i] = sub_ch
 
     def clear(self):
         """
@@ -603,12 +583,12 @@ class SeqRead(object):
         with the indels.
         """
         if len(self.indel) == 0:
-            # straight to an result if no indels, where here seq_ref
+            # straight to a result if no indels, where here seq_ref
             # has already been chopped to the read length.
             self.seq_read = self.seq_ref
 
         else:
-            # otherwise, we gotta a little more work to do.
+            # otherwise, we have a little more work to do.
             self.seq_read[:] = 0
 
             n = 0
@@ -634,14 +614,6 @@ class SeqRead(object):
                 self.seq_read[n] = self.indel[k]
                 n += 1
                 k += 1
-
-    def length(self):
-        """
-        Return the actual length of the simulation result. This can be shorter than the requested
-        length "read_len" due to short templates.
-        :return: length of actual simulated sequence
-        """
-        return self.seq_read.shape[0]
 
 
 def parse_error(qual, seq):
@@ -795,26 +767,27 @@ class Art(object):
         mut_temp = Art.make_mutable(template)
         if len(mut_temp) < read.read_len:
             # for templates shorter than the requested length, we sequence its total extent
-            read.read_len = len(mut_temp)
+            # read.read_len = len(mut_temp)
+            read = self._new_read(rlen=len(mut_temp), plus_strand=plus_strand)
 
         # indels
         slen = read.get_indel()
 
         # ensure that this read will fit within the extent of the template
-        if self.read_len - slen > len(mut_temp):
+        if read.read_len - slen > len(mut_temp):
             slen = read.get_indel_2()
 
         if read.is_plus_strand:
-            read.seq_ref = np.array([*mut_temp[:self.read_len - slen]])
+            read.seq_ref = np.array([*mut_temp[:read.read_len - slen]])
         else:
             rc_temp = Art.revcomp(template)
-            read.seq_ref = np.array([*rc_temp[:self.read_len - slen]])
+            read.seq_ref = np.array([*rc_temp[:read.read_len - slen]])
 
         read.bpos = 0
         read.ref2read()
 
         # simulated quality scores from profiles
-        read.quals = self.emp_dist.get_read_qual(read.length(), read.is_plus_strand)
+        read.quals = self.emp_dist.get_read_qual(read.read_len, read.is_plus_strand)
         # the returned quality scores can spawn sequencing errors
         parse_error(read.quals, read.seq_read)
 
@@ -846,7 +819,7 @@ class Art(object):
         read.ref2read()
 
         # simulated quality scores from profiles
-        read.quals = self.emp_dist.get_read_qual(read.length(), True)
+        read.quals = self.emp_dist.get_read_qual(read.read_len, True)
         # the returned quality scores can spawn sequencing errors
         parse_error(read.quals, read.seq_read)
 

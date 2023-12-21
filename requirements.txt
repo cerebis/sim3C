@@ -1,9 +1,8 @@
 # biopython requires gcc installed
-biopython
+biopython<1.77
 intervaltree
-numba
-numpy
-scipy
+numba<0.59
+numpy<1.21
+scipy<1.7
 tqdm
 pyyaml
-
