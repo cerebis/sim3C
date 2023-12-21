@@ -31,17 +31,17 @@ setup(
     zip_safe=False,
 
     install_requires=[
-        'biopython<1.77',
+        'biopython~=1.81',
         'intervaltree',
-        'numba<0.59',
-        'numpy<1.21',
-        'scipy<1.7',
+        'numba~=0.58',
+        'numpy~=1.26',
+        'scipy~=1.11',
         'pyyaml',
         'tqdm'
     ],
 
     classifiers=[
-        'Programming Language :: Python :: 3.8',
+        'Programming Language :: Python :: 3.11',
         'License :: OSI Approved :: GNU General Public License v3',
         'Operating System :: POSIX :: Linux',
         'Intended Audience :: Science/Research',

@@ -23,7 +23,6 @@ import os
 import scipy.stats as st
 import types
 
-from Bio.Alphabet import IUPAC
 from Bio.File import _IndexedSeqFileDict
 from Bio.Seq import Seq
 from Bio.SeqRecord import SeqRecord
@@ -132,7 +131,7 @@ def convert_seq(seq):
     :return: a copy of the input, potentially with conversions.
     """
     assert isinstance(seq, Seq), 'Error: supplied sequence must be instance of Bio.Seq.Seq'
-    return Seq(str.translate(str(seq), AMBIGUOUS_CONVERSION_TABLE), seq.alphabet)
+    return Seq(str.translate(str(seq), AMBIGUOUS_CONVERSION_TABLE))
 
 
 def ambiguous_base_filter(seq_index):
@@ -448,9 +447,10 @@ class SeqRead(object):
         :return: Bio.SeqRecord
         """
         rec = SeqRecord(
-                Seq(self._read_str(), IUPAC.ambiguous_dna),
+                Seq(self._read_str()),
                 id=seq_id,
-                description=desc)
+                description=desc,
+                annotations={'molecule_type': 'DNA'})
         # seems the only means of adding quality scores to a SeqRecord
         rec.letter_annotations['phred_quality'] = self.quals
         return rec

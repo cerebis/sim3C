@@ -118,7 +118,8 @@ class ReadGenerator(object):
             msg += ', [no max limit]'
         return msg
 
-    def _part_joiner_simple(self, a, b):
+    @staticmethod
+    def _part_joiner_simple(a, b):
         """
         Join two fragments end to end without any site duplication. The new
         fragment will begin at a_0 and end at b_max. Used when no end fills are
