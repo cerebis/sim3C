@@ -5,8 +5,9 @@ from collections import OrderedDict
 
 from .empirical_model import EmpiricalDistribution, generate_nested_cids, cids_to_blocks, cdf_geom_unif_ratio
 from .exceptions import *
-from .random import randint, uniform, choice
 from .site_analysis import AllSites, CutSites
+from .random import np_choice
+import sim3C.random as random
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +23,7 @@ def cdf_choice(vals, cdf):
     :param cdf: the CDF describing each elements probability of selection
     :return: the selected element
     """
-    return vals[np.searchsorted(cdf, uniform())]
+    return vals[np.searchsorted(cdf, pcg_uniform())]
 
 
 class Replicon(object):
@@ -130,7 +131,7 @@ class Replicon(object):
         Uniform selection of any genomic coordinate for this replicon
         :return: a genomic coord (zero based)
         """
-        return randint(0, self.length)
+        return pcg_integer(self.length)
 
     @staticmethod
     def get_loc_3c(emp_dist, x1, length):
@@ -154,7 +155,7 @@ class Replicon(object):
         delta = int(emp_dist.rand())
 
         # pve or nve shift, modulo length
-        if uniform() < 0.5:
+        if pcg_integer(2) == 0:
             x2 = (x1 - delta) % length
         else:
             x2 = (x1 + delta) % length
@@ -170,7 +171,7 @@ class Replicon(object):
         x2 = Replicon.get_loc_3c(self.empdist, x1, self.length)
 
         # anti-diagonal
-        if uniform() < self.anti_rate:
+        if pcg_uniform() < self.anti_rate:
             x2 = self.length - x2
 
         # return nearest site
@@ -201,13 +202,13 @@ class Replicon(object):
             x2 = Replicon.get_loc_3c(chosen_inv.data['empdist'], x1, chosen_inv.length())
 
             # anti-diagonal
-            if uniform() < self.anti_rate:
+            if pcg_uniform() < self.anti_rate:
                 x2 = self.length - x2
 
         else:
             # pick a cid or background from those defined for this block
             # note, numpy will not accept the list of intervals here
-            ix = choice(len(ovl_invs), p=block.data['prob_list'])
+            ix = np_choice(len(ovl_invs), p=block.data['prob_list'])
             chosen_inv = ovl_invs[ix]
 
             x2 = Replicon.get_loc_3c(chosen_inv.data['empdist'], x1 - chosen_inv.begin, chosen_inv.length())
@@ -216,7 +217,7 @@ class Replicon(object):
             # main backbone gets anti-diagonal treatment
             if chosen_inv.data['depth'] == 0:
                 # antidiagonal
-                if uniform() < self.anti_rate:
+                if pcg_uniform() < self.anti_rate:
                     x2 = self.length - x2
 
         return self.sites.find_nn(x2)
@@ -451,8 +452,7 @@ class Cell(object):
         is dictated by the rate supplied at instantiation time (trans_rate).
         :return: True -- treat this as a trans event
         """
-        return self.num_replicons() > 1 and uniform() < self.trans_rate
-
+        return self.num_replicons() > 1 and pcg_uniform() < self.trans_rate
 
 class Community(object):
     """
@@ -479,6 +479,10 @@ class Community(object):
         :param create_cids: when true, simulate chromosome-interacting-domains
         :param linear: treat replicons as linear
         """
+        global pcg_integer, pcg_integer, pcg_integers, pcg_uniform, pcg_nucleotide, pcg_knockout, pcg_parse_error
+
+        pcg_uniform = random.pcg_random.uniform
+        pcg_integer = random.pcg_random.integer
 
         # global replicon and cell registries
         self.repl_registry = OrderedDict()
@@ -494,7 +498,7 @@ class Community(object):
                 # community-wide replicon registry
                 self._register_replicon(Replicon(ri.name, cell, ri.copy_number, rseq, enzyme,
                                                  anti_rate, create_cids, linear))
-            except NoCutSitesException as ex:
+            except NoCutSitesException:
                 logger.warning('Sequence "{}" had no cut-sites for the enzyme {} and will be ignored'.format(
                     ri.name, str(enzyme)))
 
@@ -502,7 +506,7 @@ class Community(object):
         for cell in self.cell_registry.values():
             try:
                 cell.init_prob()
-            except NoRepliconsException as ex:
+            except NoRepliconsException:
                 logger.warning('Cell "{}" had no usable replicons and will be ignored'.format(cell.name))
                 del self.cell_registry[cell.name]
 
@@ -659,4 +663,4 @@ class Community(object):
         dictated by the rate supplied at instantiation time (spurious_rate).
         :return: True -- treat this as a spurious event
         """
-        return uniform() < self.spurious_rate
+        return pcg_uniform() < self.spurious_rate

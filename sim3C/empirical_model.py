@@ -20,7 +20,7 @@ import numpy as np
 
 from intervaltree import Interval, IntervalTree
 
-from .random import uniform, randint
+from .random import np_uniform, np_randint
 
 
 def cdf_geom(x, shape):
@@ -124,7 +124,7 @@ class EmpiricalDistribution(object):
 
         :return: random value following distribution
         """
-        return np.interp(uniform(), self.ysample, self.xsample)
+        return np.interp(np_uniform(), self.ysample, self.xsample)
 
 
 def _reducer_cid_data(acc, x):
@@ -165,13 +165,13 @@ def generate_random_cids(chr_length, chr_prob=0.5, chr_bins=1000, chr_shape=8.0e
     assert num_cid > 0, 'number of CIDs must be greater than 0'
 
     # Create the list of CID intervals as (cid_begin, cid_length) pairs.
-    data = map(lambda _: (randint(chr_length),
-                          randint(min_cid_len, max_cid_len)), range(num_cid))
+    data = map(lambda _: (np_randint(chr_length),
+                          np_randint(min_cid_len, max_cid_len)), range(num_cid))
 
     # Draw a set of independent probabilities and normalise these along with chr_prob to 1.
     # The closer chr_prob is to 1, the greater its precedence and the less role CIDs will
     # play in determining locations.
-    cid_probs = np.array(uniform(size=num_cid))
+    cid_probs = np.array(np_uniform(size=num_cid))
     cid_probs *= (1.0 - chr_prob) / cid_probs.sum()
     cid_probs_iter = np.nditer(cid_probs)
 
@@ -210,8 +210,8 @@ def _random_nested_intervals(result, inv, min_len, max_len, min_num, max_num, ma
     """
     if depth < max_depth:
         # draw a set of random points
-        x = uniform(min_len * inv.length(), max_len * inv.length(),
-                                 size=randint(min_num, max_num + 1))
+        x = np_uniform(min_len * inv.length(), max_len * inv.length(),
+                       size=np_randint(min_num, max_num + 1))
         # from a sequence from these points and the begin/end of interval
         subseq = np.hstack([[inv.begin],
                             inv.begin + np.cumsum((x / x.sum() * inv.length()).astype(int))[:-1],
@@ -259,7 +259,7 @@ def generate_nested_cids(chr_length, chr_prob, chr_bins, chr_shape, cid_bins, ci
 
     # create random probs to assign to each interval, then normalise
     # so that: sum{P_cids} + P_backbone = 1.
-    cid_probs = np.array(uniform(size=len(cid_list)))
+    cid_probs = np.array(np_uniform(size=len(cid_list)))
     cid_probs *= (1.0 - chr_prob) / cid_probs.sum()
 
     # initialise the tree, where each interval now gets a

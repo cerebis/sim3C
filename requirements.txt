@@ -6,3 +6,5 @@ numpy~=1.26
 scipy~=1.11
 tqdm
 pyyaml
+cython>=3
+dnaio

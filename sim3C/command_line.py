@@ -1,16 +1,18 @@
 import logging
 import time
 import os
+import dnaio
+import itertools
 
 from Bio import SeqIO
 
+import sim3C.random as random
 from sim3C._version import version_stamp, runtime_info
 from sim3C.abundance import generate_profile
 from sim3C.art import ILLUMINA_PROFILES
 from sim3C.exceptions import Sim3CException, FastaException
-from sim3C.io_utils import open_output
-from sim3C.random import init_random_state
 from sim3C.simulator import SequencingStrategy
+
 
 __log_name__ = 'sim3C.log'
 
@@ -49,6 +51,31 @@ def init_log(verbose):
     return logger
 
 
+def check_suffixes(file_name1: str, file_name2: str = None) -> None:
+    """
+    Check that the suffixes on specified output files match and are understood by dnaio
+    :param file_name1: first output file
+    :param file_name2: optional second output file
+    """
+    def check_allowed(_fname: str) -> str:
+        """
+        Iterate over allowed suffixes and return the first match, or raise an exception
+        :param _fname: file name to check
+        :return: found suffix
+        """
+        for allowed in [''.join(li) for li in itertools.product(['.fq', '.fa'], ['', '.gz', '.bz2'])]:
+            if _fname.endswith(allowed):
+                return allowed
+        raise Sim3CException('Output files must end in  [.fq, .fa, .fq.gz, fq.bz2, .fa.gz, or fa.bz2]')
+
+    suffix1 = check_allowed(file_name1)
+    if file_name2 is not None:
+        suffix2 = check_allowed(file_name2)
+        if suffix1 != suffix2:
+            raise Sim3CException(f'Paired output files should have matching extensions: {suffix1}, {suffix2}')
+
+
+
 def main():
     import argparse
     import sys
@@ -63,9 +90,6 @@ def main():
 
     parser.add_argument('--convert', dest='convert_symbols', default=False, action='store_true',
                         help='Convert unsupported symbols in sequence to N (required by Art)')
-
-    parser.add_argument('-C', '--compress', choices=['gzip', 'bzip2'], default=None,
-                        help='Compress output files')
 
     parser.add_argument('-r', '--seed', metavar='INT', type=int, default=int(time.time()),
                         help="Random seed for initialising number generator")
@@ -119,10 +143,9 @@ def main():
     parser.add_argument('--ins-rate', type=float, default=9.e-5, help='Insert rate [9e-5]')
     parser.add_argument('--del-rate', type=float, default=1.1e-4, help='Deletion rate [1.1e-4]')
 
-    parser.add_argument(dest='genome_seq', metavar='FASTA',
-                        help='Genome sequences for the community')
-    parser.add_argument(dest='output_file', metavar='OUTPUT',
-                        help='Output Hi-C reads file')
+    parser.add_argument(dest='genome_seq', metavar='FASTA', help='Genome sequences for the community')
+    parser.add_argument(dest='output_file_1', metavar='OUTPUT1', help='Output Hi-C reads file (interleaved or R1)')
+    parser.add_argument(dest='output_file_2', metavar='OUTPUT2', help='Output Hi-C reads (R2)', nargs='?')
     args = parser.parse_args()
 
     logger = init_log(args.verbose)
@@ -210,8 +233,8 @@ def main():
         # extract these parameters from the parsed arguments
         kw_args = {k: v for k, v in vars(args).items() if k in kw_names}
 
-        if args.seed:
-            init_random_state(args.seed)
+        # When none, seed will be drawn randomly
+        random.init_state(args.seed)
 
         # initialise a sequencing strategy for this community
         # and the given experimental parameters
@@ -219,8 +242,18 @@ def main():
                                       args.num_pairs, args.method, args.read_length, **kw_args)
 
         # Run the simulation
-        with open_output(args.output_file, mode='wt', compress=args.compress) as out_stream:
-            strategy.run(out_stream)
+        if args.output_file_2 is not None:
+            # split R1/R2 output
+            check_suffixes(args.output_file_1, args.output_file_2)
+            logger.info('Output read-pairs will be split into R1/R2 files')
+            with dnaio.open(args.output_file_1, args.output_file_2, interleaved=False, mode='w') as writer:
+                strategy.run(writer)
+        else:
+            # interleaved output
+            check_suffixes(args.output_file_1)
+            logger.info('Output read-pairs will be interleaved')
+            with dnaio.open(args.output_file_1, mode='w', interleaved=True) as writer:
+                strategy.run(writer)
 
     except Sim3CException as ex:
         logger.error(str(ex))

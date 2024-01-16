@@ -26,8 +26,10 @@ from .abundance import read_profile
 from .art import Art, EmpDist, ambiguous_base_filter, validator
 from .community import Community
 from .exceptions import *
-from .random import uniform, randint, normal
 from .site_analysis import get_enzyme_instance
+from .random import np_normal
+import sim3C.random as random
+
 
 logger = logging.getLogger(__name__)
 
@@ -152,15 +154,17 @@ class ReadGenerator(object):
         length.
         :return: length, midpoint and direction tuple. Eg. (100, 56, True)
         """
-        length = int(normal(self.insert_mean, self.insert_sd))
+        length = int(np_normal(self.insert_mean, self.insert_sd))
         if length < self.insert_min:
             self.too_short += 1
             length = self.insert_min
         elif self.insert_max and length > self.insert_max:
             self.too_long += 1
             length = self.insert_max
-        midpoint = randint(0, length)
-        is_fwd = uniform() < 0.5
+        # midpoint = randint(0, length)
+        midpoint = random.pcg_random.integer(length)
+        # is_fwd = uniform() < 0.5
+        is_fwd = random.pcg_random.integer(2) == 0
         return length, midpoint, is_fwd
 
     def make_wgs_readpair(self, repl, x1, ins_len, is_fwd):
@@ -173,7 +177,7 @@ class ReadGenerator(object):
         :return: a read-pair dict
         """
         frag = repl.subseq(x1, ins_len, is_fwd)
-        pair = self.next_pair(str(frag.seq))
+        pair = self.next_pair(bytes(frag.seq))
         pair['mode'] = 'WGS'
         pair['desc'] = self.wgs_desc_fmt.format(repl=repl, x1=x1, x2=x1+ins_len, dir='F' if is_fwd else 'R')
         return pair
@@ -194,12 +198,12 @@ class ReadGenerator(object):
         part_a = repl1.subseq(x1 - ins_junc, ins_junc)
         part_b = repl2.subseq(x2, ins_len - ins_junc)
 
-        pair = self.next_pair(str(self._part_joiner(part_a, part_b).seq))
+        pair = self.next_pair(bytes(self._part_joiner(part_a, part_b).seq))
         pair['mode'] = '3C'
         pair['desc'] = self._3c_desc_fmt.format(repl1=repl1, x1=x1, repl2=repl2, x2=x2)
         return pair
 
-    def write_readpair(self, h_out, pair, index, fmt='fastq'):
+    def write_readpair_biopython(self, h_out, pair, index, fmt='fastq'):
         """
         Write a read-pair object to a stream.
         :param h_out: the output stream
@@ -215,6 +219,22 @@ class ReadGenerator(object):
                                         desc=pair['desc'])
         # write to interleaved file
         SeqIO.write([read1, read2], h_out, fmt)
+
+    def write_readpair_dnaio(self, writer, pair, index):
+        """
+        Write a read-pair object to a stream.
+        :param writer: the output writer
+        :param pair: the read-pair to write
+        :param index: a unique identifier for the read-pair. (Eg. an integer)
+        """
+
+        # create Bio.Seq objects for read1 (fwd) and read2 (rev)
+        read1 = pair['fwd'].read_record_dnaio(self.seq_id_fmt.format(mode=pair['mode'], idx=index, r1r2=1),
+                                              desc=pair['desc'])
+        read2 = pair['rev'].read_record_dnaio(self.seq_id_fmt.format(mode=pair['mode'], idx=index, r1r2=2),
+                                              desc=pair['desc'])
+        # write to interleaved file
+        writer.write(read1, read2)
 
 
 class SequencingStrategy(object):
@@ -346,7 +366,8 @@ class SequencingStrategy(object):
             r1, x1 = comm.draw_any_by_extent()
             ins_len, midpoint, is_fwd = read_gen.draw_insert()
 
-            if uniform() < efficiency and r1.covers_site(x1, midpoint):
+            # if uniform() < efficiency and r1.covers_site(x1, midpoint):
+            if random.pcg_random.uniform() < efficiency and r1.covers_site(x1, midpoint):
 
                 n_3c += 1
 
@@ -373,7 +394,8 @@ class SequencingStrategy(object):
                     r2 = r1
 
                 # randomly permute source/destination
-                if uniform() < 0.5:
+                # if uniform() < 0.5:
+                if random.pcg_random.integer(2) == 0:
                     x1, x2 = x2, x1
                     r1, r2 = r2, r1
 
@@ -385,7 +407,7 @@ class SequencingStrategy(object):
                 # take the already drawn coordinates
                 pair = read_gen.make_wgs_readpair(r1, x1, ins_len, is_fwd)
 
-            read_gen.write_readpair(ostream, pair, n)
+            read_gen.write_readpair_dnaio(ostream, pair, n)
 
         assert self.number_pairs - n_wgs == n_3c, 'Error: WGS and 3C pairs did not sum to ' \
                                                   '{} was did not add'.format(self.number_pairs)
@@ -410,7 +432,8 @@ class SequencingStrategy(object):
             ins_len, midpoint, is_fwd = read_gen.draw_insert()
 
             # is HIC pair?
-            if uniform() <= efficiency:
+            # if uniform() <= efficiency:
+            if random.pcg_random.uniform() <= efficiency:
 
                 n_3c += 1
 
@@ -435,7 +458,8 @@ class SequencingStrategy(object):
                     r2 = r1
 
                 # randomly permute source/destination
-                if uniform() < 0.5:
+                # if uniform() < 0.5:
+                if random.pcg_random.integer(2) == 0:
                     x1, x2 = x2, x1
                     r1, r2 = r2, r1
 
@@ -448,7 +472,7 @@ class SequencingStrategy(object):
                 r1, x1 = comm.draw_any_by_extent()
                 pair = read_gen.make_wgs_readpair(r1, x1, ins_len, is_fwd)
 
-            read_gen.write_readpair(ostream, pair, n)
+            read_gen.write_readpair_dnaio(ostream, pair, n)
 
         assert self.number_pairs - n_wgs == n_3c, 'Error: WGS and 3C pairs did not sum to ' \
                                                   '{} was did not add'.format(self.number_pairs)
@@ -472,7 +496,8 @@ class SequencingStrategy(object):
             ins_len, midpoint, is_fwd = read_gen.draw_insert()
 
             # is PLP?
-            if uniform() <= efficiency:
+            # if uniform() <= efficiency:
+            if random.pcg_random.uniform() <= efficiency:
 
                 n_3c += 1
 
@@ -497,7 +522,8 @@ class SequencingStrategy(object):
                     r2 = r1
 
                 # randomly permute source/destination
-                if uniform() < 0.5:
+                # if uniform() < 0.5:
+                if random.pcg_random.integer(2) == 0:
                     x1, x2 = x2, x1
                     r1, r2 = r2, r1
 
@@ -510,7 +536,7 @@ class SequencingStrategy(object):
                 r1, x1 = comm.draw_any_by_extent()
                 pair = read_gen.make_wgs_readpair(r1, x1, ins_len, is_fwd)
 
-            read_gen.write_readpair(ostream, pair, n)
+            read_gen.write_readpair_dnaio(ostream, pair, n)
 
         assert self.number_pairs - n_wgs == n_3c, 'Error: WGS and 3C pairs did not sum to ' \
                                                   '{} was did not add'.format(self.number_pairs)

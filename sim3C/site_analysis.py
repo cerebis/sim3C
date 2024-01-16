@@ -4,7 +4,7 @@ from Bio.Restriction import Restriction
 from Bio.Restriction.Restriction_Dictionary import rest_dict, typedict
 
 from .exceptions import *
-from .random import randint
+from .random import np_randint
 
 
 def get_enzyme_instance_ipython(enz_name):
@@ -81,7 +81,7 @@ class CutSites(object):
         Select a uniformly random site
         :return: a random site
         """
-        return self.sites[randint(self.size)]
+        return self.sites[np_randint(self.size)]
 
     def _covers_site_linear(self, x1: np.ndarray, length):
         """
@@ -204,7 +204,7 @@ class AllSites(object):
         Draw a random base-position uniformly over the entire extent (0..size-1).
         :return: random base position (0-based)
         """
-        return randint(self.size)
+        return np_randint(self.size)
 
     @staticmethod
     def find_nn(pos):

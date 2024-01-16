@@ -22,7 +22,8 @@ import logging
 import numpy as np
 import re
 
-from .random import uniform, lognormal
+from .random import np_uniform, np_lognormal
+
 
 logger = logging.getLogger(__name__)
 
@@ -61,10 +62,10 @@ def generate_profile(taxa, mode, **kwargs):
     if mode == 'equal':
         abn_val = np.full(ntax, 1 / ntax, dtype=np.float64)
     elif mode == 'uniform':
-        abn_val = uniform(size=ntax)
+        abn_val = np_uniform(size=ntax)
         abn_val /= abn_val.sum()
     elif mode == 'lognormal':
-        abn_val = lognormal(kwargs['lognorm_mu'], kwargs['lognorm_sigma'], size=ntax)
+        abn_val = np_lognormal(kwargs['lognorm_mu'], kwargs['lognorm_sigma'], size=ntax)
         abn_val /= abn_val.sum()
     else:
         raise RuntimeError('unsupported mode [{}]'.format(mode))
