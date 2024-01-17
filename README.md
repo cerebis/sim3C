@@ -18,12 +18,23 @@ Read-pair simulation of 3C-based sequencing methodologies (HiC, Meta3C, DNase-Hi
 
 ## Installation
 
+### Using Docker image
+
+A docker image of sim3C has been added `cerebis/sim3C:latest`.
+
+**Example use**
+```
+docker run --rm -v $PWD:/data cerebis/sim3c --seed 1234 -e Sau3AI -l 150 -n 10000 --insert-mean 300 --insert-sd 50 --profile /data/profile.tsv /data/ref_genomes.fna /data/output_R1.fq.gz /data/output_R2.fq.gz
+```
+
+### Local installs
+
 To install and run sim3C you will require Python >=3.11, C-compiler, Make, and LLVM. We recommend that users employ runtime environments such as virtualenv or conda. In particular, conda will make it easy to satisfy the runtime requirement of LLVM.
 
 The sim3C executable can be installed for an individual user directly from Github using Pip as follows.
 
 ```bash
-pip install --user git+https://github.com/cerebis/sim3C@python3
+pip install --user git+https://github.com/cerebis/sim3C
 ```
 
 Python dependencies will automatically be satisfied during installation. 
