@@ -4,22 +4,24 @@ Read-pair simulation of 3C-based sequencing methodologies (HiC, Meta3C, DNase-Hi
 
 ## Recent Updates
 
-- initial Python 3 support ([branch python3](http://github.com/cerebis/sim3C/tree/python3))
-- sim3C is now installable from Github using Pip
-- codebase restructured
-- runtime logging
+- Python 3 support (>=3.11)
+- Approximately 6x faster simulated read generation 
+  - testing system: MacOS Intel i9
+  - 50% efficiency, 150bp reads, B.subtilis chrom + plasmid, uniform abundance 
+- Read-pair output now uses dnaio (https://github.com/marcelm/dnaio)
+  - interleaved or split R1/R2 files
+  - fasta or fastq format
+  - supports gzip and bzip2 compression
+- Cython implementation of performance bottlenecks
+- Primary random number generation uses Permuted Congruential Generators (PCG) (https://github.com/imneme/pcg-c)
+  - Implementation of a cython wrapper for PCG C-library
 
 ## Installation
 
-To install and run sim3C you will require Python 3.6 and LLVM. We recommend that users employ runtime environments such as virtualenv or conda. In particular, conda will make it easy to satisfy the runtime requirement of LLVM. 
+To install and run sim3C you will require Python >=3.11, C-compiler, Make, and LLVM. We recommend that users employ runtime environments such as virtualenv or conda. In particular, conda will make it easy to satisfy the runtime requirement of LLVM.
 
 The sim3C executable can be installed for an individual user directly from Github using Pip as follows.
 
-```bash
-pip install --user git+https://github.com/cerebis/sim3C
-```
-
-or the experimental Python 3 branch
 ```bash
 pip install --user git+https://github.com/cerebis/sim3C@python3
 ```
@@ -100,12 +102,12 @@ The simplest runtime scenario would be a strictly mono-chromosomal community, wh
 
 Simulate 500k 150bp read-pairs using traditional HiC, NlaIII as an enzyme and uniformly random abundance across all sequences.
 ```bash
-> sim3C --dist uniform -n 500000 -l 150 -e NlaIII -m hic myref.fasta sim.fastq
+> sim3C --dist uniform -n 500000 -l 150 -e NlaIII -m hic myref.fasta sim.fq
 ```
 
 If a community profile has been prepared and we wish to simulate Meta3C.
 ```bash
-> sim3C --profile mycom.txt -n 500000 -l 150 -e HpyCH4IV -m meta3c myref.fasta sim.fastq
+> sim3C --profile mycom.txt -n 500000 -l 150 -e HpyCH4IV -m meta3c myref.fasta sim.fq
 ```
 
 Both a random seed and a output profile name can be specified at runtime. These make reducibility possible. The random seed is used to initialise all number generators within the simulation and, if given, the profile name will allow Sim3C to save the state of the profile when drawn at random from a distribution. Though saving the profile state is not necessary to reproducibly rerun Sim3C, it assists downstream analyses which may wish to know the true state.
@@ -122,15 +124,52 @@ At present, Art.py is not able to model errors when reference sequenes contain a
 
 ```--simple-reads```
 
-Although Sim3C can simulate read-errors, by use of art_illumina[1] machine profiles, there is currently a significant performance hit. If users are interested in faster simulations, possibly to explore a wider space more quickly before a more thorough validation, simple reads without error are possible.
+Users whose work does not require simulated read errors -- or for whom time is very short -- sim3C can be run in a "simple-read" mode. In testing, disabling error modelling results in a 60% increase in simulation speed.
 
-Reference sequences can contain ambiguous symbols (i.e. MRWSYKVHDB) when using the simple read mode.
+**Please Note:** when error modelling is disasbled, if reference sequences contain ambiguous symbols (i.e. MRWSYKVHDB), then these will be carried through to the simulated reads.
+
+#### Output format
+
+Output reads can be written in either FASTA or FASTQ format, where the format is inferred from the file extension specified at runtime. Eg. `.fq|.fastq` -> FASTQ, `.fa|.fasta` -> FASTA.
 
 #### Compress output
 
-```--compress {gzip, bzip2}``` OR ```-C {gzip, bzip2}```
+Output reads can be compressed using gzip or bzip2, where the compression type is inferred from the file extension specified at runtime. 
+Eg. `.gz` -> gzip compression, `.bz2` -> bzip2 compression.
 
-Write the output FASTQ in either gzip or bzip2 compressed format.
+```--compress```
+
+#### Split or Interleaved output
+
+Output reads can be written as interleaved or split R1/R2 files. At runtime, specifying a single output read file will produce interleaved read-pairs, while specifying two output files will produce split R1/R2 files. 
+
+**Please note:** Only the suffixes of file names are inspected, there is no requirement to adhere to a `_1`/`_2` or `_R1`/`_R2` naming convention with split read output.
+
+
+**Interleaved**
+```
+sim3C --dist uniform -n 500000 -l 150 -e NlaIII -m hic myref.fasta sim.fq
+```
+
+**Split R1/R2**
+```
+# conventional syntax
+sim3C --dist uniform -n 500000 -l 150 -e NlaIII -m hic myref.fasta sim_R1.fq sim_R2.fq
+# odd names
+sim3C --dist uniform -n 500000 -l 150 -e NlaIII -m hic myref.fasta foo.fq bar.fq
+```
+
+#### Examples
+```
+# uncompressed, interleaved FASTA output
+sim3C --dist uniform -n 500000 -l 150 -e NlaIII -m hic myref.fasta sim.fa
+
+# gzip compressed, interleaved FASTQ output
+sim3C --dist uniform -n 500000 -l 150 -e NlaIII -m hic myref.fasta sim.fq.gz
+
+# gzip compressed, split R1/R1 FASTQ output
+sim3C --dist uniform -n 500000 -l 150 -e NlaIII -m hic myref.fasta sim_1.fq.gz sim_2.fq.gz
+```
 
 #### Specify restriction digest enzyme
 
