@@ -9,7 +9,7 @@ from cpython cimport array
 # The following random number generator depends on the C-implementation of the PCG random number generator
 #
 # Website: http://www.pcg-random.org/
-# Recent release: https://www.pcg-random.org/downloads/pcg-cpp-0.98.zip
+# Recent release: https://www.pcg-random.org/downloads/pcg-c-0.94.zip
 # Github: https://github.com/imneme/pcg-c
 #
 
@@ -333,8 +333,8 @@ cdef class PCGRandom:
     #             k += 1
 
 
-# cdef bint in_array(uint32_t val, uint32_t[::1] arr, uint32_t size) noexcept:
-cdef bint in_array(uint32_t val, uint32_t[::1] arr, uint32_t size):
+cdef bint in_array(uint32_t val, uint32_t[::1] arr, uint32_t size) noexcept:
+# cdef bint in_array(uint32_t val, uint32_t[::1] arr, uint32_t size):
     """
     Test if a value is contained in an array. 
     :param val: the value to find 
@@ -349,8 +349,8 @@ cdef bint in_array(uint32_t val, uint32_t[::1] arr, uint32_t size):
     return <bint>False
 
 
-# cdef float random_uniform_ptr(pcg32_random_t* random_state) noexcept:
-cdef float random_uniform_ptr(pcg32_random_t* random_state):
+cdef float random_uniform_ptr(pcg32_random_t* random_state) noexcept:
+# cdef float random_uniform_ptr(pcg32_random_t* random_state):
     """
     Generate a uniform random between [0, 1)
     :param random_state: a point to an initialised state
@@ -359,8 +359,8 @@ cdef float random_uniform_ptr(pcg32_random_t* random_state):
     return <float>pcg32_random_r(random_state) / <float>UINT32_MAX
 
 
-# cdef uint32_t random_integer_ptr(pcg32_random_t* random_state, uint32_t high) noexcept:
-cdef uint32_t random_integer_ptr(pcg32_random_t* random_state, uint32_t high):
+cdef uint32_t random_integer_ptr(pcg32_random_t* random_state, uint32_t high) noexcept:
+# cdef uint32_t random_integer_ptr(pcg32_random_t* random_state, uint32_t high):
     """
     Generate a single random integer [0, high)
     :param random_state: a pointer to an initialised state
@@ -373,8 +373,8 @@ cdef uint32_t random_integer_ptr(pcg32_random_t* random_state, uint32_t high):
 # template for array creation
 cdef array.array UINT32_ARRAY_TEMPLATE = array.array('I', [])
 
-# cdef uint32_t[::1] _random_integer_array(pcg32_random_t* random_state, uint32_t high, uint32_t size) noexcept:
-cdef uint32_t[::1] _random_integer_array(pcg32_random_t* random_state, uint32_t high, uint32_t size):
+cdef uint32_t[::1] _random_integer_array(pcg32_random_t* random_state, uint32_t high, uint32_t size) noexcept:
+# cdef uint32_t[::1] _random_integer_array(pcg32_random_t* random_state, uint32_t high, uint32_t size):
     """
     Generate an array of random integers in the range [0, high)
     :param random_state: a pointer to an initialised state
@@ -391,8 +391,8 @@ cdef uint32_t[::1] _random_integer_array(pcg32_random_t* random_state, uint32_t 
     return rvals
 
 
-# cdef bytes random_bytes_ptr(pcg32_random_t* random_state, char* alphabet, uint32_t size) noexcept:
-cdef bytes random_bytes_ptr(pcg32_random_t* random_state, char* alphabet, uint32_t size):
+cdef bytes random_bytes_ptr(pcg32_random_t* random_state, char* alphabet, uint32_t size) noexcept:
+# cdef bytes random_bytes_ptr(pcg32_random_t* random_state, char* alphabet, uint32_t size):
     """
     Generate a random string of bytes from the given alphabet
     :param random_state: a pointer to an initialised state 
@@ -420,8 +420,8 @@ cdef bytes random_bytes_ptr(pcg32_random_t* random_state, char* alphabet, uint32
     return py_string
 
 
-# cdef uint8_t random_knockout_nucleotide_ptr(pcg32_random_t* random_state, uint8_t nt) noexcept:
-cdef uint8_t random_knockout_nucleotide_ptr(pcg32_random_t* random_state, uint8_t nt):
+cdef uint8_t random_knockout_nucleotide_ptr(pcg32_random_t* random_state, uint8_t nt) noexcept:
+# cdef uint8_t random_knockout_nucleotide_ptr(pcg32_random_t* random_state, uint8_t nt):
     """
     Generate a random nucleotide that is not the given nucleotide
     :param random_state: a pointer to an initialised state
@@ -449,8 +449,8 @@ cdef uint8_t random_knockout_nucleotide_ptr(pcg32_random_t* random_state, uint8_
     return rnt
 
 
-# cdef uint8_t random_nucleotide_ptr(pcg32_random_t* random_state) noexcept:
-cdef uint8_t random_nucleotide_ptr(pcg32_random_t* random_state):
+cdef uint8_t random_nucleotide_ptr(pcg32_random_t* random_state) noexcept:
+# cdef uint8_t random_nucleotide_ptr(pcg32_random_t* random_state):
     """
     Generate a random nucleotide (A, C, G or T)
     :param random_state: a pointer to an initialised state
