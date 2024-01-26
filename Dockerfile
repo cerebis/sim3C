@@ -1,4 +1,4 @@
-FROM python:3.11-bookworm
+FROM python:3.11-bookworm as build
 
 LABEL maintainer="matt.demaere@gmail.com"
 LABEL org.label-schema.schema-version="1.0"
@@ -16,7 +16,13 @@ RUN apt-get update &&  \
     pip install -U pip && \
     rm -rf /var/lib/apt/lists/*
 
-RUN pip install git+https://github.com/cerebis/sim3C.git
+RUN pip install git+https://github.com/cerebis/sim3C.git && \
+    sim3C --help
+
+FROM python:3.11-slim as run
+
+COPY --from=build /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
+COPY --from=build /usr/local/bin/sim3C /usr/local/bin/sim3C
 
 RUN mkdir -p /app
 WORKDIR /app
