@@ -51,7 +51,7 @@ def generate_profile(taxa, mode, **kwargs):
             # convert single chrom names to (chrom, None) explicit tuples with no cell name.
             tx = []
             for ti in taxa:
-                tx.append((ti, None))
+                tx.append((ti, None, None))
             taxa = tx
         is_named = True
     else:
@@ -74,8 +74,8 @@ def generate_profile(taxa, mode, **kwargs):
         # names to be inserted in alphabetical order
         ordered_names = sorted(taxa)
         profile = Profile()
-        for n, (chr_name, cell) in enumerate(ordered_names):
-            profile.add(chr_name, abn_val[n], 1, cell)
+        for n, (chr_name, cell, molecule) in enumerate(ordered_names):
+            profile.add(chr_name, abn_val[n], 1, cell, molecule)
         return profile
     else:
         # otherwise just return a plain list of values
@@ -89,7 +89,7 @@ class ChromAbundance(object):
     and intra chromsomal sampling behaviour is drastically different. In situations where a community simulation is
     entirely monochromosomal.
     """
-    def __init__(self, name, abundance, copy_number, cell=None):
+    def __init__(self, name, abundance, copy_number, cell=None, molecule=None):
         """
 
         :param name: chromsome name
@@ -99,6 +99,7 @@ class ChromAbundance(object):
         """
         self.name = name
         self.cell = name if not cell else cell
+        self.molecule = name if not molecule else molecule
 
         try:
             self.abundance = float(abundance)
@@ -119,7 +120,7 @@ class ChromAbundance(object):
 
     @property
     def long_name(self):
-        return '{}-{}'.format(self.cell, self.name)
+        return '{}-{}-{}'.format(self.cell, self.molecule, self.name)
     
     def __hash__(self):
         return hash(self.name)
@@ -133,10 +134,10 @@ class ChromAbundance(object):
         return not self.__eq__(other)
 
     def __cmp__(self, other):
-        return self.cell + self.name > other.cell + other.name
+        return self.cell + self.molecule + self.name > other.cell + other.molecule + other.name
 
     def __lt__(self, other):
-        return self.cell + self.name < other.cell + other.name
+        return self.cell + self.molecule + self.name < other.cell + other.molecule + other.name
 
     def __str__(self):
         return repr(self)
@@ -157,7 +158,7 @@ class Profile(OrderedDict):
     def __init__(self, *args, **kwargs):
         super(Profile, self).__init__(*args, **kwargs)
 
-    def add(self, chr_name, abundance, copy_number, cell=None):
+    def add(self, chr_name, abundance, copy_number, cell=None, molecule=None):
         """
         Convenience method adding an entry to the profile. The Abundance object
         is created internally.
@@ -165,8 +166,9 @@ class Profile(OrderedDict):
         :param abundance: cellular abundance float: [0..1]
         :param copy_number: chromosome/replicon copy number int:[>0]
         :param cell: cell/species name, defaults to chrom if not specified
+        :param molecule: molecule name, defaults to chrom if not specified
         """
-        self.add_abundance(ChromAbundance(chr_name, abundance, copy_number, cell))
+        self.add_abundance(ChromAbundance(chr_name, abundance, copy_number, cell, molecule))
 
     def add_abundance(self, abn):
         """
@@ -179,14 +181,14 @@ class Profile(OrderedDict):
 
     def to_table(self, sort=True):
         """
-        Table form, were rows are in the order: [chrom, cell, abundance, copy_number]
-        :param sort: sort entries before creating table
-        :return: table representation of profile
+        Table form, where rows are in the order: [chrom, cell, abundance, copy_number]
+        :param sort: sort entries before creating the table
+        :return: a table representation of the profile
         """
         t = []
         keys = sorted([*self]) if sort else [*self]
         for n, k in enumerate(keys):
-            t.append([self[k].name, self[k].cell, self[k].abundance, self[k].copy_number])
+            t.append([self[k].name, self[k].cell, self[k].molecule, self[k].abundance, self[k].copy_number])
         return t
 
     def write_table(self, hndl, sort=True):
@@ -196,9 +198,9 @@ class Profile(OrderedDict):
         :param sort: Sort by names prior to writing
         """
         t = self.to_table(sort)
-        hndl.write('#chrom\tcell\tabundance\tcopy_number\n')
+        hndl.write('#chrom\tcell\tmolecule\tabundance\tcopy_number\n')
         for row in t:
-            hndl.write('{}\t{}\t{:f}\t{:d}\n'.format(row[0], row[1], row[2], row[3]))
+            hndl.write('{}\t{}\t{}\t{:f}\t{:d}\n'.format(*row))
 
     def normalize(self):
         """
@@ -232,8 +234,8 @@ def read_profile(hndl, normalise=False):
             if line.startswith('#'):
                 continue
             try:
-                chrom, cell, abn, cn = re.split(r'[\s,]+', line)
-                profile.add(chrom, abn, cn, cell)
+                chrom, cell, molecule, abn, cn = re.split(r'[\s,]+', line)
+                profile.add(chrom, abn, cn, cell, molecule)
             except Exception:
                 raise IOError('Error: invalid table at line {} [{}]'.format(n, line))
             n += 1

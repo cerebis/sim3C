@@ -66,8 +66,8 @@ class ReadGenerator(object):
         self.method = method
         self.prefix = prefix
         self.seq_id_fmt = prefix + ':{mode}:1:1:1:{idx} {r1r2}:Y:18:1'
-        self.wgs_desc_fmt = 'WGS {repl.name}:{x1}..{x2}:{dir}'
-        self._3c_desc_fmt = method.upper() + ' {repl1.name}:{x1} {repl2.name}:{x2}'
+        self.wgs_desc_fmt = 'WGS {segment.name}:{pos1}..{pos2}:{dir}'
+        self._3c_desc_fmt = method.upper() + ' {segment1.name}:{pos1} {segment2.name}:{pos2}'
 
         assert insert_min > 50, 'Minimum allowable insert size is 50bp'
         assert insert_min < insert_mean, 'Minimum insert size must be less than expected mean'
@@ -161,46 +161,44 @@ class ReadGenerator(object):
         elif self.insert_max and length > self.insert_max:
             self.too_long += 1
             length = self.insert_max
-        # midpoint = randint(0, length)
         midpoint = random.pcg_random.integer(length)
-        # is_fwd = uniform() < 0.5
         is_fwd = random.pcg_random.integer(2) == 0
         return length, midpoint, is_fwd
 
-    def make_wgs_readpair(self, repl, x1, ins_len, is_fwd):
+    def make_wgs_readpair(self, segment, pos1, ins_len, is_fwd):
         """
         Create a fwd/rev read-pair simulating WGS sequencing.
-        :param repl: replicon from which to extract this read-pair
-        :param x1: the initial coordinate along the replicon.
+        :param segment: segment from which to extract this read-pair
+        :param pos1: the initial coordinate along the replicon.
         :param ins_len: the insert length
         :param is_fwd: will the insert be off the fwd strand
         :return: a read-pair dict
         """
-        frag = repl.subseq(x1, ins_len, is_fwd)
+        frag = segment.subseq(pos1, ins_len, is_fwd)
         pair = self.next_pair(bytes(frag.seq))
         pair['mode'] = 'WGS'
-        pair['desc'] = self.wgs_desc_fmt.format(repl=repl, x1=x1, x2=x1+ins_len, dir='F' if is_fwd else 'R')
+        pair['desc'] = self.wgs_desc_fmt.format(segment=segment, pos1=pos1, pos2=pos1 + ins_len, dir='F' if is_fwd else 'R')
         return pair
 
-    def make_ligation_readpair(self, repl1, x1, repl2, x2, ins_len, ins_junc):
+    def make_ligation_readpair(self, segment1, pos1, segment2, pos2, ins_len, ins_junc):
         """
         Create a fwd/rev read-pair simulating a ligation product (Eg. the outcome of
         HiC or meta3C library prep). As repl1 and repl2 can be the same, these ligation
         products can be inter-rep, intra-rep or spurious products.
-        :param repl1: the first replicon
-        :param x1:  the location along repl1
-        :param repl2: the second replicon
-        :param x2: the location along repl2
+        :param segment1: the first segment
+        :param pos1:  the location along repl1
+        :param segment2: the second segment
+        :param pos2: the location along repl2
         :param ins_len: insert length
         :param ins_junc: junction point on insert
         :return: a read-pair dict
         """
-        part_a = repl1.subseq(x1 - ins_junc, ins_junc)
-        part_b = repl2.subseq(x2, ins_len - ins_junc)
+        part_a = segment1.subseq(pos1 - ins_junc, ins_junc)
+        part_b = segment2.subseq(pos2, ins_len - ins_junc)
 
         pair = self.next_pair(bytes(self._part_joiner(part_a, part_b).seq))
         pair['mode'] = '3C'
-        pair['desc'] = self._3c_desc_fmt.format(repl1=repl1, x1=x1, repl2=repl2, x2=x2)
+        pair['desc'] = self._3c_desc_fmt.format(segment1=segment1, pos1=pos1, segment2=segment2, pos2=pos2)
         return pair
 
     def write_readpair_biopython(self, h_out, pair, index, fmt='fastq'):
@@ -363,49 +361,53 @@ class SequencingStrategy(object):
         for n in tqdm.tqdm(range(1, self.number_pairs+1)):
 
             # pick an replicon, position and insert size
-            r1, x1 = comm.draw_any_by_extent()
+            seg1, pos1 = comm.draw_any_by_extent()
             ins_len, midpoint, is_fwd = read_gen.draw_insert()
 
-            # if uniform() < efficiency and r1.covers_site(x1, midpoint):
-            if random.pcg_random.uniform() < efficiency and r1.covers_site(x1, midpoint):
+            if random.pcg_random.uniform() < efficiency and seg1.covers_site(pos1, midpoint):
 
                 n_3c += 1
 
-                # move x1 to the nearest actual site
-                x1 = r1.sites.find_nn(x1)
+                # move pos1 to the nearest actual site
+                pos1 = seg1.sites.find_nn(pos1)
 
                 # is it spurious ligation
                 if comm.is_spurious():
 
-                    r2, x2 = comm.draw_any_by_site()
+                    seg2, pos2 = comm.draw_any_by_site()
 
                 # is it an inter-replicon (trans) ligation
-                elif r1.parent_cell.is_trans():
+                elif seg1.parent_repl.parent_cell.is_trans():
 
-                    r2 = r1.parent_cell.draw_other_replicon_by_sites(r1.name)
-                    x2 = r2.draw_any_site()
+                    seg2 = seg1.parent_repl.parent_cell.draw_other_segment_by_sites(seg1.parent_repl.name)
+                    pos2 = seg2.draw_any_site()
 
                 # otherwise an intra-replicon (cis) ligation
                 else:
-                    # find the first intervening site between
-                    # random constrained position x2 and site x1.
-                    x2 = r1.draw_constrained_site(x1)
-                    x2 = r1.sites.find_first(x2, x1)
-                    r2 = r1
+
+                    seg2 = seg1.parent_repl.draw_any_segment_by_sites()
+                    if seg2 == seg1:
+                        # find the first intervening site between
+                        # random constrained position pos2 and site pos1.
+                        pos2 = seg1.draw_constrained_site(pos1)
+                        pos2 = seg1.sites.find_first(pos2, pos1)
+                    else:
+                        # unconstrained, any site on seg2
+                        pos2 = seg2.draw_any_site()
 
                 # randomly permute source/destination
-                # if uniform() < 0.5:
                 if random.pcg_random.integer(2) == 0:
-                    x1, x2 = x2, x1
-                    r1, r2 = r2, r1
+                    pos1, pos2 = pos2, pos1
+                    seg1, seg2 = seg2, seg1
 
-                pair = read_gen.make_ligation_readpair(r1, x1, r2, x2, ins_len, midpoint)
+                pair = read_gen.make_ligation_readpair(seg1, pos1, seg2, pos2, ins_len, midpoint)
 
             # otherwise WGS
             else:
+
                 n_wgs += 1
                 # take the already drawn coordinates
-                pair = read_gen.make_wgs_readpair(r1, x1, ins_len, is_fwd)
+                pair = read_gen.make_wgs_readpair(seg1, pos1, ins_len, is_fwd)
 
             read_gen.write_readpair_dnaio(ostream, pair, n)
 
@@ -432,45 +434,54 @@ class SequencingStrategy(object):
             ins_len, midpoint, is_fwd = read_gen.draw_insert()
 
             # is HIC pair?
-            # if uniform() <= efficiency:
             if random.pcg_random.uniform() <= efficiency:
 
                 n_3c += 1
 
                 # draw the first replicon and site
-                r1, x1 = comm.draw_any_by_site()
+                seg1, pos1 = comm.draw_any_by_site()
 
                 # is it spurious ligation
                 if comm.is_spurious():
 
-                    r2, x2 = comm.draw_any_by_site()
+                    # draw any segment and position
+                    seg2, pos2 = comm.draw_any_by_site()
 
                 # is it an inter-replicon (trans) ligation
-                elif r1.parent_cell.is_trans():
+                elif seg1.parent_repl.parent_cell.is_trans():
 
-                    r2 = r1.parent_cell.draw_other_replicon_by_sites(r1.name)
-                    x2 = r2.draw_any_site()
+                    # draw another segment from any other replicon in the cell
+                    seg2 = seg1.parent_repl.parent_cell.draw_other_segment_by_sites(seg1.parent_repl.name)
+                    pos2 = seg2.draw_any_site()
 
                 # otherwise an intra-replicon (cis) ligation
                 else:
 
-                    x2 = r1.draw_constrained_site(x1)
-                    r2 = r1
+                    # draw another segment from the same replicon
+                    seg2 = seg1.parent_repl.draw_any_segment_by_sites()
+                    if seg2 == seg1:
+                        # must follow defined distribution of Hi-C pair separation
+                        pos2 = seg1.draw_constrained_site(pos1)
+                    else:
+                        # unconstrained, any site on seg2
+                        pos2 = seg2.draw_any_site()
 
                 # randomly permute source/destination
-                # if uniform() < 0.5:
                 if random.pcg_random.integer(2) == 0:
-                    x1, x2 = x2, x1
-                    r1, r2 = r2, r1
+                    pos1, pos2 = pos2, pos1
+                    seg1, seg2 = seg2, seg1
 
                 # with coordinates, make hic read-pair
-                pair = read_gen.make_ligation_readpair(r1, x1, r2, x2, ins_len, midpoint)
+                pair = read_gen.make_ligation_readpair(seg1, pos1, seg2, pos2, ins_len, midpoint)
 
             # otherwise WGS
             else:
+
+                # TODO this process will always draw WGS pairs on the same segment
+                #   whereas WGS pairs are capable of spanning segments
                 n_wgs += 1
-                r1, x1 = comm.draw_any_by_extent()
-                pair = read_gen.make_wgs_readpair(r1, x1, ins_len, is_fwd)
+                seg1, pos1 = comm.draw_any_by_extent()
+                pair = read_gen.make_wgs_readpair(seg1, pos1, ins_len, is_fwd)
 
             read_gen.write_readpair_dnaio(ostream, pair, n)
 
@@ -496,45 +507,48 @@ class SequencingStrategy(object):
             ins_len, midpoint, is_fwd = read_gen.draw_insert()
 
             # is PLP?
-            # if uniform() <= efficiency:
             if random.pcg_random.uniform() <= efficiency:
 
                 n_3c += 1
 
                 # draw the first replicon and site
-                r1, x1 = comm.draw_any_by_extent()
+                seg1, pos1 = comm.draw_any_by_extent()
 
                 # is it spurious ligation
                 if comm.is_spurious():
 
-                    r2, x2 = comm.draw_any_by_extent()
+                    seg2, pos2 = comm.draw_any_by_extent()
 
                 # is it an inter-replicon (trans) ligation
-                elif r1.parent_cell.is_trans():
+                elif seg1.parent_repl.parent_cell.is_trans():
 
-                    r2 = r1.parent_cell.draw_other_replicon_by_extents(r1.name)
-                    x2 = r2.draw_any_site()
+                    seg2 = seg1.parent_repl.parent_cell.draw_other_segment_by_extent(seg1.parent_repl.name)
+                    pos2 = seg2.draw_any_site()
 
                 # otherwise an intra-replicon (cis) ligation
                 else:
 
-                    x2 = r1.draw_constrained_site(x1)
-                    r2 = r1
+                    seg2 = seg1.parent_repl.draw_any_segment_by_extent()
+                    if seg2 == seg1:
+                        # must follow defined distribution of Hi-C pair separation
+                        pos2 = seg1.draw_constrained_site(pos1)
+                    else:
+                        pos2 = seg2.draw_any_site()
 
                 # randomly permute source/destination
-                # if uniform() < 0.5:
                 if random.pcg_random.integer(2) == 0:
-                    x1, x2 = x2, x1
-                    r1, r2 = r2, r1
+                    pos1, pos2 = pos2, pos1
+                    seg1, seg2 = seg2, seg1
 
                 # with coordinates, make hic read-pair
-                pair = read_gen.make_ligation_readpair(r1, x1, r2, x2, ins_len, midpoint)
+                pair = read_gen.make_ligation_readpair(seg1, pos1, seg2, pos2, ins_len, midpoint)
 
             # otherwise WGS
             else:
+
                 n_wgs += 1
-                r1, x1 = comm.draw_any_by_extent()
-                pair = read_gen.make_wgs_readpair(r1, x1, ins_len, is_fwd)
+                seg1, pos1 = comm.draw_any_by_extent()
+                pair = read_gen.make_wgs_readpair(seg1, pos1, ins_len, is_fwd)
 
             read_gen.write_readpair_dnaio(ostream, pair, n)
 
