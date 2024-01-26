@@ -57,19 +57,26 @@ A profile is a simple tabular text file with the columns:
 
 1. chromosome
 2. cell
-3. relative abundance
-4. chromosome copy number.
+3. molecule
+4. relative abundance
+5. chromosome copy number.
 
 There is a mismatch between the hierarchical nature of a community and the flat nature of this simple format. Despite the repetition that can occur for more complicated profiles, we have chosen to stick with this format for simplicity for the time being.
 
-It is easiest to regard column 1 as the primary column, for which each entry must be unique. Column 2 is inherently redundant when dealing with multi-chromosomal cell definitions. The third column refers to the abundance of the cell, and so is as equally redundant as column 2. The forth column allows users to increase the number of copies of a chosen chromosome within a cell. Optional comments are prefixed with a #.
+It is easiest to regard the first column as the primary column, for which each entry must be unique. The second column is inherently redundant when dealing with multi-chromosomal cell definitions. The third column groups sequences (e.g. draft genomes) as a single molecule, which permits simulating interactions between grouped sequences as intra-molecular. The fourth column refers to the abundance of the cell, and so is as equally redundant as column 2. The fifth column allows users to increase the number of copies of a chosen chromosome within a cell. Optional comments are prefixed with a #.
 
-Eg. A simple 2 cell definition, where the first has 2 replicons.
+**An example definition with four cells**
+- cell: e.coli contains two molecules: chromosome and plasmid.
+  -  the molecule "chromosome" is in two pieces. This is an example of the new structure.
+- molecule names are up to the user but must be the same for all related sequences.
+- relative abundance values need not be normalized to sum to 1.
 ```
-#chrom  cell  abundance  copy_number
-seq1    bac1  0.4        1
-seq2    bac1  0.4        4
-seq3    bac2  0.6        1
+#chrom    cell     molecule      abundance    copy_number
+contig1   e.coli   chromosome    0.6           1
+contig2   e.coli   chromosome    0.2           1
+contig3   e.coli   plasmid       0.1           4
+contig4   b.subt   chrom_xyz     0.05          1
+contig5   s.aur    foobar        0.05          1
 ```
 
 ##### Column definitions
