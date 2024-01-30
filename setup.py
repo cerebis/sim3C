@@ -146,7 +146,8 @@ setup(
         'scipy~=1.11',
         'dnaio',
         'pyyaml',
-        'tqdm'
+        'tqdm',
+        'toml'
     ],
 
     classifiers=[

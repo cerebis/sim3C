@@ -8,3 +8,4 @@ tqdm
 pyyaml
 cython>=3
 dnaio
+toml
