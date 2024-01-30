@@ -22,7 +22,6 @@ import tqdm
 from Bio import SeqIO
 from collections import namedtuple
 
-from .abundance import read_profile
 from .art import Art, EmpDist, ambiguous_base_filter, validator
 from .community import Community
 from .exceptions import *
@@ -251,7 +250,8 @@ class SequencingStrategy(object):
                  anti_rate=0.25, spurious_rate=0.02, trans_rate=0.1,
                  efficiency=0.02,
                  ins_rate=9.e-5, del_rate=1.1e-4,
-                 create_cids=True, simple_reads=True, linear=False, convert_symbols=False):
+                 create_cids=True, simple_reads=True, linear=False, convert_symbols=False,
+                 profile_format='table'):
         """
         Initialise a SequencingStrategy.
 
@@ -277,6 +277,7 @@ class SequencingStrategy(object):
         :param simple_reads: True: sequencing reads do not simulate error (faster), False: full simulation of sequencing
         :param linear: treat replicons as linear
         :param convert_symbols: if true, unsupported (by Art) symbols in the input sequences are converted to N
+        :param profile_format: the format of the abundance profile (Either: table or toml)
         """
         self.prof_filename = prof_filename
         self.seq_filename = seq_filename
@@ -290,7 +291,6 @@ class SequencingStrategy(object):
         self.efficiency = efficiency
 
         self.enzyme = None if not enz_name else get_enzyme_instance(enz_name)
-        self.profile = read_profile(prof_filename, True)
 
         # reference sequences will be accessed via an SeqIO index. Optionally
         # overriding getter for validation and base filtering
@@ -306,9 +306,16 @@ class SequencingStrategy(object):
             raise FastaException(seq_filename)
 
         # initialise the community for the reference data
-        self.community = Community(seq_index, self.profile, self.enzyme, anti_rate=anti_rate,
-                                   spurious_rate=spurious_rate, trans_rate=trans_rate,
-                                   create_cids=create_cids, linear=linear)
+        if profile_format == 'table':
+            self.community = Community.from_profile(seq_index, prof_filename, self.enzyme,
+                                                    anti_rate=anti_rate, spurious_rate=spurious_rate,
+                                                    trans_rate=trans_rate, linear=linear)
+        elif profile_format == 'toml':
+            self.community = Community.from_toml(seq_index, prof_filename, self.enzyme,
+                                                 anti_rate=anti_rate, spurious_rate=spurious_rate,
+                                                 trans_rate=trans_rate, linear=linear)
+        else:
+            raise Sim3CException(f'unknown profile format ({profile_format}) Either: "table" or "toml"]')
 
         # preparate the read simulator for output
         self.read_generator = ReadGenerator(method, self.enzyme,
@@ -379,7 +386,7 @@ class SequencingStrategy(object):
                 # is it an inter-replicon (trans) ligation
                 elif seg1.parent_repl.parent_cell.is_trans():
 
-                    seg2 = seg1.parent_repl.parent_cell.draw_other_segment_by_sites(seg1.parent_repl.name)
+                    seg2 = seg1.parent_repl.parent_cell.draw_other_segment_by_sites(seg1.parent_repl)
                     pos2 = seg2.draw_any_site()
 
                 # otherwise an intra-replicon (cis) ligation
@@ -451,7 +458,7 @@ class SequencingStrategy(object):
                 elif seg1.parent_repl.parent_cell.is_trans():
 
                     # draw another segment from any other replicon in the cell
-                    seg2 = seg1.parent_repl.parent_cell.draw_other_segment_by_sites(seg1.parent_repl.name)
+                    seg2 = seg1.parent_repl.parent_cell.draw_other_segment_by_sites(seg1.parent_repl)
                     pos2 = seg2.draw_any_site()
 
                 # otherwise an intra-replicon (cis) ligation
@@ -522,7 +529,7 @@ class SequencingStrategy(object):
                 # is it an inter-replicon (trans) ligation
                 elif seg1.parent_repl.parent_cell.is_trans():
 
-                    seg2 = seg1.parent_repl.parent_cell.draw_other_segment_by_extent(seg1.parent_repl.name)
+                    seg2 = seg1.parent_repl.parent_cell.draw_other_segment_by_extent(seg1.parent_repl)
                     pos2 = seg2.draw_any_site()
 
                 # otherwise an intra-replicon (cis) ligation

@@ -4,6 +4,7 @@ from numba import njit
 
 from collections import OrderedDict
 
+from .abundance import read_toml, read_profile
 # from .empirical_model import EmpiricalDistribution, cdf_geom_unif_ratio, generate_nested_cids, cids_to_blocks
 from .empirical_model import EmpiricalDistribution, cdf_geom_unif_ratio
 from .exceptions import *
@@ -42,30 +43,37 @@ class Segment(object):
     replicon (chromosome, plasmid, etc).
     """
 
-    def __init__(self, name, repl, seq, enzyme, anti_rate, create_cids=True, linear=False):
+    def __init__(self, name, repl, seq, enzyme, create_cids=False):
         """
         The definition of a segment of DNA.
         :param name: a unique name for this segment
         :param repl: the parent replicon for this segment
         :param seq: the sequence of this segment
         :param enzyme: the enzyme used to digest DNA in the 3C/HiC library preparation
-        :param anti_rate: the rate of anti-diagonal interactions
         :param create_cids: when true, simulate chromosome-interacting-domains
-        :param linear: treat replicons as linear
         """
         self.name = name
         self.seq = seq
-        self.linear = linear
 
+        if not isinstance(repl, Replicon):
+            raise TypeError('repl attribute must be of type Replicon')
         self.parent_repl = repl
         repl.register_segment(self)
+
+        # these are inherited from the containing replicon
+        self.linear = repl.linear
+        self.anti_rate = repl.anti_rate
+        if self.linear:
+            if self.anti_rate > 0:
+                logger.warning(f'Replicon {name} is linear, anti_rate of {self.anti_rate} has been set to zero')
+            self.anti_rate = 0
 
         # cut-site related properties. These are pre-calculated as a simple
         # means of avoiding performance penalties with repeated calls.
         if not enzyme:
             self.sites = AllSites(len(seq.seq))
         else:
-            self.sites = CutSites(enzyme, seq.seq, linear=linear)
+            self.sites = CutSites(enzyme, seq.seq, linear=self.linear)
 
         self.length = len(self.seq)
         self.num_sites = self.sites.size
@@ -75,14 +83,6 @@ class Segment(object):
             logger.warning('CID model currently disabled')
         self.draw_constrained_site = self._draw_simple_constrained_site
 
-        if self.linear:
-            if anti_rate > 0:
-                logger.warning('Replicon {} is linear, anti_rate of {} has been set to zero'
-                               .format(name, anti_rate))
-            self.anti_rate = 0
-        else:
-            self.anti_rate = anti_rate
-
         # setup for simple model
         self.empdist = EmpiricalDistribution(self.length,
                                              Replicon.GLOBAL_EMPDIST_BINS, cdf_geom_unif_ratio,
@@ -91,6 +91,14 @@ class Segment(object):
 
     def __repr__(self):
         return '{} {}'.format(self.name, self.parent_repl)
+
+    def __eq__(self, other):
+        if not isinstance(other, Segment):
+            return False
+        return self.name == other.name
+
+    def __hash__(self):
+        return hash(self.name)
 
     def subseq(self, pos1, length, rev=False):
         """
@@ -216,21 +224,32 @@ class Replicon(object):
     CID_MAX = 6
     CID_DEPTH = 2
 
-    def __init__(self, name, cell, cn):
+    def __init__(self, name, cell, copy_number, anti_rate, linear):
         """
         The definition of a replicon (chromosome, plasmid, etc).
         :param name: a unique name for this replicon
         :param cell: the parent cell for this replicon
-        :param cn: the copy-number of this replicon in 'cell'
+        :param copy_number: the copy-number of this replicon in 'cell'
+        :param anti_rate: the rate of anti-diagonal interactions
+        :param linear: treat replicons as linear
         """
 
         self.name = name
-        self.copy_number = cn
+        self.copy_number = copy_number
         # segment registry
         self.segment_registry = OrderedDict()
         self.cdf_extent = None
         self.cdf_sites = None
-        self.segment_names = None
+        self.segment_list = None
+        self.anti_rate = anti_rate
+        self.linear = linear
+
+        # set bidirection association with containing cell
+        if not isinstance(cell, Cell):
+            raise TypeError('cell attribute must be of type Cell')
+        self.parent_cell = cell
+        cell.register_replicon(self)
+
         # TODO reimplement CID code for Segments
 
         # if create_cids:
@@ -252,17 +271,16 @@ class Replicon(object):
         #                                          cdf_alpha=Replicon.CDF_ALPHA,
         #                                          shape=Replicon.GLOBAL_SHAPE_FACTOR)
 
-        # set bidirection association with containing cell
-        self.parent_cell = cell
-        cell.register_replicon(self)
-
     def __repr__(self):
         return '{} {}'.format(self.name, self.parent_cell)
 
     def __eq__(self, other):
-        if not isinstance(other, self.__class__):
+        if not isinstance(other, Replicon):
             return False
-        return self.name == other.name
+        return self.name == other.name and self.parent_cell == other.parent_cell
+
+    def __hash__(self):
+        return hash(self.name) ^ hash(self.parent_cell)
 
     def init_prob(self):
         seg_info = self.get_segment_info()
@@ -272,7 +290,7 @@ class Replicon(object):
         pdf_sites /= pdf_sites.sum()
         self.cdf_extent = np.cumsum(pdf_extent)
         self.cdf_sites = np.cumsum(pdf_sites)
-        self.segment_names = np.array(seg_info['name'])
+        self.segment_list = list(self.segment_registry)
 
     def get_length(self):
         """
@@ -302,10 +320,11 @@ class Replicon(object):
         :param segment: the segment to insert
         :return: the inserted segment
         """
-        assert isinstance(segment, Segment),  'Attempted to register invalid class.'
-        if segment.name in self.segment_registry:
-            raise Sim3CException('duplicate segment names')
-        self.segment_registry[segment.name] = segment
+        if not isinstance(segment, Segment):
+            raise TypeError('segment parameter must be of type Segment')
+        if segment in self.segment_registry:
+            raise Sim3CException('Duplicate segment instance. Segment names must be unique across the community')
+        self.segment_registry[segment] = segment
         return segment
 
     def draw_any_segment_by_sites(self):
@@ -313,14 +332,25 @@ class Replicon(object):
         Draw any segment from the replicon, based on each segments number of sites
         :return: a Segment
         """
-        return self.segment_registry[cdf_choice(self.segment_names, self.cdf_sites)]
+        # return self.segment_registry[cdf_choice(self.segment_names, self.cdf_sites)]
+        return cdf_choice(self.segment_list, self.cdf_sites)
 
     def draw_any_segment_by_extent(self):
         """
         Draw any segment from the replicon, biased by the segment length.
         :return: a Segment
         """
-        return self.segment_registry[cdf_choice(self.segment_names, self.cdf_extent)]
+        # return self.segment_registry[cdf_choice(self.segment_names, self.cdf_extent)]
+        return cdf_choice(self.segment_list, self.cdf_extent)
+
+    def print_report(self, show_cdf=False):
+        """
+        Print a simple report about this replicon.
+        """
+        print(f'segments {[si.name for si in self.segment_list]}')
+        if show_cdf:
+            print(f'cdf_extent: {self.cdf_extent}')
+            print(f'cdf_sites: {self.cdf_sites}')
 
     # def _draw_cid_constrained_site(self, x1):
     #     """
@@ -404,13 +434,21 @@ class Cell(object):
         # indices used with pdf and cdf arrays
         self.cis_segment_indices = {}
         self.trans_segment_indices = {}
-        self.replicon_names = None
-        self.segment_names = None
+        self.replicon_list = None
+        self.segment_list = None
         self.cdf_sites_inter = None
         self.cdf_extents_inter = None
 
     def __repr__(self):
         return repr((self.name, self.abundance, self.num_replicons()))
+
+    def __eq__(self, other):
+        if not isinstance(other, Cell):
+            return False
+        return self.name == other.name
+
+    def __hash__(self):
+        return hash(self.name)
 
     def num_replicons(self):
         """
@@ -432,6 +470,10 @@ class Cell(object):
         if self.num_replicons() <= 0:
             raise NoRepliconsException(self.name)
 
+        # array of names for extracting random sequences
+        # self.replicon_names = np.array([*self.replicon_registry])
+        self.replicon_list = list(self.replicon_registry)
+
         # begin with some empty PDFs
         pdf_extent = np.zeros(self.num_segments())
         pdf_sites = np.zeros(self.num_segments())
@@ -439,23 +481,23 @@ class Cell(object):
         # for each replicon, the PDF for the various modes of selection.
         i = 0
         self.cis_segment_indices = OrderedDict()
-        for repl in self.replicon_registry.values():
+        for repl in self.replicon_list:
             repl.init_prob()
             cn = float(repl.copy_number)
             seg_info = repl.get_segment_info()
-            self.cis_segment_indices[repl.name] = []
+            self.cis_segment_indices[repl] = []
             for si in seg_info:
                 pdf_extent[i] = cn * si['length']
                 pdf_sites[i] = cn * si['sites']
-                self.cis_segment_indices[repl.name].append(i)
+                self.cis_segment_indices[repl].append(i)
                 i += 1
 
         self.trans_segment_indices = OrderedDict()
-        for ri in self.cis_segment_indices:
-            self.trans_segment_indices[ri] = []
-            for rj, seg_idx in self.cis_segment_indices.items():
-                if ri != rj:
-                    self.trans_segment_indices[ri].extend(seg_idx)
+        for repl_i in self.cis_segment_indices:
+            self.trans_segment_indices[repl_i] = []
+            for repl_j, seg_idx in self.cis_segment_indices.items():
+                if repl_i != repl_j:
+                    self.trans_segment_indices[repl_i].extend(seg_idx)
 
         # normalise the PDFs
         pdf_extent /= pdf_extent.sum()
@@ -466,14 +508,11 @@ class Cell(object):
         self.cdf_extent = np.cumsum(pdf_extent)
         self.cdf_sites = np.cumsum(pdf_sites)
 
-        # array of names for extracting random sequences
-        self.replicon_names = np.array([*self.replicon_registry])
-
         # prepare a registry of all defined segments for this replicon
         for repl in self.replicon_registry.values():
             for seg in repl.segment_registry.values():
-                self.segment_registry[seg.name] = seg
-        self.segment_names = np.array([*self.segment_registry])
+                self.segment_registry[seg] = seg
+        self.segment_list = list(self.segment_registry)
 
         # One last set of CDFs for "select other" which exclude
         # each replicon in turn.
@@ -482,20 +521,22 @@ class Cell(object):
             self.cdf_sites_inter = {}
             self.cdf_extents_inter = {}
 
-            for rn in self.replicon_names:
+            for repl_i in self.replicon_list:
 
                 # indices without rn
-                xi = self.trans_segment_indices[rn]
+                xi = self.trans_segment_indices[repl_i]
 
                 # site probs without rn
                 pi = pdf_sites[xi]
                 pi /= pi.sum()
-                self.cdf_sites_inter[rn] = {'names': self.segment_names[xi], 'prob': np.cumsum(pi)}
+                self.cdf_sites_inter[repl_i] = {'replicons': [self.segment_list[i] for i in xi],
+                                                'prob': np.cumsum(pi)}
 
                 # extent probs without rn
                 pi = pdf_extent[xi]
                 pi /= pi.sum()
-                self.cdf_extents_inter[rn] = {'names': self.segment_names[xi], 'prob': np.cumsum(pi)}
+                self.cdf_extents_inter[repl_i] = {'replicons': [self.segment_list[i] for i in xi],
+                                                  'prob': np.cumsum(pi)}
 
     def register_replicon(self, repl):
         """
@@ -503,9 +544,10 @@ class Cell(object):
         :param repl: the replicon to insert
         :return: the inserted replicon
         """
-        assert isinstance(repl, Replicon),  'Attempted to register invalid class.'
-        if repl.name not in self.replicon_registry:
-            self.replicon_registry[repl.name] = repl
+        if not isinstance(repl, Replicon):
+            raise TypeError('repl parameter must be of type Replicon')
+        if repl not in self.replicon_registry:
+            self.replicon_registry[repl] = repl
         return repl
 
     def draw_any_segment_by_extent(self):
@@ -514,7 +556,7 @@ class Cell(object):
         genomic extent and copy number.
         :return: a segment,replicon tuple from this cell
         """
-        return self.segment_registry[cdf_choice(self.segment_names, self.cdf_extent)]
+        return cdf_choice(self.segment_list, self.cdf_extent)
 
     def draw_any_segment_by_sites(self):
         """
@@ -522,7 +564,7 @@ class Cell(object):
         number of sites and copy number.
         :return: a segment, replicon tuple from this cell
         """
-        return self.segment_registry[cdf_choice(self.segment_names, self.cdf_sites)]
+        return cdf_choice(self.segment_list, self.cdf_sites)
 
     def draw_other_segment_by_sites(self, skip_repl):
         """
@@ -535,8 +577,7 @@ class Cell(object):
         if self.num_replicons() <= 1:
             raise MonochromosomalException('inter-replicon events are not possible for monochromosomal cells')
 
-        return self.segment_registry[cdf_choice(self.cdf_sites_inter[skip_repl]['names'],
-                                                self.cdf_sites_inter[skip_repl]['prob'])]
+        return cdf_choice(self.cdf_sites_inter[skip_repl]['replicons'], self.cdf_sites_inter[skip_repl]['prob'])
 
     def draw_other_segment_by_extent(self, skip_repl):
         """
@@ -549,8 +590,7 @@ class Cell(object):
         if self.num_replicons() <= 1:
             raise MonochromosomalException('inter-replicon events are not possible for monochromosomal cells')
 
-        return self.segment_registry[cdf_choice(self.cdf_extents_inter[skip_repl]['names'],
-                                                self.cdf_extents_inter[skip_repl]['prob'])]
+        return cdf_choice(self.cdf_extents_inter[skip_repl]['replicons'], self.cdf_extents_inter[skip_repl]['prob'])
 
     def draw_any_site(self):
         """
@@ -562,13 +602,14 @@ class Cell(object):
         segment = self.draw_any_segment_by_sites()
         return segment, segment.draw_any_site()
 
-    def print_report(self):
+    def print_report(self, show_cdf=False):
         """
         Print a simple report about this cell.
         """
-        print(f'names {self.replicon_names}')
-        print(f'cdf_extent {self.cdf_extent}')
-        print(f'cdf_site {self.cdf_sites}')
+        print(f'replicons {[ri.name for ri in self.replicon_list]}')
+        if show_cdf:
+            print(f'cdf_extent: {self.cdf_extent}')
+            print(f'cdf_sites: {self.cdf_sites}')
 
     def is_trans(self):
         """
@@ -590,19 +631,18 @@ class Community(object):
     of simulation parameters are exposed.
     """
 
-    def __init__(self, seq_index, profile, enzyme, anti_rate=0.2, spurious_rate=0.02,
-                 trans_rate=0.1, create_cids=True, linear=False):
+    # defaults for communities
+    ANTI_RATE = 0.2
+    SPURIOUS_RATE = 0.02
+    TRANS_RATE = 0.1
+    LINEAR = False
+
+    def __init__(self, enzyme, spurious_rate=0.02):
         """
         Initialise a community.
 
-        :param seq_index: an open sequence index of type _IndexedSeqFileDict as returned from Bio.SeqIO.index
-        :param profile: the accompanying abundance profile of all replicons in the community
         :param enzyme: the enzyme used to digest DNA in the 3C/HiC library preparation
-        :param anti_rate: the rate of anti-diagonal interactions
         :param spurious_rate: the rate of spurious ligation products
-        :param trans_rate: the rate of inter-replicon (trans) ligation products within a cell
-        :param create_cids: when true, simulate chromosome-interacting-domains
-        :param linear: treat replicons as linear
         """
         global pcg_integer, pcg_integer, pcg_integers, pcg_uniform, pcg_nucleotide, pcg_knockout, pcg_parse_error
 
@@ -614,20 +654,115 @@ class Community(object):
         self.repl_registry = OrderedDict()
         self.cell_registry = OrderedDict()
 
+        # 3C protocol enzymatic digest
+        self.enzyme = enzyme
+        # intercellular rate is scaled by the product of all chrom site probs
+        self.spurious_rate = spurious_rate
+
+    @staticmethod
+    def from_toml(seq_index, profile_toml, enzyme,
+                  anti_rate=ANTI_RATE, spurious_rate=SPURIOUS_RATE,
+                  trans_rate=TRANS_RATE, linear=LINEAR):
+        """
+        Construct a community from a TOML file resource.
+        :param seq_index:
+        :param profile_toml:
+        :param enzyme:
+        :param anti_rate:
+        :param spurious_rate:
+        :param trans_rate:
+        :param linear:
+        :return: Community object
+        """
+
+        comm_dict = read_toml(profile_toml, True)
+        # override spurious rate if not defined in the TOML
+        if 'spurious_rate' not in comm_dict['community']:
+            comm_dict['community']['spurious_rate'] = spurious_rate
+        community = Community(enzyme, comm_dict['community']['spurious_rate'])
+        for ci in comm_dict['community']['cells']:
+            # override trans_rate if not defined in the TOML
+            if 'trans_rate' not in ci:
+                ci['trans_rate'] = trans_rate
+            cell = community._register_cell(Cell(ci['name'], ci['abundance'], ci['trans_rate']))
+            for ri in ci['replicons']:
+                # override anti_rate and linear if not defined in the TOML
+                if 'anti_rate' not in ri:
+                    ri['anti_rate'] = anti_rate
+                if 'linear' not in ri:
+                    ri['linear'] = linear
+                repl = community._register_replicon(Replicon(ri['name'], cell, ri['copy_number'],
+                                                             ri['anti_rate'], ri['linear']))
+                for si in ri['segments']:
+                    try:
+                        seq = seq_index[si].upper()
+                        community._register_segment(Segment(si, repl=repl, seq=seq, enzyme=enzyme))
+                    except NoCutSitesException:
+                        logger.warning(f'Sequence {si} had no cut-sites '
+                                       f'for the enzyme {str(enzyme)} and will be ignored')
+
+        community._init_community()
+        return community
+
+    def to_toml(self, output_filename):
+        """
+        Serialize the community to a TOML file.
+        :param output_filename:
+        """
+        import toml
+        comm_dict = OrderedDict()
+        comm_dict['community'] = {'spurious_rate': self.spurious_rate, 'cells': []}
+        for cell_i in self.cell_registry.values():
+            cd = {'name': cell_i.name, 'abundance': cell_i.abundance, 'replicons': []}
+            for repl_i in cell_i.replicon_registry.values():
+                rd = {'name': repl_i.name, 'copy_number': repl_i.copy_number, 'anti_rate': repl_i.anti_rate,
+                      'linear': repl_i.linear, 'segments': []}
+                for seg in repl_i.segment_registry.values():
+                    rd['segments'].append(seg.name)
+                cd['replicons'].append(rd)
+            comm_dict['community']['cells'].append(cd)
+        with open(output_filename, 'wt') as output_h:
+            encoder = toml.TomlArraySeparatorEncoder(separator='\n')
+            toml.dump(comm_dict, output_h, encoder=encoder)
+
+    @staticmethod
+    def from_profile(seq_index, profile_table, enzyme,
+                     anti_rate=ANTI_RATE, spurious_rate=SPURIOUS_RATE,
+                     trans_rate=TRANS_RATE, linear=LINEAR):
+        """
+        Construct a community from a profile table file resource.
+        :param seq_index:
+        :param profile_table:
+        :param enzyme:
+        :param anti_rate:
+        :param spurious_rate:
+        :param trans_rate:
+        :param linear:
+        :return: Community object
+        """
+        profile = read_profile(profile_table, True)
+        community = Community(enzyme, spurious_rate)
         # initialise the registries using the community profile
         for row_i in profile.values():
             # register the cell
-            cell = self._register_cell(Cell(row_i.cell, row_i.abundance, trans_rate))
-            repl = self._register_replicon(Replicon(row_i.molecule, cell, row_i.copy_number))
+            cell = community._register_cell(Cell(row_i.cell, row_i.abundance, trans_rate))
+            repl = community._register_replicon(Replicon(row_i.molecule, cell, row_i.copy_number, anti_rate, linear))
             try:
                 # fetch the sequence from file
                 rseq = seq_index[row_i.name].upper()
                 # community-wide replicon registry
-                self._register_segment(Segment(row_i.name, repl, rseq, enzyme, anti_rate, create_cids, linear))
+                community._register_segment(Segment(row_i.name, repl, rseq, enzyme))
             except NoCutSitesException:
                 logger.warning('Sequence "{}" had no cut-sites for the enzyme {} and will be ignored'.format(
                     row_i.name, str(enzyme)))
 
+        community._init_community()
+        return community
+
+    def _init_community(self):
+        """
+        After the community is constructed from a file resource, initialise the probabilities
+        """
         # now we're finished reading the profile, initialise the probabilities for each cell
         for cell in self.cell_registry.values():
             try:
@@ -660,11 +795,8 @@ class Community(object):
         self.cdf_sites = np.cumsum(pdf_sites)
 
         # keep a list of names in numpy format
-        self.repl_names = np.array([*self.repl_registry])
-        self.segm_names = np.array([*self.segm_registry])
-
-        # inter-cellular rate is scaled by the product of all chrom site probs
-        self.spurious_rate = spurious_rate
+        self.repl_list = list(self.repl_registry)
+        self.segm_list = list(self.segm_registry)
 
         # keep the number of cells handy
         self.num_cells = len(self.cell_registry)
@@ -683,9 +815,9 @@ class Community(object):
         :return: the added cell instance
         """
         assert isinstance(cell, Cell), 'Attempted to register invalid class.'
-        if cell.name not in self.cell_registry:
-            self.cell_registry[cell.name] = cell
-        return self.cell_registry[cell.name]
+        if cell not in self.cell_registry:
+            self.cell_registry[cell] = cell
+        return self.cell_registry[cell]
 
     def _register_replicon(self, repl):
         """
@@ -693,10 +825,10 @@ class Community(object):
         :param repl: a Replicon object to add
         :return: the added replicon instance
         """
-        assert isinstance(repl, Replicon),  'Attempted to register invalid class.'
-        if repl.name not in self.repl_registry:
-            self.repl_registry[repl.name] = repl
-        return self.repl_registry[repl.name]
+        assert isinstance(repl, Replicon), 'Attempted to register invalid class.'
+        if repl not in self.repl_registry:
+            self.repl_registry[repl] = repl
+        return self.repl_registry[repl]
 
     def _register_segment(self, segment):
         """
@@ -704,10 +836,10 @@ class Community(object):
         :param segment:
         :return: the added segment instance
         """
-        assert isinstance(segment, Segment),  'Attempted to register invalid class.'
-        if segment.name in self.segm_registry:
+        assert isinstance(segment, Segment), 'Attempted to register invalid class.'
+        if segment in self.segm_registry:
             raise Sim3CException('duplicate segment names in community')
-        self.segm_registry[segment.name] = segment
+        self.segm_registry[segment] = segment
         return segment
 
     def get_segment(self, name):
@@ -740,7 +872,7 @@ class Community(object):
         and per-replicon genomic extent and copy number.
         :return: any replicon from this community
         """
-        return self.segm_registry[cdf_choice(self.segm_names, self.cdf_extent)]
+        return cdf_choice(self.segm_list, self.cdf_extent)
 
     def draw_any_segment_by_sites(self):
         """
@@ -748,7 +880,7 @@ class Community(object):
         and per-replicon number of cut-sites and copy number.
         :return: any replicon from this community
         """
-        return self.segm_registry[cdf_choice(self.segm_names, self.cdf_sites)]
+        return cdf_choice(self.segm_list, self.cdf_sites)
 
     def draw_any_by_site(self):
         """
@@ -766,10 +898,11 @@ class Community(object):
         segment = self.draw_any_segment_by_extent()
         return segment, segment.draw_any_location()
 
-    def print_report(self):
-        print(f'names {self.repl_names}')
-        print(f'cdf_ext {self.cdf_extent}')
-        print(f'cdf_sit {self.cdf_sites}')
+    def print_report(self, show_cdf=False):
+        print(f'segments {[si.name for si in self.segm_list]}')
+        if show_cdf:
+            print(f'cdf_extent: {self.cdf_extent}')
+            print(f'cdf_sites: {self.cdf_sites}')
 
     def is_spurious(self):
         """
