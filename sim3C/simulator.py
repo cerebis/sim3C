@@ -22,7 +22,6 @@ import tqdm
 from Bio import SeqIO
 from collections import namedtuple
 
-from .abundance import read_profile
 from .art import Art, EmpDist, ambiguous_base_filter, validator
 from .community import Community
 from .exceptions import *
