@@ -1,4 +1,4 @@
-__version__ = '0.6'
+__version__ = '0.6.1'
 
 __copyright__ = """Copyright (C) 2019 Matthew Z DeMaere
 This is free software.  You may redistribute copies of it under the terms of
@@ -14,9 +14,9 @@ def version_stamp(full):
     :return: a version stamp string
     """
     if full:
-        return 'sim3C {}\n{}'.format(__version__, __copyright__)
+        return 'Sim3C version {}\n{}'.format(__version__, __copyright__)
     else:
-        return 'sim3C {}'.format(__version__)
+        return '{}'.format(__version__)
 
 
 def date_stamp():
@@ -32,4 +32,4 @@ def runtime_info():
     """
     :return: Return runtime info (version and date stamps) as a dict
     """
-    return {'qc3C_version': version_stamp(False), 'run_timestamp': date_stamp()}
+    return {'sim3C_version': f'{__version__}', 'run_timestamp': date_stamp()}

@@ -112,8 +112,6 @@ def main():
     parser.add_argument('--insert-max', metavar='INT', type=int, default=None,
                         help='Maximum allowed insert size [None]')
 
-    parser.add_argument('--create-cids', default=False, action='store_true',
-                        help='Simulate chromosome interacting domains')
     parser.add_argument('--linear', default=False, action='store_true',
                         help='Treat all replicons as linear molecules')
     parser.add_argument('--efficiency', metavar='FLOAT', type=float,
@@ -129,6 +127,8 @@ def main():
                         help='Community abundance profile')
     parser.add_argument('--profile-name', metavar='FILE', default='profile.tsv',
                         help='Output file name for a procedural community profile')
+    parser.add_argument('--profile-format', metavar='STRING', default='table',
+                        choices=['table', 'toml'], help='Profile defintion format [table]')
 
     parser.add_argument('--dist', metavar='DISTNAME', choices=['equal', 'uniform', 'lognormal'],
                         help='Abundance profile distribution choices: equal, uniform, lognormal')
@@ -228,7 +228,7 @@ def main():
                     'anti_rate', 'spurious_rate', 'trans_rate',
                     'efficiency',
                     'ins_rate', 'del_rate',
-                    'create_cids', 'simple_reads', 'linear', 'convert_symbols']
+                    'simple_reads', 'linear', 'convert_symbols', 'profile_format']
 
         # extract these parameters from the parsed arguments
         kw_args = {k: v for k, v in vars(args).items() if k in kw_names}

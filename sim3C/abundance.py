@@ -16,12 +16,13 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """
-from collections import OrderedDict
+from collections import OrderedDict, defaultdict
 
 import logging
 import numpy as np
 import re
 
+from .exceptions import Sim3CException
 from .random import np_uniform, np_lognormal
 
 
@@ -206,9 +207,47 @@ class Profile(OrderedDict):
         """
         Normalize a profile so that all abundance entries sum to 1.
         """
-        val_sum = sum([ai.abundance for ai in self.values()])
-        for ai in self.values():
-            ai.abundance /= val_sum
+        # The structure of the Profile means that abundance is stored for every
+        # sequence record, rather than the cell to which they belong.
+        # Therefore, we first collect a non-redundant list of abundances,
+        # warning the user if there are multiple entries for the same cell that are not the same.
+
+        abundances = {}
+        cell2chrom = defaultdict(list)
+        for chrom in self:
+            cell2chrom[chrom.cell].append(chrom)
+            if chrom.cell in abundances and chrom.abundance != abundances[chrom.cell]:
+                logger.warning(f"Multiple abundances identified for the cell {chrom.cell} a={chrom.abundance}")
+            abundances[chrom.cell] = chrom.abundance
+
+        total_abundance = sum(abundances.values())
+        for cell, chrom_list in cell2chrom.items():
+            for chrom in chrom_list:
+                chrom.abundance /= total_abundance
+
+
+def read_toml(hndl, normalise=False):
+    """
+    Read a profile from a TOML file. The returned object
+    is a dictionary rather than the profile class.
+    :param hndl: the input file name or file object
+    :param normalise: when true, normalise after reading
+    :return: dict-style community definition
+    """
+    import toml
+
+    try:
+        comm_dict = toml.load(hndl)
+    except toml.decoder.TomlDecodeError as e:
+        raise Sim3CException(f'IO error reading profile. Invalid TOML file: {e}')
+
+    if normalise:
+        abun = np.asarray([cell['abundance'] for cell in comm_dict['community']['cells']])
+        abun /= abun.sum()
+        for i in range(len(comm_dict['community']['cells'])):
+            comm_dict['community']['cells'][i]['abundance'] = abun[i]
+
+    return comm_dict
 
 
 def read_profile(hndl, normalise=False):
@@ -237,7 +276,7 @@ def read_profile(hndl, normalise=False):
                 chrom, cell, molecule, abn, cn = re.split(r'[\s,]+', line)
                 profile.add(chrom, abn, cn, cell, molecule)
             except Exception:
-                raise IOError('Error: invalid table at line {} [{}]'.format(n, line))
+                raise Sim3CException(f'IO error reading profile. Invalid table: line {n} [{line}]')
             n += 1
 
         if normalise:
