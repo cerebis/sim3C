@@ -16,7 +16,7 @@ RUN apt-get update &&  \
     pip install -U pip && \
     rm -rf /var/lib/apt/lists/*
 
-RUN pip install git+https://github.com/cerebis/sim3C.git && \
+RUN pip install --no-cache-dir git+https://github.com/cerebis/sim3C.git && \
     sim3C --help
 
 FROM python:3.11-slim as run
