@@ -5,7 +5,6 @@ from numba import njit
 from collections import OrderedDict
 
 from .abundance import read_toml, read_profile
-# from .empirical_model import EmpiricalDistribution, cdf_geom_unif_ratio, generate_nested_cids, cids_to_blocks
 from .empirical_model import EmpiricalDistribution, cdf_geom_unif_ratio
 from .exceptions import *
 from .site_analysis import AllSites, CutSites
@@ -13,8 +12,13 @@ import sim3C.random as random
 
 logger = logging.getLogger(__name__)
 
+# as the base RNG of PCG returns 32 bit integers, the uniform
+# function only possesses 32bit float precision. This _may_
+# cause unintended problems if mixed in expressions with
+# 64bit floats.
+PROB_TYPE = 'f4'
 
-@njit("i4(f8[:], f8)")
+@njit(f'i4({PROB_TYPE}[:], {PROB_TYPE})')
 def random_index(cdf, rv):
     """
     A weighted number draw, functioning like numpy.random.choice. This
@@ -34,7 +38,7 @@ def cdf_choice(vals, cdf):
     :return: the selected element
     """
     # TODO explore whether moving this method to faster.pyx would be faster
-    return vals[random_index(cdf, pcg_uniform())]
+    return vals[random_index(cdf, random.pcg_random.uniform())]
 
 
 class Segment(object):
@@ -157,7 +161,7 @@ class Segment(object):
         Uniform selection of any genomic coordinate for this replicon
         :return: a genomic coord (zero based)
         """
-        return pcg_integer(self.length)
+        return random.pcg_random.integer(self.length)
 
     @staticmethod
     def get_loc_3c(emp_dist, pos1, length):
@@ -181,7 +185,7 @@ class Segment(object):
         delta = int(emp_dist.rand())
 
         # pve or nve shift, modulo length
-        if pcg_integer(2) == 0:
+        if random.pcg_random.integer(2) == 0:
             pos2 = (pos1 - delta) % length
         else:
             pos2 = (pos1 + delta) % length
@@ -197,7 +201,7 @@ class Segment(object):
         pos2 = Segment.get_loc_3c(self.empdist, pos1, self.length)
 
         # anti-diagonal
-        if pcg_uniform() < self.anti_rate:
+        if random.pcg_random.uniform() < self.anti_rate:
             pos2 = self.length - pos2
 
         # return nearest site
@@ -284,8 +288,8 @@ class Replicon(object):
 
     def init_prob(self):
         seg_info = self.get_segment_info()
-        pdf_extent = np.array(seg_info['length'], dtype='f8')
-        pdf_sites = np.array(seg_info['sites'], dtype='f8')
+        pdf_extent = np.array(seg_info['length'], dtype=f'{PROB_TYPE}')
+        pdf_sites = np.array(seg_info['sites'], dtype=f'{PROB_TYPE}')
         pdf_extent /= pdf_extent.sum()
         pdf_sites /= pdf_sites.sum()
         self.cdf_extent = np.cumsum(pdf_extent)
@@ -332,7 +336,6 @@ class Replicon(object):
         Draw any segment from the replicon, based on each segments number of sites
         :return: a Segment
         """
-        # return self.segment_registry[cdf_choice(self.segment_names, self.cdf_sites)]
         return cdf_choice(self.segment_list, self.cdf_sites)
 
     def draw_any_segment_by_extent(self):
@@ -432,8 +435,8 @@ class Cell(object):
         self.cdf_sites = None
         # for this cell, indices of segments within or outside replicons
         # indices used with pdf and cdf arrays
-        self.cis_segment_indices = {}
-        self.trans_segment_indices = {}
+        self.cis_segment_indices = OrderedDict()
+        self.trans_segment_indices = OrderedDict()
         self.replicon_list = None
         self.segment_list = None
         self.cdf_sites_inter = None
@@ -475,8 +478,8 @@ class Cell(object):
         self.replicon_list = list(self.replicon_registry)
 
         # begin with some empty PDFs
-        pdf_extent = np.zeros(self.num_segments())
-        pdf_sites = np.zeros(self.num_segments())
+        pdf_extent = np.zeros(self.num_segments(), dtype=f'{PROB_TYPE}')
+        pdf_sites = np.zeros(self.num_segments(), dtype=f'{PROB_TYPE}')
 
         # for each replicon, the PDF for the various modes of selection.
         i = 0
@@ -518,8 +521,8 @@ class Cell(object):
         # each replicon in turn.
         if self.num_replicons() > 1:
 
-            self.cdf_sites_inter = {}
-            self.cdf_extents_inter = {}
+            self.cdf_sites_inter = OrderedDict()
+            self.cdf_extents_inter = OrderedDict()
 
             for repl_i in self.replicon_list:
 
@@ -530,13 +533,13 @@ class Cell(object):
                 pi = pdf_sites[xi]
                 pi /= pi.sum()
                 self.cdf_sites_inter[repl_i] = {'replicons': [self.segment_list[i] for i in xi],
-                                                'prob': np.cumsum(pi)}
+                                                'prob': np.cumsum(pi, dtype=f'{PROB_TYPE}')}
 
                 # extent probs without rn
                 pi = pdf_extent[xi]
                 pi /= pi.sum()
                 self.cdf_extents_inter[repl_i] = {'replicons': [self.segment_list[i] for i in xi],
-                                                  'prob': np.cumsum(pi)}
+                                                  'prob': np.cumsum(pi, dtype=f'{PROB_TYPE}')}
 
     def register_replicon(self, repl):
         """
@@ -617,7 +620,7 @@ class Cell(object):
         is dictated by the rate supplied at instantiation time (trans_rate).
         :return: True -- treat this as a trans event
         """
-        return self.num_replicons() > 1 and pcg_uniform() < self.trans_rate
+        return self.num_replicons() > 1 and random.pcg_random.uniform() < self.trans_rate
 
 
 class Community(object):
@@ -644,11 +647,6 @@ class Community(object):
         :param enzyme: the enzyme used to digest DNA in the 3C/HiC library preparation
         :param spurious_rate: the rate of spurious ligation products
         """
-        global pcg_integer, pcg_integer, pcg_integers, pcg_uniform, pcg_nucleotide, pcg_knockout, pcg_parse_error
-
-        pcg_uniform = random.pcg_random.uniform
-        pcg_integer = random.pcg_random.integer
-
         # global segment, replicon, and cell registries
         self.segm_registry = OrderedDict()
         self.repl_registry = OrderedDict()
@@ -678,18 +676,22 @@ class Community(object):
         comm_dict = read_toml(profile_toml, True)
         # override spurious rate if not defined in the TOML
         if 'spurious_rate' not in comm_dict['community']:
+            logger.warning(f'No spurious_rate set for community, falling back to default {spurious_rate}')
             comm_dict['community']['spurious_rate'] = spurious_rate
         community = Community(enzyme, comm_dict['community']['spurious_rate'])
         for ci in comm_dict['community']['cells']:
             # override trans_rate if not defined in the TOML
             if 'trans_rate' not in ci:
+                logger.warning(f'No trans_rate set for cell {ci["name"]}, falling back to default {trans_rate}')
                 ci['trans_rate'] = trans_rate
             cell = community._register_cell(Cell(ci['name'], ci['abundance'], ci['trans_rate']))
             for ri in ci['replicons']:
                 # override anti_rate and linear if not defined in the TOML
                 if 'anti_rate' not in ri:
+                    logger.warning(f'No anti_rate set for replicon {ri["name"]}, falling back to default {anti_rate}')
                     ri['anti_rate'] = anti_rate
                 if 'linear' not in ri:
+                    logger.warning(f'linear status set for replicon {ri["name"]}, falling back to default {linear}')
                     ri['linear'] = linear
                 repl = community._register_replicon(Replicon(ri['name'], cell, ri['copy_number'],
                                                              ri['anti_rate'], ri['linear']))
@@ -713,7 +715,7 @@ class Community(object):
         comm_dict = OrderedDict()
         comm_dict['community'] = {'spurious_rate': self.spurious_rate, 'cells': []}
         for cell_i in self.cell_registry.values():
-            cd = {'name': cell_i.name, 'abundance': cell_i.abundance, 'replicons': []}
+            cd = {'name': cell_i.name, 'abundance': cell_i.abundance, 'trans_rate': cell_i.trans_rate, 'replicons': []}
             for repl_i in cell_i.replicon_registry.values():
                 rd = {'name': repl_i.name, 'copy_number': repl_i.copy_number, 'anti_rate': repl_i.anti_rate,
                       'linear': repl_i.linear, 'segments': []}
@@ -772,8 +774,8 @@ class Community(object):
                 del self.cell_registry[cell.name]
 
         # now initialise the probs for the whole community
-        pdf_extent = np.zeros(len(self.segm_registry))
-        pdf_sites = np.zeros(len(self.segm_registry))
+        pdf_extent = np.zeros(len(self.segm_registry), dtype=f'{PROB_TYPE}')
+        pdf_sites = np.zeros(len(self.segm_registry), dtype=f'{PROB_TYPE}')
 
         # whether site (prox-lig) or extent (wgs) based, probs are
         # weighted by cellular abundance and copy number
@@ -910,4 +912,4 @@ class Community(object):
         dictated by the rate supplied at instantiation time (spurious_rate).
         :return: True -- treat this as a spurious event
         """
-        return pcg_uniform() < self.spurious_rate
+        return random.pcg_random.uniform() < self.spurious_rate
