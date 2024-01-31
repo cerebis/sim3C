@@ -244,7 +244,7 @@ class SequencingStrategy(object):
 
     Strategy = namedtuple('Strategy', 'method run')
 
-    def __init__(self, prof_filename, seq_filename, enz_name, number_pairs,
+    def __init__(self, profile_filename, seq_filename, enzyme_name, number_pairs,
                  method, read_length, prefix, machine_profile,
                  insert_mean=400, insert_sd=50, insert_min=50, insert_max=None,
                  anti_rate=0.25, spurious_rate=0.02, trans_rate=0.1,
@@ -255,9 +255,9 @@ class SequencingStrategy(object):
         """
         Initialise a SequencingStrategy.
 
-        :param prof_filename: the abundance profile for the community
+        :param profile_filename: the abundance profile for the community
         :param seq_filename: the matching sequence of replicon sequences in Fasta format
-        :param enz_name: the restriction enzyme name (case sensitive)
+        :param enzyme_name: the restriction enzyme name (case sensitive)
         :param number_pairs: the number of read-pairs to generate
         :param method: the library preparation method (Either: 3c or hic)
         :param read_length: the length of reads
@@ -279,9 +279,10 @@ class SequencingStrategy(object):
         :param convert_symbols: if true, unsupported (by Art) symbols in the input sequences are converted to N
         :param profile_format: the format of the abundance profile (Either: table or toml)
         """
-        self.prof_filename = prof_filename
+        self.profile_filename = profile_filename
+        self.profile_format = profile_format
         self.seq_filename = seq_filename
-        self.enz_name = enz_name
+        self.enzyme_name = enzyme_name
         self.number_pairs = number_pairs
         self.simple_reads = simple_reads
         self.method = method
@@ -290,7 +291,7 @@ class SequencingStrategy(object):
         self.insert_max = insert_max
         self.efficiency = efficiency
 
-        self.enzyme = None if not enz_name else get_enzyme_instance(enz_name)
+        self.enzyme = None if not enzyme_name else get_enzyme_instance(enzyme_name)
 
         # reference sequences will be accessed via an SeqIO index. Optionally
         # overriding getter for validation and base filtering
@@ -307,11 +308,11 @@ class SequencingStrategy(object):
 
         # initialise the community for the reference data
         if profile_format == 'table':
-            self.community = Community.from_profile(seq_index, prof_filename, self.enzyme,
+            self.community = Community.from_profile(seq_index, profile_filename, self.enzyme,
                                                     anti_rate=anti_rate, spurious_rate=spurious_rate,
                                                     trans_rate=trans_rate, linear=linear)
         elif profile_format == 'toml':
-            self.community = Community.from_toml(seq_index, prof_filename, self.enzyme,
+            self.community = Community.from_toml(seq_index, profile_filename, self.enzyme,
                                                  anti_rate=anti_rate, spurious_rate=spurious_rate,
                                                  trans_rate=trans_rate, linear=linear)
         else:
