@@ -128,7 +128,7 @@ def main():
     parser.add_argument('--profile-name', metavar='FILE', default='profile.tsv',
                         help='Output file name for a procedural community profile')
     parser.add_argument('--profile-format', metavar='STRING', default='table',
-                        choices=['table', 'toml'], help='Profile defintion format [table]')
+                        choices=['table', 'toml'], help='Profile definition format (table, toml) [table]')
 
     parser.add_argument('--dist', metavar='DISTNAME', choices=['equal', 'uniform', 'lognormal'],
                         help='Abundance profile distribution choices: equal, uniform, lognormal')
