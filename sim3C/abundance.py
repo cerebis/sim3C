@@ -241,6 +241,10 @@ def read_toml(hndl, normalise=False):
     except toml.decoder.TomlDecodeError as e:
         raise Sim3CException(f'IO error reading profile. Invalid TOML file: {e}')
 
+    # currently just warn if there is no version stamp
+    if 'profile_version' not in comm_dict:
+        logger.warning('No "profile_version" was specified. Assuming 1.0')
+
     if normalise:
         abun = np.asarray([cell['abundance'] for cell in comm_dict['community']['cells']])
         abun /= abun.sum()
