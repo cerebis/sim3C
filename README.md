@@ -5,7 +5,11 @@ Read-pair simulation of 3C-based sequencing methodologies (HiC, Meta3C, DNase-Hi
 ## Recent Updates
 
 - Python 3 support (requires 3.11)
-- Approximately 6x faster simulated read generation 
+- Minimal Docker image (`cerebis/sim3c`)
+- New optional TOML-format community profile definition
+  - finer granularity
+  - eliminates parameter redundancy
+- Approximately 6x faster read generation 
   - testing system: MacOS Intel i9
   - 50% efficiency, 150bp reads, B.subtilis chrom + plasmid, uniform abundance 
 - Read-pair output now uses dnaio (https://github.com/marcelm/dnaio)
