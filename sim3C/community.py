@@ -427,12 +427,6 @@ class Replicon(object):
     #
     #     return self.sites.find_nn(x2)
 
-    def num_segments(self):
-        """
-        :return: the number of segments for this replicon.
-        """
-        return len(self.segment_registry)
-
 
 class Cell(object):
     """

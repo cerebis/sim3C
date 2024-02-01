@@ -20,7 +20,6 @@ from collections import OrderedDict, defaultdict
 
 import logging
 import numpy as np
-import re
 
 from .exceptions import Sim3CException
 from .random import np_uniform, np_lognormal
