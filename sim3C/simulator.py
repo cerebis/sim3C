@@ -25,7 +25,7 @@ from collections import namedtuple
 from .art import Art, EmpDist, ambiguous_base_filter, validator
 from .community import Community
 from .exceptions import *
-from .site_analysis import get_enzyme_instance
+from .site_analysis import get_enzyme_instance, get_ligation_info
 from .random import np_normal
 import sim3C.random as random
 
@@ -77,8 +77,10 @@ class ReadGenerator(object):
             logger.warning('Specified insert mean ({}) and stddev ({}) will produce many inserts below '
                            'the minimum allowable insert length ({})'.format(insert_mean, insert_sd, insert_min))
 
-        if enzyme:
-            self.cut_site = enzyme.ovhgseq * 2
+        if enzyme is not None:
+            li = get_ligation_info(enzyme)
+            logger.info(f'For {li.enzyme} the ligation junction sequence will be: {li.junction}')
+            self.junction = li.junction
 
         self.insert_mean = insert_mean
         self.insert_sd = insert_sd
@@ -142,7 +144,7 @@ class ReadGenerator(object):
         :param b: fragment b
         :return: a + b
         """
-        return a + self.cut_site + b
+        return a + self.junction + b
 
     def draw_insert(self):
         """

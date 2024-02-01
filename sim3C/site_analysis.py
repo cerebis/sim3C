@@ -1,10 +1,13 @@
 import numpy as np
 
+from collections import namedtuple
 from Bio.Restriction import Restriction
 from Bio.Restriction.Restriction_Dictionary import rest_dict, typedict
 
 from .exceptions import *
 import sim3C.random as random
+
+ligation_info_t = namedtuple('ligation_info', ('enzyme', 'junction', 'vestigial', 'junc_len', 'vest_len'))
 
 
 def get_enzyme_instance_ipython(enz_name):
@@ -30,6 +33,48 @@ def get_enzyme_instance(enz_name):
     :return: RestrictionType the enzyme instance
     """
     return getattr(Restriction, enz_name)
+
+
+def enzyme_ends(enzyme):
+    """
+    Determine the 5` and 3` ends of a restriction endonuclease. Here, "ends"
+    are the parts of the recognition site not involved in overhang.
+    :param enzyme: Biopython ins
+    :return: a pair of strings containing the 5' and 3' ends
+    """
+    end5, end3 = '', ''
+    ovhg_size = abs(enzyme.ovhg)
+    if ovhg_size > 0 and ovhg_size != enzyme.size:
+        a = abs(enzyme.fst5)
+        if a > enzyme.size // 2:
+            a = enzyme.size - a
+        end5, end3 = enzyme.site[:a], enzyme.site[-a:]
+    return end5.upper(), end3.upper()
+
+
+def vestigial_site(enz, junc):
+    """
+    Determine the part of the 5-prime end cut-site that will remain when a ligation junction is
+    created. Depending on the enzymes involved, this may be the entire cut-site or a smaller portion
+    and begins from the left.
+    """
+    i = 0
+    while i < enz.size and (enz.site[i] == junc[i] or enz.site[i] == 'N'):
+        i += 1
+    return str(junc[:i]).upper()
+
+
+def get_ligation_info(enz):
+    """
+    Determine the ligation junction and vestigial site for a given enzyme.
+    :param enz: the ezyme to consider
+    :return: ligation_info_t namedtuple
+    """
+    end5, end3 = enzyme_ends(enz)
+    overhang = enz.ovhgseq.upper()
+    _junc_seq = f'{end5}{overhang}{overhang}{end3}'
+    _vest_seq = vestigial_site(enz, _junc_seq)
+    return ligation_info_t(str(enz), _junc_seq, _vest_seq, len(_junc_seq), len(_vest_seq))
 
 
 class CutSites(object):
