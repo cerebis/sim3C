@@ -254,39 +254,31 @@ def read_toml(hndl, normalise=False):
     return comm_dict
 
 
-def read_profile(hndl, normalise=False):
+def read_profile(filename, normalise=False):
     """
-    Read a profile from an input stream.
-    :param hndl: the input file name or file object
+    Read a profile from a file
+    :param filename: the input file name
     :param normalise: when true, normalise after reading
-    :return: Profile object
+    :return: a hierarchical dictionary-based community definition
     """
 
-    close_handle = False
-    try:
-        if isinstance(hndl, str):
-            hndl = open(hndl, 'rt')
-            close_handle = True
-
-        profile = Profile()
-        n = 1
-        for line in hndl:
-            line = line.strip()
-            if len(line) <= 0:
+    comm_dict = OrderedDict()
+    with open(filename, 'rt') as input_h:
+        for _l in input_h:
+            _l = _l.strip()
+            if not _l or _l.startswith('#'):
+                print(_l)
                 continue
-            if line.startswith('#'):
-                continue
-            try:
-                chrom, cell, molecule, abn, cn = re.split(r'[\s,]+', line)
-                profile.add(chrom, abn, cn, cell, molecule)
-            except Exception:
-                raise Sim3CException(f'IO error reading profile. Invalid table: line {n} [{line}]')
-            n += 1
+            seg, cell, repl, abn, cn = _l.split('\t')
+            if cell not in comm_dict:
+                comm_dict[cell] = {'replicons': OrderedDict(), 'abundance': float(abn)}
+            if repl not in comm_dict[cell]['replicons']:
+                comm_dict[cell]['replicons'][repl] = {'copy_number': float(cn), 'segments': []}
+            comm_dict[cell]['replicons'][repl]['segments'].append(seg)
 
-        if normalise:
-            profile.normalize()
+    if normalise:
+        total_abundance = sum([cell['abundance'] for cell in comm_dict.values()])
+        for cell in comm_dict.values():
+            cell['abundance'] /= total_abundance
 
-        return profile
-    finally:
-        if close_handle:
-            hndl.close()
+    return comm_dict

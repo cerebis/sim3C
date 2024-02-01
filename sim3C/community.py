@@ -18,6 +18,10 @@ logger = logging.getLogger(__name__)
 # 64bit floats.
 PROB_TYPE = 'f4'
 
+# this constant is used pedantically, to ensure that
+# a CDF array never ends in a value less than 1.0
+SLIGHTLY_LARGER_THAN_ONE = 1.0 + 1.0e-9
+
 @njit(f'i4({PROB_TYPE}[:], {PROB_TYPE})')
 def random_index(cdf, rv):
     """
@@ -28,6 +32,19 @@ def random_index(cdf, rv):
     pcg_uniform() from here as Numba cannot infer its return type.
     """
     return np.searchsorted(cdf, rv)
+
+
+@njit(f'{PROB_TYPE}[:]({PROB_TYPE}[:])')
+def pdf2cdf(pdf):
+    """
+    Convert a PDF to a CDF, making sure that the last element is 1. The PDF need
+    not be normalised, as we only require that the CDF's last element 1.
+    :return: the CDF array
+    """
+    cdf = np.cumsum(pdf)
+    cdf = cdf / cdf[-1]
+    cdf[-1] = SLIGHTLY_LARGER_THAN_ONE
+    return cdf
 
 
 def cdf_choice(vals, cdf):
@@ -58,11 +75,8 @@ class Segment(object):
         """
         self.name = name
         self.seq = seq
-
-        if not isinstance(repl, Replicon):
-            raise TypeError('repl attribute must be of type Replicon')
-        self.parent_repl = repl
-        repl.register_segment(self)
+        self.length = len(self.seq)
+        self.parent_repl = None
 
         # these are inherited from the containing replicon
         self.linear = repl.linear
@@ -74,14 +88,23 @@ class Segment(object):
 
         # cut-site related properties. These are pre-calculated as a simple
         # means of avoiding performance penalties with repeated calls.
-        if not enzyme:
+        if enzyme is None:
             self.sites = AllSites(len(seq.seq))
         else:
-            self.sites = CutSites(enzyme, seq.seq, linear=self.linear)
+            try:
+                self.sites = CutSites(enzyme, seq.seq, linear=self.linear)
+            except NoCutSitesException as e:
+                self.num_sites = 0
+                self.site_density = 0
+                raise e
 
-        self.length = len(self.seq)
         self.num_sites = self.sites.size
         self.site_density = self.num_sites / self.length
+
+        if not isinstance(repl, Replicon):
+            raise TypeError('repl attribute must be of type Replicon')
+        self.parent_repl = repl
+        repl.register_segment(self)
 
         if create_cids:
             logger.warning('CID model currently disabled')
@@ -247,6 +270,7 @@ class Replicon(object):
         self.segment_list = None
         self.anti_rate = anti_rate
         self.linear = linear
+        self.parent_cell = None
 
         # set bidirection association with containing cell
         if not isinstance(cell, Cell):
@@ -290,11 +314,15 @@ class Replicon(object):
         seg_info = self.get_segment_info()
         pdf_extent = np.array(seg_info['length'], dtype=f'{PROB_TYPE}')
         pdf_sites = np.array(seg_info['sites'], dtype=f'{PROB_TYPE}')
-        pdf_extent /= pdf_extent.sum()
-        pdf_sites /= pdf_sites.sum()
-        self.cdf_extent = np.cumsum(pdf_extent)
-        self.cdf_sites = np.cumsum(pdf_sites)
+        self.cdf_extent = pdf2cdf(pdf_extent)
+        self.cdf_sites = pdf2cdf(pdf_sites)
         self.segment_list = list(self.segment_registry)
+
+    def num_segments(self):
+        """
+        :return: the number of segments for this replicon.
+        """
+        return len(self.segment_registry)
 
     def get_length(self):
         """
@@ -343,7 +371,6 @@ class Replicon(object):
         Draw any segment from the replicon, biased by the segment length.
         :return: a Segment
         """
-        # return self.segment_registry[cdf_choice(self.segment_names, self.cdf_extent)]
         return cdf_choice(self.segment_list, self.cdf_extent)
 
     def print_report(self, show_cdf=False):
@@ -502,14 +529,10 @@ class Cell(object):
                 if repl_i != repl_j:
                     self.trans_segment_indices[repl_i].extend(seg_idx)
 
-        # normalise the PDFs
-        pdf_extent /= pdf_extent.sum()
-        pdf_sites /= pdf_sites.sum()
-
         # CDFs from the PDFs. Selection is accomplished by drawing a
         # unif([0..1]) and mapping that through the relevant CDF.
-        self.cdf_extent = np.cumsum(pdf_extent)
-        self.cdf_sites = np.cumsum(pdf_sites)
+        self.cdf_extent = pdf2cdf(pdf_extent)
+        self.cdf_sites = pdf2cdf(pdf_sites)
 
         # prepare a registry of all defined segments for this replicon
         for repl in self.replicon_registry.values():
@@ -531,15 +554,13 @@ class Cell(object):
 
                 # site probs without rn
                 pi = pdf_sites[xi]
-                pi /= pi.sum()
                 self.cdf_sites_inter[repl_i] = {'replicons': [self.segment_list[i] for i in xi],
-                                                'prob': np.cumsum(pi, dtype=f'{PROB_TYPE}')}
+                                                'prob': pdf2cdf(pi)}
 
                 # extent probs without rn
                 pi = pdf_extent[xi]
-                pi /= pi.sum()
                 self.cdf_extents_inter[repl_i] = {'replicons': [self.segment_list[i] for i in xi],
-                                                  'prob': np.cumsum(pi, dtype=f'{PROB_TYPE}')}
+                                                  'prob': pdf2cdf(pi)}
 
     def register_replicon(self, repl):
         """
@@ -674,6 +695,7 @@ class Community(object):
         """
 
         comm_dict = read_toml(profile_toml, True)
+
         # override spurious rate if not defined in the TOML
         if 'spurious_rate' not in comm_dict['community']:
             logger.warning(f'No spurious_rate set for community, falling back to default {spurious_rate}')
@@ -684,7 +706,9 @@ class Community(object):
             if 'trans_rate' not in ci:
                 logger.warning(f'No trans_rate set for cell {ci["name"]}, falling back to default {trans_rate}')
                 ci['trans_rate'] = trans_rate
+
             cell = community._register_cell(Cell(ci['name'], ci['abundance'], ci['trans_rate']))
+
             for ri in ci['replicons']:
                 # override anti_rate and linear if not defined in the TOML
                 if 'anti_rate' not in ri:
@@ -693,15 +717,22 @@ class Community(object):
                 if 'linear' not in ri:
                     logger.warning(f'linear status set for replicon {ri["name"]}, falling back to default {linear}')
                     ri['linear'] = linear
-                repl = community._register_replicon(Replicon(ri['name'], cell, ri['copy_number'],
-                                                             ri['anti_rate'], ri['linear']))
+
+                repl = Replicon(ri['name'], cell, ri['copy_number'], ri['anti_rate'], ri['linear'])
+
                 for si in ri['segments']:
                     try:
-                        seq = seq_index[si].upper()
-                        community._register_segment(Segment(si, repl=repl, seq=seq, enzyme=enzyme))
+                        seg = Segment(si, repl=repl, seq=seq_index[si].upper(), enzyme=enzyme)
+                        community._register_segment(seg)
                     except NoCutSitesException:
                         logger.warning(f'Sequence {si} had no cut-sites '
                                        f'for the enzyme {str(enzyme)} and will be ignored')
+                if repl.num_segments() > 0:
+                    community._register_replicon(repl)
+                    logger.debug(f'Replicon {repl.name} was added to community')
+                else:
+                    logger.warning(f'Replicon {ri["name"]} had no usable segments and will be ignored')
+                    del cell.replicon_registry[repl]
 
         community._init_community()
         return community
@@ -742,21 +773,29 @@ class Community(object):
         :param linear:
         :return: Community object
         """
-        profile = read_profile(profile_table, True)
+
+        comm_dict = read_profile(profile_table, True)
         community = Community(enzyme, spurious_rate)
-        # initialise the registries using the community profile
-        for row_i in profile.values():
-            # register the cell
-            cell = community._register_cell(Cell(row_i.cell, row_i.abundance, trans_rate))
-            repl = community._register_replicon(Replicon(row_i.molecule, cell, row_i.copy_number, anti_rate, linear))
-            try:
-                # fetch the sequence from file
-                rseq = seq_index[row_i.name].upper()
-                # community-wide replicon registry
-                community._register_segment(Segment(row_i.name, repl, rseq, enzyme))
-            except NoCutSitesException:
-                logger.warning('Sequence "{}" had no cut-sites for the enzyme {} and will be ignored'.format(
-                    row_i.name, str(enzyme)))
+        for c_name, c_details in comm_dict.items():
+            # override trans_rate if not defined in the TOML
+            cell = community._register_cell(Cell(c_name, c_details['abundance'], trans_rate))
+
+            for r_name, r_details in c_details['replicons'].items():
+                repl = Replicon(r_name, cell, r_details['copy_number'], anti_rate, linear)
+
+                for s_name in r_details['segments']:
+                    try:
+                        seg = Segment(s_name, repl=repl, seq=seq_index[s_name].upper(), enzyme=enzyme)
+                        community._register_segment(seg)
+                    except NoCutSitesException:
+                        logger.warning(f'Sequence {s_name} had no cut-sites '
+                                       f'for the enzyme {str(enzyme)} and will be ignored')
+                if repl.num_segments() > 0:
+                    community._register_replicon(repl)
+                    logger.debug(f'Replicon {repl.name} was added to community')
+                else:
+                    logger.warning(f'Replicon {r_name} had no usable segments and will be ignored')
+                    del cell.replicon_registry[repl]
 
         community._init_community()
         return community
@@ -771,7 +810,7 @@ class Community(object):
                 cell.init_prob()
             except NoRepliconsException:
                 logger.warning('Cell "{}" had no usable replicons and will be ignored'.format(cell.name))
-                del self.cell_registry[cell.name]
+                del self.cell_registry[cell]
 
         # now initialise the probs for the whole community
         pdf_extent = np.zeros(len(self.segm_registry), dtype=f'{PROB_TYPE}')
@@ -788,13 +827,9 @@ class Community(object):
                 pdf_sites[i] = cn * si['sites']
                 i += 1
 
-        # now normalise pdfs
-        pdf_extent /= pdf_extent.sum()
-        pdf_sites /= pdf_sites.sum()
-
         # derive cdfs from pdfs, these are what's used for drawing values
-        self.cdf_extent = np.cumsum(pdf_extent)
-        self.cdf_sites = np.cumsum(pdf_sites)
+        self.cdf_extent = pdf2cdf(pdf_extent)
+        self.cdf_sites = pdf2cdf(pdf_sites)
 
         # keep a list of names in numpy format
         self.repl_list = list(self.repl_registry)
