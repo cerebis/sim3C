@@ -13,7 +13,7 @@ LABEL org.label-schema.docker.cmd="docker run -v /path/to/data:/app cerebis/sim3
 RUN apt-get update &&  \
     apt-get upgrade -y && \
     apt-get install -y llvm && \
-    pip install -U pip && \
+    pip install --no-cache-dir -U pip && \
     rm -rf /var/lib/apt/lists/*
 
 RUN pip install --no-cache-dir git+https://github.com/cerebis/sim3C.git && \
