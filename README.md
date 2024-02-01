@@ -1,5 +1,7 @@
 # sim3C
 
+[![CodeFactor](https://www.codefactor.io/repository/github/cerebis/sim3c/badge)](https://www.codefactor.io/repository/github/cerebis/sim3c)
+
 Read-pair simulation of 3C-based sequencing methodologies (HiC, Meta3C, DNase-HiC)
 
 ## Recent Updates
