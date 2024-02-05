@@ -75,7 +75,6 @@ def check_suffixes(file_name1: str, file_name2: str = None) -> None:
             raise Sim3CException(f'Paired output files should have matching extensions: {suffix1}, {suffix2}')
 
 
-
 def main():
     import argparse
     import sys
@@ -95,8 +94,8 @@ def main():
                         help="Random seed for initialising number generator")
     parser.add_argument('-m', '--method', default='hic', choices=['hic', 'meta3c', 'dnase'],
                         help='Library preparation method [hic]')
-    parser.add_argument('-e', '--enzyme', dest='enzyme_name', default=None,
-                        help='Restriction enzyme (case-sensitive) [NlaIII]')
+    parser.add_argument('-e', '--enzyme', metavar='NEB_NAME', action='append',
+                        help='Case-sensitive NEB enzyme name. Use multiple times for multiple enzymes')
 
     parser.add_argument('-n', '--num-pairs', metavar='INT', type=int, required=True,
                         help='Number of read-pairs generate')
@@ -156,13 +155,17 @@ def main():
     try:
 
         if 'community_table' in args and args.dist:
-            raise RuntimeError('Cannot define abundance both explicitly as a table (-t) and a distribution (--dist).')
+            raise Sim3CException('Cannot define abundance both explicitly as a table (-t) and a distribution (--dist).')
 
-        if args.method == 'dnase':
-            if args.enzyme_name:
-                raise RuntimeError('The dnase method does not accept an enyzme specification.')
-        elif not args.enzyme_name:
-            raise RuntimeError('No enzyme was specified')
+        if args.enzyme:
+            if args.method == 'dnase':
+                raise Sim3CException('No enzyme can be specified for the dnase method')
+            if len(args.enzyme) == 1:
+                args.enzyme.append(None)
+            elif len(args.enzyme) > 2:
+                raise Sim3CException('A maximum of two enzymes can be specified')
+        elif args.method != 'dnase':
+            raise Sim3CException('At least one enzyme must be specified')
 
         #
         # Prepare community abundance profile, either procedurally or from a file
@@ -221,7 +224,7 @@ def main():
             elif args.method == 'dnase':
                 args.efficiency = 0.5
             else:
-                raise RuntimeError('BUG: missing efficiency for method {}'.format(args.method))
+                raise Sim3CException('BUG: missing efficiency for method {}'.format(args.method))
 
         # list of CLI arguments to pass as parameters to the simulation
         kw_names = ['prefix', 'machine_profile', 'insert_mean', 'insert_sd', 'insert_min', 'insert_max',
@@ -238,7 +241,7 @@ def main():
 
         # initialise a sequencing strategy for this community
         # and the given experimental parameters
-        strategy = SequencingStrategy(args.profile_in, args.genome_seq, args.enzyme_name,
+        strategy = SequencingStrategy(args.profile_in, args.genome_seq, args.enzyme,
                                       args.num_pairs, args.method, args.read_length, **kw_args)
 
         # Run the simulation

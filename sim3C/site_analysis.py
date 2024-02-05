@@ -1,4 +1,8 @@
+import itertools
+import logging
+import re
 import numpy as np
+import numba as nb
 
 from collections import namedtuple
 from Bio.Restriction import Restriction
@@ -7,7 +11,14 @@ from Bio.Restriction.Restriction_Dictionary import rest_dict, typedict
 from .exceptions import *
 import sim3C.random as random
 
-ligation_info_t = namedtuple('ligation_info', ('enzyme', 'junction', 'vestigial', 'junc_len', 'vest_len'))
+logger = logging.getLogger(__name__)
+
+# Information pertaining to digestion / private class for readability
+digest_info = namedtuple('digest_info', ('enzyme', 'end5', 'end3', 'overhang'))
+# Information pertaining to a Hi-C ligation junction
+ligation_info = namedtuple('ligation_info',
+                           ('enz5p', 'enz3p', 'junction', 'vestigial', 'junc_len',
+                            'vest_len', 'pattern', 'cross'))
 
 
 def get_enzyme_instance_ipython(enz_name):
@@ -64,17 +75,100 @@ def vestigial_site(enz, junc):
     return str(junc[:i]).upper()
 
 
-def get_ligation_info(enz):
+def get_ligation_info(enzyme_a, enzyme_b=None):
     """
-    Determine the ligation junction and vestigial site for a given enzyme.
-    :param enz: the ezyme to consider
-    :return: ligation_info_t namedtuple
+    For the enzyme cocktail, generate the set of possible ligation junctions.
+    :return: a dictionary of ligation_info objects
     """
-    end5, end3 = enzyme_ends(enz)
-    overhang = enz.ovhgseq.upper()
-    _junc_seq = f'{end5}{overhang}{overhang}{end3}'
-    _vest_seq = vestigial_site(enz, _junc_seq)
-    return ligation_info_t(str(enz), _junc_seq, _vest_seq, len(_junc_seq), len(_vest_seq))
+    end5, end3 = enzyme_ends(enzyme_a)
+    enz_list = [digest_info(enzyme_a, end5, end3, enzyme_a.ovhgseq.upper())]
+
+    if enzyme_b is not None:
+        end5, end3 = enzyme_ends(enzyme_b)
+        enz_list.append(digest_info(enzyme_b, end5, end3, enzyme_b.ovhgseq.upper()))
+
+    _junctions = {}
+    for n, (i, j) in enumerate(itertools.product(range(len(enz_list)), repeat=2), start=1):
+        a, b = enz_list[i], enz_list[j]
+        # the actual sequence
+        _junc_seq = '{}{}{}{}'.format(a.end5, a.overhang, b.overhang, b.end3)
+        if _junc_seq not in _junctions:
+            _vest_seq = vestigial_site(a.enzyme, _junc_seq)
+            _lij = ligation_info(str(a.enzyme), str(b.enzyme),
+                                 _junc_seq, _vest_seq,
+                                 len(_junc_seq), len(_vest_seq),
+                                 re.compile(_junc_seq.replace('N', '[ACGT]')),
+                                 str(a.enzyme) == str(b.enzyme))
+
+            _junctions[(i, j)] = _lij
+
+    logger.info('Predicted ligation junctions in the case of Hi-C reactions are: '
+                f'{", ".join([_l.junction for _l in _junctions.values()])}')
+
+    return _junctions
+
+
+@nb.njit('i8[:](i8[:,:], i8, i8)')
+def _fast_find_nn_circular(sites, max_length, pos):
+    """
+    Find the nearest cut-site relative to supplied position on a circular
+    chromosome.
+    :param pos: the position on the chromosome
+    :return: nearest site
+    """
+    ix = np.searchsorted(sites[:, 0], pos)
+    # modulo so as we only return values within the range [0..maxlen]
+    # this handles the edge case of sites crossing beginning or end.
+    if pos - sites[ix - 1, 0] <= sites[ix, 0] - pos:
+        rv = sites[ix - 1].copy()
+        rv[0] %= max_length
+    else:
+        rv = sites[ix].copy()
+        rv[0] %= max_length
+    return rv
+
+
+@nb.njit('i8[:](i8[:,:], i8)')
+def _fast_find_nn_linear(sites, pos):
+    """
+    Find the nearest cut-site relative to the supplied position on a linear
+    chromosome or sequence fragment.
+    :param pos: the position on the chromosome
+    :return: nearest site
+    """
+    ix = np.searchsorted(sites[:, 0], pos)
+    # first or last site was closest
+    if ix == 0:
+        return sites[0]
+    elif ix == sites.shape[0]:
+        return sites[-1]
+    # pick the closest of nearest neighbours
+    if pos - sites[ix - 1, 0] <= sites[ix, 0] - pos:
+        return sites[ix - 1]
+    else:
+        return sites[ix]
+
+
+@nb.njit('i8[:](i8[:,:], i8, i8)')
+def _fast_find_first(sites, pos, origin_site):
+    """
+    Beginning from pos and searching toward the origin, return the first encountered cut-site.
+    This may turn out to be the origin if there is no other intervening site.
+    :param pos: a position on the chromosome
+    :param origin_site: a valid cut-site used as the relative origin
+    :return: the first site encountered between pos and origin_site
+    """
+    if pos > origin_site:
+        # the position begins after the origin
+        ix = np.searchsorted(sites[:, 0], pos, side='right')
+        if ix == 0:
+            return sites[ix]
+        else:
+            return sites[ix-1]
+    else:
+        # position begins before the origin site
+        ix = np.searchsorted(sites[:, 0], pos, side='left')
+        return sites[ix]
 
 
 class CutSites(object):
@@ -83,25 +177,28 @@ class CutSites(object):
     Note: locations are 0-based
     """
 
-    def __init__(self, enzyme, template_seq, linear=False):
+    def __init__(self, template_seq, enzyme_a, enzyme_b=None, linear=False):
         """
         Initialize the cut-sites of an enzyme on a template sequence.
 
         Linearity affects both the initial search for recognition sites and
         when requesting the nearest site to a given genomic location.
 
-        :param enzyme: the restriction enzyme (Bio.Restriction RestrictionType object)
         :param template_seq: the template sequence to digest (Bio.Seq object)
+        :param enzyme_a: the first enzyme
+        :param enzyme_b: a second enzyme (optional)
         :param linear: treat sequence as linear
         """
-        self.enzyme = enzyme
+        self.enzyme_a = enzyme_a
+        self.enzyme_b = enzyme_b
         self.max_length = len(template_seq) - 1
 
         # find sites, converting from 1-based.
-        self.sites = np.array(enzyme.search(template_seq, linear)) - 1
+        self.sites = self._find_sites(template_seq, linear)
+        if self.sites.shape[0] == 0:
+            enz_names = ','.join([str(enz) for enz in [enzyme_a, enzyme_b] if enz is not None])
+            raise NoCutSitesException(f'No cut-sites found using: {enz_names}')
         self.size = self.sites.shape[0]
-        if self.size == 0:
-            raise NoCutSitesException(str(enzyme))
 
         # method setup
         if linear:
@@ -112,14 +209,32 @@ class CutSites(object):
             self.covers = self._covers_site_circular
             self.shouldered = self._add_shoulders()
 
+    def _find_sites(self, template_seq, linear):
+        sites = []
+        for label, enzyme in enumerate([self.enzyme_a, self.enzyme_b]):
+            if enzyme is None:
+                continue
+            cs = np.array(enzyme.search(template_seq, linear), dtype='i8') - 1
+            cs = np.vstack([cs, np.zeros_like(cs)]).T
+            cs[:, 1] = label
+            sites.append(cs)
+
+        # combine all sites into a single array
+        sites = np.concatenate(sites)
+        # reorder the array by coordinate
+        sites = sites[np.argsort(sites[:, 0]),]
+        return sites
+
     def _add_shoulders(self):
         """
         Add shoulders to the already determined list of circular chr sites. This allows
         finding positions without logic for edge cases (ix=0 or -1)
         """
-        before_first = self.sites[-1] - self.max_length
-        after_last = self.max_length + self.sites[0]
-        return np.hstack(([before_first], self.sites, [after_last]))
+        before_first = self.sites[[-1]]
+        before_first[0, 0] -= self.max_length
+        after_last = self.sites[[0]]
+        after_last[0, 0] += self.max_length
+        return np.vstack(([before_first, self.sites, after_last]))
 
     def random_site(self):
         """
@@ -136,7 +251,7 @@ class CutSites(object):
         :param length: length
         :return: True the coordinates contain at least one cut-site
         """
-        return ((self.sites > x1) & (self.sites <= x1+length)).any()
+        return ((self.sites[:, 0] > x1) & (self.sites[:, 0] <= x1 + length)).any()
 
     def _covers_site_circular(self, x1, length):
         """
@@ -148,9 +263,9 @@ class CutSites(object):
         """
         x2 = x1 + length
         if x2 > self.max_length:
-            ret = ((x2 % self.max_length) >= self.sites) | (x1 <= self.sites)
+            ret = ((x2 % self.max_length) >= self.sites[:, 0]) | (x1 <= self.sites[:, 0])
         else:
-            ret = (x1 <= self.sites) & (x2 >= self.sites)
+            ret = (x1 <= self.sites[:, 0]) & (x2 >= self.sites[:, 0])
         return ret.any()
 
     def _find_nn_circular(self, pos):
@@ -160,19 +275,7 @@ class CutSites(object):
         :param pos: the position on the chromosome
         :return: nearest site
         """
-        if pos > self.max_length:
-            OutOfBoundsException(pos, self.max_length)
-
-        cs = self.shouldered
-        ix = np.searchsorted(cs, pos)
-        x1 = cs[ix - 1]
-        x2 = cs[ix]
-        # modulo so as we only return values within the range [0..maxlen]
-        # this handles the edge case of sites crossing beginning or end.
-        if pos - x1 <= x2 - pos:
-            return x1 % self.max_length
-        else:
-            return x2 % self.max_length
+        return _fast_find_nn_circular(self.shouldered, self.max_length, pos)
 
     def _find_nn_linear(self, pos):
         """
@@ -181,24 +284,7 @@ class CutSites(object):
         :param pos: the position on the chromosome
         :return: nearest site
         """
-        if pos > self.max_length:
-            OutOfBoundsException(pos, self.max_length)
-
-        cs = self.sites
-        ix = np.searchsorted(cs, pos)
-        # first or last site was closest
-        if ix == 0:
-            return cs[0]
-        elif ix == self.size:
-            return cs[-1]
-        else:
-            # pick the closest of nearest neighbours
-            x1 = cs[ix - 1]
-            x2 = cs[ix]
-            if pos - x1 <= x2 - pos:
-                return x1
-            else:
-                return x2
+        return _fast_find_nn_linear(self.sites, pos)
 
     def find_first(self, pos, origin_site):
         """
@@ -208,21 +294,7 @@ class CutSites(object):
         :param origin_site: a valid cut-site used as the relative origin
         :return: the first site encountered between pos and origin_site
         """
-        if pos > self.max_length:
-            OutOfBoundsException(pos, self.max_length)
-
-        cs = self.sites
-        if pos > origin_site:
-            # the position begins after the origin
-            ix = np.searchsorted(cs, pos, side='right')
-            if ix == 0:
-                return cs[ix]
-            else:
-                return cs[ix-1]
-        else:
-            # position begins before the origin site
-            ix = np.searchsorted(cs, pos, side='left')
-            return cs[ix]
+        return _fast_find_first(self.sites, pos, origin_site)
 
 
 class AllSites(object):

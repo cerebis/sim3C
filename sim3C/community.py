@@ -22,6 +22,7 @@ PROB_TYPE = 'f4'
 # a CDF array never ends in a value less than 1.0
 SLIGHTLY_LARGER_THAN_ONE = 1.0 + 1.0e-9
 
+
 @njit(f'i4({PROB_TYPE}[:], {PROB_TYPE})')
 def random_index(cdf, rv):
     """
@@ -64,13 +65,13 @@ class Segment(object):
     replicon (chromosome, plasmid, etc).
     """
 
-    def __init__(self, name, repl, seq, enzyme, create_cids=False):
+    def __init__(self, name, repl, seq, enzymes, create_cids=False):
         """
         The definition of a segment of DNA.
         :param name: a unique name for this segment
         :param repl: the parent replicon for this segment
         :param seq: the sequence of this segment
-        :param enzyme: the enzyme used to digest DNA in the 3C/HiC library preparation
+        :param enzymes: the list of enzymes used to digest DNA in the 3C/HiC library preparation
         :param create_cids: when true, simulate chromosome-interacting-domains
         """
         self.name = name
@@ -88,11 +89,14 @@ class Segment(object):
 
         # cut-site related properties. These are pre-calculated as a simple
         # means of avoiding performance penalties with repeated calls.
-        if enzyme is None:
+        if enzymes is None:
             self.sites = AllSites(len(seq.seq))
         else:
             try:
-                self.sites = CutSites(enzyme, seq.seq, linear=self.linear)
+                self.sites = CutSites(seq.seq,
+                                      enzymes[0],
+                                      enzymes[1] if len(enzymes) == 2 else None,
+                                      linear=self.linear)
             except NoCutSitesException as e:
                 self.num_sites = 0
                 self.site_density = 0
@@ -655,11 +659,11 @@ class Community(object):
     TRANS_RATE = 0.1
     LINEAR = False
 
-    def __init__(self, enzyme, spurious_rate=0.02):
+    def __init__(self, enzymes, spurious_rate=0.02):
         """
         Initialise a community.
 
-        :param enzyme: the enzyme used to digest DNA in the 3C/HiC library preparation
+        :param enzymes: the list of enzymes used to digest DNA in the 3C/HiC library preparation
         :param spurious_rate: the rate of spurious ligation products
         """
         # global segment, replicon, and cell registries
@@ -668,19 +672,19 @@ class Community(object):
         self.cell_registry = OrderedDict()
 
         # 3C protocol enzymatic digest
-        self.enzyme = enzyme
+        self.enzymes = enzymes
         # intercellular rate is scaled by the product of all chrom site probs
         self.spurious_rate = spurious_rate
 
     @staticmethod
-    def from_toml(seq_index, profile_toml, enzyme,
+    def from_toml(seq_index, profile_toml, enzymes,
                   anti_rate=ANTI_RATE, spurious_rate=SPURIOUS_RATE,
                   trans_rate=TRANS_RATE, linear=LINEAR):
         """
         Construct a community from a TOML file resource.
         :param seq_index:
         :param profile_toml:
-        :param enzyme:
+        :param enzymes:
         :param anti_rate:
         :param spurious_rate:
         :param trans_rate:
@@ -694,7 +698,7 @@ class Community(object):
         if 'spurious_rate' not in comm_dict['community']:
             logger.warning(f'No spurious_rate set for community, falling back to default {spurious_rate}')
             comm_dict['community']['spurious_rate'] = spurious_rate
-        community = Community(enzyme, comm_dict['community']['spurious_rate'])
+        community = Community(enzymes, comm_dict['community']['spurious_rate'])
         for ci in comm_dict['community']['cells']:
             # override trans_rate if not defined in the TOML
             if 'trans_rate' not in ci:
@@ -716,11 +720,10 @@ class Community(object):
 
                 for si in ri['segments']:
                     try:
-                        seg = Segment(si, repl=repl, seq=seq_index[si].upper(), enzyme=enzyme)
+                        seg = Segment(si, repl=repl, seq=seq_index[si].upper(), enzymes=enzymes)
                         community._register_segment(seg)
-                    except NoCutSitesException:
-                        logger.warning(f'Sequence {si} had no cut-sites '
-                                       f'for the enzyme {str(enzyme)} and will be ignored')
+                    except NoCutSitesException as ex:
+                        logger.warning(f'{ex}: sequence {si} will be ignored')
                 if repl.num_segments() > 0:
                     community._register_replicon(repl)
                     logger.debug(f'Replicon {repl.name} was added to community')
@@ -753,14 +756,14 @@ class Community(object):
             toml.dump(comm_dict, output_h, encoder=encoder)
 
     @staticmethod
-    def from_profile(seq_index, profile_table, enzyme,
+    def from_profile(seq_index, profile_table, enzymes,
                      anti_rate=ANTI_RATE, spurious_rate=SPURIOUS_RATE,
                      trans_rate=TRANS_RATE, linear=LINEAR):
         """
         Construct a community from a profile table file resource.
         :param seq_index:
         :param profile_table:
-        :param enzyme:
+        :param enzymes:
         :param anti_rate:
         :param spurious_rate:
         :param trans_rate:
@@ -769,7 +772,7 @@ class Community(object):
         """
 
         comm_dict = read_profile(profile_table, True)
-        community = Community(enzyme, spurious_rate)
+        community = Community(enzymes, spurious_rate)
         for c_name, c_details in comm_dict.items():
             # override trans_rate if not defined in the TOML
             cell = community._register_cell(Cell(c_name, c_details['abundance'], trans_rate))
@@ -779,11 +782,10 @@ class Community(object):
 
                 for s_name in r_details['segments']:
                     try:
-                        seg = Segment(s_name, repl=repl, seq=seq_index[s_name].upper(), enzyme=enzyme)
+                        seg = Segment(s_name, repl=repl, seq=seq_index[s_name].upper(), enzymes=enzymes)
                         community._register_segment(seg)
-                    except NoCutSitesException:
-                        logger.warning(f'Sequence {s_name} had no cut-sites '
-                                       f'for the enzyme {str(enzyme)} and will be ignored')
+                    except NoCutSitesException as ex:
+                        logger.warning(f'{ex}: sequence {s_name} will be ignored')
                 if repl.num_segments() > 0:
                     community._register_replicon(repl)
                     logger.debug(f'Replicon {repl.name} was added to community')
