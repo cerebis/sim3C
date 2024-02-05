@@ -7,6 +7,7 @@ Read-pair simulation of 3C-based sequencing methodologies (HiC, Meta3C, DNase-Hi
 ## Recent Updates
 
 - Python 3 support (requires 3.11)
+- Added support for dual-enzyme digests (such as those used by Phase Genomics and Arima)
 - Minimal Docker image (`cerebis/sim3c`)
 - New optional TOML-format community profile definition
   - finer granularity
@@ -47,15 +48,13 @@ Python dependencies will automatically be satisfied during installation.
 
 If you encounter problems please visit and log an issue at the [project site on Github](https://github.com/cerebis/sim3C/issues). 
 
-## Usage
+## Input data
 
-### External files
-
-#### Reference Sequence(s) (mandatory)
+### Reference Sequence(s) (mandatory)
 
 At a minimum, Sim3C requires a reference sequence (or sequences) from which to draw reads. This reference must be in FASTA format. For multiple references, all must be contained in the single multi-FASTA file. All sequence identifiers must be unique must be unique in a multi-FASTA file.
 
-#### Community Profile (optional)
+### Community Profile (optional)
 
 A community profile can be supplied, which gives the user more control over the definition. Without this enternal profile file, each individual sequence encountered in the supplied reference will be treated as a separate monochromosomal genome.
 
@@ -85,7 +84,7 @@ contig4   b.subt   chrom_xyz     0.05          1
 contig5   s.aur    foobar        0.05          1
 ```
 
-##### Column definitions
+#### Column definitions
 
 **1. chromosome:** (string)
  
@@ -120,7 +119,7 @@ Relative abundances are defined per-cell, therefore this value will be repeated 
 
 Copy number is most often set to 1, but gives the user the freedom to increase the abundance of chromosomes independent of the cellular abundance.
 
-### Running sim3C
+## Running sim3C
 
 The simplest runtime scenario would be a strictly mono-chromosomal community, which requires only reference FASTA.
 
@@ -136,15 +135,39 @@ If a community profile has been prepared and we wish to simulate Meta3C.
 
 Both a random seed and a output profile name can be specified at runtime. These make reducibility possible. The random seed is used to initialise all number generators within the simulation and, if given, the profile name will allow Sim3C to save the state of the profile when drawn at random from a distribution. Though saving the profile state is not necessary to reproducibly rerun Sim3C, it assists downstream analyses which may wish to know the true state.
 
-### Useful options
+## Useful options
 
-#### Ambiguous IUPAC symbols
+### Specify restriction digest enzyme
+
+```--enzyme [string]``` OR ```-e [string]```
+
+
+For HiC and Meta3C simulation, users must specify either one or two enzymes. To specify two enzymes, simply repeat the option.
+
+Eg. ```-e DpnII -e MluCI``` would define a multi-digest using the two four-cutters DpnII and MluCI.
+
+Enzyme names follow the NEB nomenclature and are case-sensitive. Most enzymes defined in ReBase[2] are understood, so long as they have been defined in the BioPython.Restriction module.
+
+**Some common enzymes**
+- 4-cutter: DpnII, Sau3AI, MluCI, NlaIII, HinfI
+- 6-cutter: HindIII
+
+**Commercial Kits** 
+- Phase: DpnII MluCI
+- Arima: DpnII, HinfI
+
+**Notes**
+- DpnII and Sau3AI are isoschizomers. As such, although there may be reason to choose one over the other in real experimental setups, in simulation, they are identical.
+- Dual-digests are treated as being run simultaneously, consequently the resulting Hi-C ligation duplication sites can be a hybrid of the two enzymes.
+- HinfI contains an ambiguous base (N) within its recognition site.
+
+### Ambiguous IUPAC symbols
 
 ```--convert```
 
 At present, Art.py is not able to model errors when reference sequenes contain ambiguous symbols other than N (i.e. MRWSYKVHDB). In these cases, if users do not wish to prepare sequences themselves, the `--convert` option will convert all such symbols to N in memory, prior to simulation. Therefore, emitted simulated reads will contain N in these locations.
 
-#### Faster simulation
+### Faster simulation
 
 ```--simple-reads```
 
@@ -152,23 +175,22 @@ Users whose work does not require simulated read errors -- or for whom time is v
 
 **Please Note:** when error modelling is disasbled, if reference sequences contain ambiguous symbols (i.e. MRWSYKVHDB), then these will be carried through to the simulated reads.
 
-#### Output format
+### Output format
 
 Output reads can be written in either FASTA or FASTQ format, where the format is inferred from the file extension specified at runtime. Eg. `.fq|.fastq` -> FASTQ, `.fa|.fasta` -> FASTA.
 
-#### Compress output
+### Compress output
 
 Output reads can be compressed using gzip or bzip2, where the compression type is inferred from the file extension specified at runtime. 
 Eg. `.gz` -> gzip compression, `.bz2` -> bzip2 compression.
 
 ```--compress```
 
-#### Split or Interleaved output
+### Split or Interleaved output
 
 Output reads can be written as interleaved or split R1/R2 files. At runtime, specifying a single output read file will produce interleaved read-pairs, while specifying two output files will produce split R1/R2 files. 
 
 **Please note:** Only the suffixes of file names are inspected, there is no requirement to adhere to a `_1`/`_2` or `_R1`/`_R2` naming convention with split read output.
-
 
 **Interleaved**
 ```
@@ -183,7 +205,7 @@ sim3C --dist uniform -n 500000 -l 150 -e NlaIII -m hic myref.fasta sim_R1.fq sim
 sim3C --dist uniform -n 500000 -l 150 -e NlaIII -m hic myref.fasta foo.fq bar.fq
 ```
 
-#### Examples
+## Examples
 ```
 # uncompressed, interleaved FASTA output
 sim3C --dist uniform -n 500000 -l 150 -e NlaIII -m hic myref.fasta sim.fa
@@ -194,12 +216,6 @@ sim3C --dist uniform -n 500000 -l 150 -e NlaIII -m hic myref.fasta sim.fq.gz
 # gzip compressed, split R1/R1 FASTQ output
 sim3C --dist uniform -n 500000 -l 150 -e NlaIII -m hic myref.fasta sim_1.fq.gz sim_2.fq.gz
 ```
-
-#### Specify restriction digest enzyme
-
-```--enzyme [string]``` OR ```-e [string]```
-
-For HiC and Meta3C simulation, an enzyme is required. The default is the 4-cutter NlaIII. The name is case-sensitive and supports most enzymes defined in ReBase[2], as implemented in BioPython Restriction.
 
 ## References
 
