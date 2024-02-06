@@ -17,6 +17,8 @@ You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """
 import logging
+import re
+
 import tqdm
 
 from Bio import SeqIO
@@ -45,7 +47,7 @@ class ReadGenerator(object):
     """
     def __init__(self, method, enzymes, prefix='SIM3C', simple=False, machine_profile='EmpMiSeq250',
                  read_length=250, ins_rate=9.e-5, del_rate=1.1e-4,
-                 insert_mean=500, insert_sd=100, insert_min=100, insert_max=None):
+                 insert_mean=500, insert_sd=100, insert_min=100, insert_max=None, bridge=None):
         """
         Initialise a read generator.
         :param method: The two library preparation methods are: 'meta3c' or 'hic'.
@@ -60,6 +62,7 @@ class ReadGenerator(object):
         :param insert_sd: standard deviation of insert length  (must be < mean)
         :param insert_min: minimum allowable insert length (must be > 50)
         :param insert_max: maximum allowable insert length (must be > mean)
+        :param bridge: an arbitrary sequence bridging a and b
         """
 
         self.method = method
@@ -88,6 +91,8 @@ class ReadGenerator(object):
         self.too_short = 0
         self.too_long = 0
 
+        self.bridge = bridge
+
         # initialise ART read simulator
         self.art = Art(read_length, EmpDist.create(machine_profile), ins_rate, del_rate)
 
@@ -101,7 +106,7 @@ class ReadGenerator(object):
             method_switcher = {
                 'hic': self._part_joiner_sitedup,
                 'meta3c': self._part_joiner_simple,
-                'dnase': self._part_joiner_simple
+                'dnase': self._part_joiner_bridged
             }
             self._part_joiner = method_switcher[self.method.lower()]
         except Exception:
@@ -121,32 +126,44 @@ class ReadGenerator(object):
         return msg
 
     @staticmethod
-    def _part_joiner_simple(a, b, *args):
+    def _part_joiner_simple(frag_a, frag_b, *args):
         """
         Join two fragments end to end without any site duplication. The new
         fragment will begin at a_0 and end at b_max. Used when no end fills are
         applied to the library prep (Eg. meta3C)
         Altogether [a_0..a_max] + [b_0..b_max]
-        :param a: fragment a
-        :param b: fragment b
+        :param frag_a: fragment a
+        :param frag_b: fragment b
         :param args: unused
-        :return: a + b
+        :return: frag_a + frag_b
         """
-        return a + b
+        return frag_a + frag_b
 
-    def _part_joiner_sitedup(self, a, b, enz1, enz2):
+    def _part_joiner_bridged(self, frag_a, frag_b, *args):
+        """
+        Join two fragments end to end with an intervening bridge sequence. The new
+        fragment will begin at a_0 and end at b_max. Used optionally in dnase
+        library preps.
+        Altogether [a_0..a_max] + [bridge] + [b_0..b_max]
+        :param frag_a: fragment a
+        :param frag_b: fragment b
+        :param args: unused
+        :return: frag_a + bridge + frag_b
+        """
+        return frag_a + self.bridge + frag_b
+
+    def _part_joiner_sitedup(self, frag_a, frag_b, *enzymes):
         """
         Join two fragments end to end where the cut-site is duplicated. The new
         fragment will begin at a_0 end at b_max. Used when end-fill is applied
         before further steps in library preparation (Eg. HiC)
         Altogether [a_0..a_max] + [cs_0..cs_max] + [b_0..b_max]
-        :param a: fragment a
-        :param b: fragment b
-        :param enz1: the 5p enzyme
-        :param enz2: the 3p enzyme
-        :return: a + b
+        :param frag_a: fragment a
+        :param frag_b: fragment b
+        :param enzymes: tuple of (enzyme_a, enzyme_b) used in digestion
+        :return: frag_a + junc_ab + frag_b
         """
-        return a + self.ligation_info[(enz1, enz2)].junction + b
+        return frag_a + self.ligation_info[enzymes].junction + frag_b
 
     def draw_insert(self):
         """
@@ -259,7 +276,7 @@ class SequencingStrategy(object):
                  efficiency=0.02,
                  ins_rate=9.e-5, del_rate=1.1e-4,
                  create_cids=True, simple_reads=True, linear=False, convert_symbols=False,
-                 profile_format='table'):
+                 profile_format='table', bridge_adapter=None):
         """
         Initialise a SequencingStrategy.
 
@@ -286,6 +303,7 @@ class SequencingStrategy(object):
         :param linear: treat replicons as linear
         :param convert_symbols: if true, unsupported (by Art) symbols in the input sequences are converted to N
         :param profile_format: the format of the abundance profile (Either: table or toml)
+        :param bridge_adapter: the sequence of the bridge adapter used in dnase library prep
         """
         self.profile_filename = profile_filename
         self.profile_format = profile_format
@@ -297,6 +315,13 @@ class SequencingStrategy(object):
         self.insert_min = insert_min
         self.insert_max = insert_max
         self.efficiency = efficiency
+
+        # validate and standardise user-input bridge adapter sequence
+        if bridge_adapter is not None:
+            bridge_adapter = bridge_adapter.upper()
+            if re.fullmatch(r'[ACGT]+', bridge_adapter) is None:
+                raise Sim3CException('Bridge adapter sequence must be composed of A, C, G, or T')
+        self.bridge_adapter = bridge_adapter
 
         self.enzymes = None
         if enzyme_names is not None:
@@ -327,12 +352,12 @@ class SequencingStrategy(object):
         else:
             raise Sim3CException(f'unknown profile format ({profile_format}) Either: "table" or "toml"]')
 
-        # preparate the read simulator for output
+        # prepare the read simulator for output
         self.read_generator = ReadGenerator(method, self.enzymes,
                                             prefix=prefix, simple=simple_reads, machine_profile=machine_profile,
                                             read_length=read_length, insert_mean=insert_mean,
                                             insert_sd=insert_sd, insert_min=insert_min, insert_max=insert_max,
-                                            del_rate=del_rate, ins_rate=ins_rate)
+                                            del_rate=del_rate, ins_rate=ins_rate, bridge=self.bridge_adapter)
 
         # the method determines the strategy governing the creation of
         # ligation products and WGS reads.

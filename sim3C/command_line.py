@@ -96,7 +96,6 @@ def main():
                         help='Library preparation method [hic]')
     parser.add_argument('-e', '--enzyme', metavar='NEB_NAME', action='append',
                         help='Case-sensitive NEB enzyme name. Use multiple times for multiple enzymes')
-
     parser.add_argument('-n', '--num-pairs', metavar='INT', type=int, required=True,
                         help='Number of read-pairs generate')
     parser.add_argument('-l', '--read-length', metavar='INT', type=int, required=True,
@@ -111,10 +110,13 @@ def main():
     parser.add_argument('--insert-max', metavar='INT', type=int, default=None,
                         help='Maximum allowed insert size [None]')
 
+    parser.add_argument('--bridge-adapter',
+                        help='Bridge adapter sequence (for dnase mode)')
+
     parser.add_argument('--linear', default=False, action='store_true',
                         help='Treat all replicons as linear molecules')
     parser.add_argument('--efficiency', metavar='FLOAT', type=float,
-                        help='HiC/Meta3C efficiency factor [hic: 0.5 or meta3c: 0.02]')
+                        help='HiC/Meta3C efficiency factor [hic, dnase: 0.5 or meta3c: 0.02]')
     parser.add_argument('--anti-rate', metavar='FLOAT', type=float, default=0.2,
                         help='Rate of anti-diagonal fragments [0.2]')
     parser.add_argument('--trans-rate', metavar='FLOAT', type=float, default=0.1,
@@ -166,6 +168,12 @@ def main():
                 raise Sim3CException('A maximum of two enzymes can be specified')
         elif args.method != 'dnase':
             raise Sim3CException('At least one enzyme must be specified')
+
+        if not args.bridge_adapter:
+            if args.method == 'dnase':
+                logger.warning('No bridge adapter sequence was specified for the dnase method')
+        elif args.method != 'dnase':
+            raise Sim3CException('Bridge adapter sequence is only valid for the dnase method')
 
         #
         # Prepare community abundance profile, either procedurally or from a file
@@ -231,7 +239,7 @@ def main():
                     'anti_rate', 'spurious_rate', 'trans_rate',
                     'efficiency',
                     'ins_rate', 'del_rate',
-                    'simple_reads', 'linear', 'convert_symbols', 'profile_format']
+                    'simple_reads', 'linear', 'convert_symbols', 'profile_format', 'bridge_adapter']
 
         # extract these parameters from the parsed arguments
         kw_args = {k: v for k, v in vars(args).items() if k in kw_names}
