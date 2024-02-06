@@ -27,7 +27,7 @@ Read-pair simulation of 3C-based sequencing methodologies (HiC, Meta3C, DNase-Hi
 
 ### Using Docker image
 
-A docker image of sim3C has been added `cerebis/sim3C:latest`.
+Docker images of sim3C are available at [https://hub.docker.com/cerebis/sim3C](https://hub.docker.com/repository/docker/cerebis/sim3c/general)
 
 **Example use**
 ```
