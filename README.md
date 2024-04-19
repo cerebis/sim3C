@@ -15,13 +15,13 @@ Read-pair simulation of 3C-based sequencing methodologies (HiC, Meta3C, DNase-Hi
 - Approximately 6x faster read generation 
   - testing system: MacOS Intel i9
   - 50% efficiency, 150bp reads, B.subtilis chrom + plasmid, uniform abundance 
-- Read-pair output now uses dnaio (https://github.com/marcelm/dnaio)
+- Read-pair output now uses `dnaio` (https://github.com/marcelm/dnaio)
   - interleaved or split R1/R2 files
   - fasta or fastq format
   - supports gzip and bzip2 compression
 - Cython implementation of performance bottlenecks
 - Primary random number generation uses Permuted Congruential Generators (PCG) (https://github.com/imneme/pcg-c)
-  - Implementation of a cython wrapper for PCG C-library
+  - Implementation of a Cython wrapper for PCG C-library
 
 ## Installation
 
@@ -36,7 +36,7 @@ docker run --rm -v $PWD:/data cerebis/sim3c --seed 1234 -e Sau3AI -l 150 -n 1000
 
 ### Local installs
 
-To install and run sim3C you will require Python >=3.11, C-compiler, Make, and LLVM. We recommend that users employ runtime environments such as virtualenv or conda. In particular, conda will make it easy to satisfy the runtime requirement of LLVM.
+To install and run sim3C, you will require Python >=3.11, C-compiler, Make, and LLVM. We recommend that users employ runtime environments such as virtualenv or conda. In particular, Conda makes it easier to satisfy LLVM's runtime requirements.
 
 The sim3C executable can be installed for an individual user directly from Github using Pip as follows.
 
@@ -46,17 +46,17 @@ pip install --user git+https://github.com/cerebis/sim3C
 
 Python dependencies will automatically be satisfied during installation. 
 
-If you encounter problems please visit and log an issue at the [project site on Github](https://github.com/cerebis/sim3C/issues). 
+If you encounter problems, please visit and log an issue on the [project site on Github](https://github.com/cerebis/sim3C/issues). 
 
 ## Input data
 
 ### Reference Sequence(s) (mandatory)
 
-At a minimum, Sim3C requires a reference sequence (or sequences) from which to draw reads. This reference must be in FASTA format. For multiple references, all must be contained in the single multi-FASTA file. All sequence identifiers must be unique must be unique in a multi-FASTA file.
+At a minimum, Sim3C requires a reference sequence (or sequences) from which to draw reads. This reference must be in FASTA format. For multiple references, all must be contained in a single multi-FASTA file. All sequence identifiers must be unique must be unique in a multi-FASTA file.
 
 ### Community Profile (optional)
 
-A community profile can be supplied, which gives the user more control over the definition. Without this enternal profile file, each individual sequence encountered in the supplied reference will be treated as a separate monochromosomal genome.
+A community profile can be supplied, which gives the user more control over the definition. Without this external profile file, each individual sequence encountered in the supplied reference will be treated as a separate monochromosomal genome.
 
 A profile is a simple tabular text file with the columns:
 
@@ -66,7 +66,7 @@ A profile is a simple tabular text file with the columns:
 4. relative abundance
 5. chromosome copy number.
 
-There is a mismatch between the hierarchical nature of a community and the flat nature of this simple format. Despite the repetition that can occur for more complicated profiles, we have chosen to stick with this format for simplicity for the time being.
+There is a mismatch between a community's hierarchical nature and this simple format's flat nature. Despite the repetition that can occur for more complicated profiles, we have chosen to stick with this format for simplicity for the time being.
 
 It is easiest to regard the first column as the primary column, for which each entry must be unique. The second column is inherently redundant when dealing with multi-chromosomal cell definitions. The third column groups sequences (e.g. draft genomes) as a single molecule, which permits simulating interactions between grouped sequences as intra-molecular. The fourth column refers to the abundance of the cell, and so is as equally redundant as column 2. The fifth column allows users to increase the number of copies of a chosen chromosome within a cell. Optional comments are prefixed with a #.
 
@@ -88,7 +88,7 @@ contig5   s.aur    foobar        0.05          1
 
 **1. chromosome:** (string)
  
-Each chromosome name must match a sequence id within the reference FASTA file, therefore all constraints on FASTA id fields are imposed on this column. For long IDs, such as those in Refseq, no attempt to parse the namespaces is attempted in Sim3C and so the entire ID must be included. 
+Each chromosome name must match a sequence ID within the reference FASTA file, so this column is subject to all constraints on FASTA ID fields. For long IDs, such as those in Refseq, no attempt is made to parse the namespaces in Sim3C, so the entire ID must be included. 
   
 I.E. For the following reference FASTA fragment:
 ```
@@ -109,15 +109,19 @@ db|foo|bar|1234  mycell  1  1
 
 **2. cell:** (string)
 
-Cells act as containers of chromosomes. Users can choose any label they desire, baring whitespace. For multi-chromosome cell/genome definitions, this label will be repeated, as it indicates which container in to which the chromosome is placed.
+Cells act as containers of chromosomes. Users can choose any label they desire, barring whitespace. For multi-chromosome cell/genome definitions, this label will be repeated, as it indicates which container in to which the chromosome is placed.
 
-**3. relative abundance:** (float)
+**3. molecule:** (string)
 
-Relative abundances are defined per-cell, therefore this value will be repeated for each chromosome belonging to the cell. The abundances do not need to sum to 1 as the profile is normalised internally.
+Frequently, test data will contain multiple sequences pertaining to the same DNA molecule, such as when draft assembly data is used as a reference. To bind together sequences with a "same molecule" relationship a single molecule name should be applied to all fragments. In doing so, proximity interactions across all related sequences will be modelled correctly as intra-molecular rather than inter-molecular.
 
-**4. copy number:** (int)
+**4. relative abundance:** (float)
 
-Copy number is most often set to 1, but gives the user the freedom to increase the abundance of chromosomes independent of the cellular abundance.
+Relative abundances are defined per cell. Therefore, this value will be repeated for each chromosome belonging to the cell. The abundances do not need to sum to 1 as the profile is normalised internally.
+
+**5. copy number:** (int)
+
+The copy number is most often set to 1, but it allows the user to increase the abundance of chromosomes independently of the cellular abundance.
 
 ## Running sim3C
 
@@ -133,7 +137,7 @@ If a community profile has been prepared and we wish to simulate Meta3C.
 > sim3C --profile mycom.txt -n 500000 -l 150 -e HpyCH4IV -m meta3c myref.fasta sim.fq
 ```
 
-Both a random seed and a output profile name can be specified at runtime. These make reducibility possible. The random seed is used to initialise all number generators within the simulation and, if given, the profile name will allow Sim3C to save the state of the profile when drawn at random from a distribution. Though saving the profile state is not necessary to reproducibly rerun Sim3C, it assists downstream analyses which may wish to know the true state.
+A random seed and an output profile name can be specified at runtime. These make reducibility possible. The random seed is used to initialise all number generators within the simulation, and if given, the profile name will allow Sim3C to save the state of the profile when drawn at random from a distribution. Though saving the profile state is not necessary to reproducibly rerun Sim3C, it assists downstream analyses that may wish to know the true state.
 
 ## Useful options
 
@@ -142,11 +146,11 @@ Both a random seed and a output profile name can be specified at runtime. These 
 ```--enzyme [string]``` OR ```-e [string]```
 
 
-For HiC and Meta3C simulation, users must specify either one or two enzymes. To specify two enzymes, simply repeat the option.
+For HiC and Meta3C simulation, users must specify one or two enzymes. To specify two enzymes, simply repeat the option.
 
-Eg. ```-e DpnII -e MluCI``` would define a multi-digest using the two four-cutters DpnII and MluCI.
+For example, ```-e DpnII -e MluCI``` would define a multi-digest using the two four cutters DpnII and MluCI.
 
-Enzyme names follow the NEB nomenclature and are case-sensitive. Most enzymes defined in ReBase[2] are understood, so long as they have been defined in the BioPython.Restriction module.
+Enzyme names follow the NEB nomenclature and are case-sensitive. Most enzymes defined in ReBase[2] are understood so long as they have been defined in the BioPython.Restriction module.
 
 **Some common enzymes**
 - 4-cutter: DpnII, Sau3AI, MluCI, NlaIII, HinfI
@@ -158,22 +162,22 @@ Enzyme names follow the NEB nomenclature and are case-sensitive. Most enzymes de
 
 **Notes**
 - DpnII and Sau3AI are isoschizomers. As such, although there may be reason to choose one over the other in real experimental setups, in simulation, they are identical.
-- Dual-digests are treated as being run simultaneously, consequently the resulting Hi-C ligation duplication sites can be a hybrid of the two enzymes.
+- Dual digests are treated as being run simultaneously. Consequently, the resulting Hi-C ligation duplication sites can be a hybrid of the two enzymes.
 - HinfI contains an ambiguous base (N) within its recognition site.
 
 ### Ambiguous IUPAC symbols
 
 ```--convert```
 
-At present, Art.py is not able to model errors when reference sequenes contain ambiguous symbols other than N (i.e. MRWSYKVHDB). In these cases, if users do not wish to prepare sequences themselves, the `--convert` option will convert all such symbols to N in memory, prior to simulation. Therefore, emitted simulated reads will contain N in these locations.
+At present, Art.py is not able to model errors when reference sequences contain ambiguous symbols other than N (i.e. MRWSYKVHDB). In these cases, if users do not wish to prepare sequences themselves, the `--convert` option will convert all such symbols to N in memory before simulation. Therefore, emitted simulated reads will contain N in these locations.
 
 ### Faster simulation
 
 ```--simple-reads```
 
-Users whose work does not require simulated read errors -- or for whom time is very short -- sim3C can be run in a "simple-read" mode. In testing, disabling error modelling results in a 60% increase in simulation speed.
+For users whose work does not require simulated read errors -- or for whom time is very short -- sim3C can be run in a "simple-read" mode. In testing, disabling error modelling results in a 60% increase in simulation speed.
 
-**Please Note:** when error modelling is disasbled, if reference sequences contain ambiguous symbols (i.e. MRWSYKVHDB), then these will be carried through to the simulated reads.
+**Please Note:** When error modelling is disabled, if reference sequences contain ambiguous symbols (i.e. MRWSYKVHDB), then these will be carried through to the simulated reads.
 
 ### Output format
 
@@ -181,7 +185,7 @@ Output reads can be written in either FASTA or FASTQ format, where the format is
 
 ### Compress output
 
-Output reads can be compressed using gzip or bzip2, where the compression type is inferred from the file extension specified at runtime. 
+Output reads can be compressed using gzip or bzip2, with the compression type inferred from the file extension specified at runtime. 
 Eg. `.gz` -> gzip compression, `.bz2` -> bzip2 compression.
 
 ```--compress```
@@ -190,7 +194,7 @@ Eg. `.gz` -> gzip compression, `.bz2` -> bzip2 compression.
 
 Output reads can be written as interleaved or split R1/R2 files. At runtime, specifying a single output read file will produce interleaved read-pairs, while specifying two output files will produce split R1/R2 files. 
 
-**Please note:** Only the suffixes of file names are inspected, there is no requirement to adhere to a `_1`/`_2` or `_R1`/`_R2` naming convention with split read output.
+**Please note:** Only the suffixes of file names are inspected. There is no requirement to adhere to a `_1`/`_2` or `_R1`/`_R2` naming convention with split read output.
 
 **Interleaved**
 ```
