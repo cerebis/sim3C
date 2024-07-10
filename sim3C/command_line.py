@@ -193,7 +193,7 @@ def main():
                 logger.error('Arguments to profile-name should not contain path information')
                 sys.exit(1)
 
-            profile_path = os.path.join(os.path.dirname(args.output_file), args.profile_name)
+            profile_path = os.path.join(os.path.dirname(args.output_file_1), args.profile_name)
             if os.path.exists(profile_path):
                 logger.error('Delete or move previous procedural abundance profile: {}'.format(profile_path))
                 sys.exit(1)
